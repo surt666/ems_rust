@@ -1,0 +1,4 @@
+(executable
+ (public_name ocaml-lambda-test)
+ (name main)
+ (libraries ocaml_lambda_test lambda-runtime))

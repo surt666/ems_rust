@@ -1,0 +1,3 @@
+(library
+ (name ocaml_lambda_test)
+ (libraries lambda-runtime lambda-runtime-api-gateway yojson))
