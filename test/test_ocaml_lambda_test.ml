@@ -12,4 +12,5 @@ let () =
       ("logic.properties", Test_logic_properties.tests);
       ("api.json", Test_api_json.tests);
       ("api.query", Test_api_query.tests);
+      ("api.command", Test_api_command.tests);
     ]
