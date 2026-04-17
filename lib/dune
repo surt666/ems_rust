@@ -1,3 +1,6 @@
+(include_subdirs unqualified)
+
 (library
  (name ocaml_lambda_test)
- (libraries lambda-runtime lambda-runtime-api-gateway yojson))
+ (libraries lambda-runtime lambda-runtime-api-gateway yojson uuidm ptime
+   smaws-clients smaws-lib eio eio_main))
