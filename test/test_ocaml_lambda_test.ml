@@ -9,4 +9,5 @@ let () =
       ("repo.memory", Test_repo_memory.tests);
       ("logic.schema_check", Test_logic_schema_check.tests);
       ("logic.hierarchy", Test_logic_hierarchy.tests);
+      ("logic.properties", Test_logic_properties.tests);
     ]
