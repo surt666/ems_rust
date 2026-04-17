@@ -7,4 +7,5 @@ let () =
       ("domain.schema", Test_domain_schema.tests);
       ("domain.node", Test_domain_node.tests);
       ("repo.memory", Test_repo_memory.tests);
+      ("logic.schema_check", Test_logic_schema_check.tests);
     ]
