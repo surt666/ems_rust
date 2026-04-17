@@ -90,9 +90,10 @@ let charge_point_schema () : Schema.t =
     ];
   }
 
-let seed_partner_and_company cfg =
+let seed_root_partner_company cfg =
   Dynamo.run cfg (fun () ->
     let now = Ptime_clock.now () in
+    Effects.put_node (Node.make_root ~created:now);
     let p_u = Effects.gen_uuid () in
     let partner_id = Node_id.make Level.Hn1 p_u in
     let partner =
@@ -101,6 +102,7 @@ let seed_partner_and_company cfg =
         ~metadata:(`Assoc []) ~schema:None
     in
     Effects.put_node partner;
+    Effects.put_edge ~from_:Node_id.root ~to_:partner_id ~label:"partner";
     let c_u = Effects.gen_uuid () in
     let company =
       Node.make ~uuid:c_u ~level:Level.Hn2 ~name:"ChargeCo"
@@ -112,7 +114,8 @@ let seed_partner_and_company cfg =
     (partner_id, company.Node.id))
 
 let full_tree cfg =
-  let partner_id, company_id = seed_partner_and_company cfg in
+  let partner_id, company_id = seed_root_partner_company cfg in
+  (* Root is a singleton — seed but leave it behind. *)
   let created = ref [ company_id; partner_id ] in
   let bail ctx e = Alcotest.failf "%s: %s" ctx (Errors.message e) in
   Dynamo.run cfg (fun () ->
@@ -138,6 +141,7 @@ let full_tree cfg =
       then Alcotest.failf "%s: child %s not in %d children"
         ctx (Node_id.to_string child) (List.length cs)
     in
+    has_child "root->partner"      Node_id.root        partner_id;
     has_child "partner->company"   partner_id          company_id;
     has_child "company->property"  company_id          property.Node.id;
     has_child "property->building" property.Node.id    building.Node.id;
