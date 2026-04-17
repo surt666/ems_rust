@@ -1,0 +1,11 @@
+(executable
+ (name test_dynamo)
+ (libraries ocaml_lambda_test alcotest eio eio_main smaws-clients smaws-lib
+   ptime.clock.os))
+
+(rule
+ (alias itest)
+ (deps
+  (env_var AWS_REGION)
+  (env_var ITEST_DYNAMO_TABLE))
+ (action (run %{exe:test_dynamo.exe})))
