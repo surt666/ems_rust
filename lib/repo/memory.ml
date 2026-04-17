@@ -36,8 +36,51 @@ let run (st : state) (f : unit -> 'a) : 'a =
               Some (fun k -> continue k (st.clock ()))
           | Effects.Get_node id ->
               Some (fun k -> continue k (find_node st id))
-          | Effects.List_children _ | Effects.Get_schema _
-          | Effects.Put_node _ | Effects.Put_edge _ | Effects.Delete_node _ ->
-              Some (fun _k -> failwith "Memory: handler not yet complete")
+          | Effects.Get_schema id ->
+              let schema = Option.bind (find_node st id) (fun n -> n.Node.schema) in
+              Some (fun k -> continue k schema)
+          | Effects.List_children (parent, label_opt) ->
+              let matches =
+                List.filter
+                  (fun (p, lbl, _c) ->
+                    Node_id.equal p parent
+                    && (match label_opt with
+                        | None -> true
+                        | Some needed ->
+                            let bare =
+                              if String.length needed > 4
+                                 && String.sub needed 0 4 = "has_"
+                              then String.sub needed 4 (String.length needed - 4)
+                              else needed
+                            in
+                            let bare =
+                              try
+                                let i = String.index bare '#' in
+                                String.sub bare 0 i
+                              with Not_found -> bare
+                            in
+                            lbl = bare))
+                  !(st.edges)
+              in
+              let children =
+                List.filter_map
+                  (fun (_p, _lbl, c) -> find_node st c)
+                  matches
+              in
+              Some (fun k -> continue k children)
+          | Effects.Put_node n ->
+              Hashtbl.replace st.nodes (Node_id.to_string n.Node.id) n;
+              Some (fun k -> continue k ())
+          | Effects.Put_edge { from_; to_; label } ->
+              st.edges := (from_, label, to_) :: !(st.edges);
+              Some (fun k -> continue k ())
+          | Effects.Delete_node id ->
+              Hashtbl.remove st.nodes (Node_id.to_string id);
+              st.edges :=
+                List.filter
+                  (fun (p, _l, c) ->
+                    not (Node_id.equal p id) && not (Node_id.equal c id))
+                  !(st.edges);
+              Some (fun k -> continue k ())
           | _ -> None);
     }
