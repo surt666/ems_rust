@@ -13,4 +13,5 @@ let () =
       ("api.json", Test_api_json.tests);
       ("api.query", Test_api_query.tests);
       ("api.command", Test_api_command.tests);
+      ("repo.codec", Test_repo_codec.tests);
     ]
