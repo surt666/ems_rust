@@ -25,6 +25,12 @@
   lambda-runtime-api-gateway
   base
   core
+  yojson
+  uuidm
+  ptime
+  eio
+  eio_main
+  smaws-clients
   (alcotest :with-test)
   (base_quickcheck :with-test)
   (ppx_jane :with-test))
