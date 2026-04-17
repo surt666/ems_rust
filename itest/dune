@@ -7,5 +7,6 @@
  (alias itest)
  (deps
   (env_var AWS_REGION)
+  (env_var AWS_DEFAULT_REGION)
   (env_var ITEST_DYNAMO_TABLE))
  (action (run %{exe:test_dynamo.exe})))

@@ -1,9 +1,16 @@
 open Ocaml_lambda_test
 
-let table () =
-  match Sys.getenv_opt "ITEST_DYNAMO_TABLE" with
-  | Some t -> t
-  | None -> Alcotest.fail "ITEST_DYNAMO_TABLE env must be set"
+let require_env name =
+  match Sys.getenv_opt name with
+  | Some v when v <> "" -> v
+  | _ ->
+      prerr_endline
+        (Printf.sprintf
+           "itest: %s must be set (smaws reads AWS_DEFAULT_REGION, not AWS_REGION)"
+           name);
+      exit 2
+
+let table () = require_env "ITEST_DYNAMO_TABLE"
 
 let fresh_root cfg =
   Dynamo.run cfg (fun () ->
@@ -59,6 +66,8 @@ let add_and_get cfg =
             | Error e -> Alcotest.failf "get failed: %s" (Errors.message e))
 
 let () =
+  let _ = require_env "AWS_DEFAULT_REGION" in
+  let _ = require_env "ITEST_DYNAMO_TABLE" in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let ctx = Smaws_Lib.Context.make ~sw env in
