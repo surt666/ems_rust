@@ -3,4 +3,4 @@
 (library
  (name ocaml_lambda_test)
  (libraries lambda-runtime lambda-runtime-api-gateway yojson uuidm ptime
-   smaws-clients smaws-lib eio eio_main))
+   ptime.clock.os smaws-clients smaws-lib eio eio_main))
