@@ -50,8 +50,10 @@ let add_and_get cfg =
         | Ok b ->
             match Hierarchy.get_node b.Node.id with
             | Ok b2 ->
-                Alcotest.(check string) "lat preserved"
-                  "55" (Yojson.Safe.Util.(b2.Node.metadata |> member "lat" |> to_string));
+                let lat =
+                  Yojson.Safe.Util.(b2.Node.metadata |> member "lat" |> to_number)
+                in
+                Alcotest.(check (float 1e-9)) "lat preserved" 55.0 lat;
                 (* teardown *)
                 cascade_clean cfg c2
             | Error e -> Alcotest.failf "get failed: %s" (Errors.message e))
