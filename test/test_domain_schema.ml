@@ -4,9 +4,9 @@ let sample_schema () : Schema.t =
   Schema.{
     version = 1;
     edges = [
-      (Level.Hn2, [ (Level.Hn3, { label = "property"; min = None; max = None }) ]);
-      (Level.Hn3, [ (Level.Hn4, { label = "building"; min = Some 1; max = None }) ]);
-      (Level.Hn4, [ (Level.Hn5, { label = "area"; min = None; max = None }) ]);
+      (Level.Hn2, [ (Level.Hn3, [ { label = "property"; min = None; max = None } ]) ]);
+      (Level.Hn3, [ (Level.Hn4, [ { label = "building"; min = Some 1; max = None } ]) ]);
+      (Level.Hn4, [ (Level.Hn5, [ { label = "area"; min = None; max = None } ]) ]);
     ];
     metadata = [
       (Level.Hn4, [
@@ -25,7 +25,7 @@ let rejects_depth_violation () =
   let bad =
     Schema.{
       (sample_schema ()) with
-      edges = [ (Level.Hn4, [ (Level.Hn3, { label = "x"; min = None; max = None }) ]) ];
+      edges = [ (Level.Hn4, [ (Level.Hn3, [ { label = "x"; min = None; max = None } ]) ]) ];
     }
   in
   (match Schema.validate bad with
@@ -35,9 +35,11 @@ let rejects_depth_violation () =
 let allowed_children_lookup () =
   let s = sample_schema () in
   let kids = Schema.allowed_children s Level.Hn3 in
-  Alcotest.(check int) "one child" 1 (List.length kids);
-  let level, spec = List.hd kids in
+  Alcotest.(check int) "one child level" 1 (List.length kids);
+  let level, specs = List.hd kids in
   Alcotest.(check string) "child is hn4" "hn4" (Level.to_string level);
+  Alcotest.(check int) "one label" 1 (List.length specs);
+  let spec = List.hd specs in
   Alcotest.(check string) "label" "building" spec.Schema.label
 
 let metadata_for_lookup () =

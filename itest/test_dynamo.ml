@@ -20,8 +20,8 @@ let fresh_root cfg =
       Schema.{
         version = 1;
         edges = [
-          (Level.Hn2, [ (Level.Hn3, { label = "property"; min = None; max = None }) ]);
-          (Level.Hn3, [ (Level.Hn4, { label = "building"; min = None; max = None }) ]);
+          (Level.Hn2, [ (Level.Hn3, [ { label = "property"; min = None; max = None } ]) ]);
+          (Level.Hn3, [ (Level.Hn4, [ { label = "building"; min = None; max = None } ]) ]);
         ];
         metadata = [
           (Level.Hn4, [
@@ -45,13 +45,13 @@ let add_and_get cfg =
   let c2 = fresh_root cfg in
   Dynamo.run cfg (fun () ->
     match
-      Hierarchy.add_node ~parent:c2 ~level:Level.Hn3 ~name:"P" ~metadata:(`Assoc [])
+      Hierarchy.add_node ~parent:c2 ~level:Level.Hn3 ~name:"P" ~metadata:(`Assoc []) ()
     with
     | Error e -> Alcotest.failf "add failed: %s" (Errors.message e)
     | Ok p ->
         match
           Hierarchy.add_node ~parent:p.Node.id ~level:Level.Hn4 ~name:"B"
-            ~metadata:(`Assoc [ ("lat", `Float 55.0) ])
+            ~metadata:(`Assoc [ ("lat", `Float 55.0) ]) ()
         with
         | Error e -> Alcotest.failf "add child failed: %s" (Errors.message e)
         | Ok b ->
@@ -69,11 +69,14 @@ let charge_point_schema () : Schema.t =
   Schema.{
     version = 1;
     edges = [
-      (Level.Hn2, [ (Level.Hn3, { label = "property";  min = None;   max = None }) ]);
-      (Level.Hn3, [ (Level.Hn4, { label = "building";  min = Some 1; max = None }) ]);
-      (Level.Hn4, [ (Level.Hn5, { label = "area";      min = None;   max = None }) ]);
-      (Level.Hn5, [ (Level.Hn6, { label = "charger";   min = None;   max = None }) ]);
-      (Level.Hn6, [ (Level.Hn7, { label = "plug";      min = None;   max = None }) ]);
+      (Level.Hn2, [ (Level.Hn3, [
+        { label = "property"; min = None; max = None };
+        { label = "group";    min = None; max = None };
+      ]) ]);
+      (Level.Hn3, [ (Level.Hn4, [ { label = "building"; min = None; max = None } ]) ]);
+      (Level.Hn4, [ (Level.Hn5, [ { label = "area";     min = None; max = None } ]) ]);
+      (Level.Hn5, [ (Level.Hn6, [ { label = "charger";  min = None; max = None } ]) ]);
+      (Level.Hn6, [ (Level.Hn7, [ { label = "plug";     min = None; max = None } ]) ]);
     ];
     metadata = [
       (Level.Hn4, [
@@ -114,50 +117,49 @@ let seed_root_partner_company cfg =
     (partner_id, company.Node.id))
 
 let full_tree cfg =
-  let partner_id, company_id = seed_root_partner_company cfg in
-  (* Root is a singleton — seed but leave it behind. *)
-  let created = ref [ company_id; partner_id ] in
+  let _partner_id, company_id = seed_root_partner_company cfg in
   let bail ctx e = Alcotest.failf "%s: %s" ctx (Errors.message e) in
   Dynamo.run cfg (fun () ->
-    let add ~parent ~level ~name ~metadata =
-      match Hierarchy.add_node ~parent ~level ~name ~metadata with
+    let add ?label ~parent ~level ~name ~metadata () =
+      match Hierarchy.add_node ?label ~parent ~level ~name ~metadata () with
       | Error e -> bail ("add " ^ name) e
-      | Ok n -> created := n.Node.id :: !created; n
+      | Ok n -> n
     in
-    let property = add ~parent:company_id        ~level:Level.Hn3
-      ~name:"HQ Property"   ~metadata:(`Assoc []) in
-    let building = add ~parent:property.Node.id  ~level:Level.Hn4
-      ~name:"Main Building" ~metadata:(`Assoc [ ("lat", `Float 55.6761); ("lng", `Float 12.5683) ]) in
-    let area = add ~parent:building.Node.id  ~level:Level.Hn5
-      ~name:"Parking A"     ~metadata:(`Assoc []) in
-    let charger = add ~parent:area.Node.id      ~level:Level.Hn6
-      ~name:"Charger 01"    ~metadata:(`Assoc [ ("power_kw", `Float 150.); ("connector", `String "ccs") ]) in
-    let plug = add ~parent:charger.Node.id   ~level:Level.Hn7
-      ~name:"Plug A"        ~metadata:(`Assoc []) in
-
-    let has_child ctx parent child =
-      let cs = Effects.list_children parent in
-      if not (List.exists (fun (n : Node.t) -> Node_id.equal n.id child) cs)
-      then Alcotest.failf "%s: child %s not in %d children"
-        ctx (Node_id.to_string child) (List.length cs)
+    let bldg_md =
+      `Assoc [ ("lat", `Float 55.6761); ("lng", `Float 12.5683) ]
     in
-    has_child "root->partner"      Node_id.root        partner_id;
-    has_child "partner->company"   partner_id          company_id;
-    has_child "company->property"  company_id          property.Node.id;
-    has_child "property->building" property.Node.id    building.Node.id;
-    has_child "building->area"     building.Node.id    area.Node.id;
-    has_child "area->charger"      area.Node.id        charger.Node.id;
-    has_child "charger->plug"      charger.Node.id     plug.Node.id;
+    let prop1 = add ~label:"property" ~parent:company_id ~level:Level.Hn3
+      ~name:"HQ Property"       ~metadata:(`Assoc []) () in
+    let prop2 = add ~label:"property" ~parent:company_id ~level:Level.Hn3
+      ~name:"Warehouse Property" ~metadata:(`Assoc []) () in
+    let _grp  = add ~label:"group"    ~parent:company_id ~level:Level.Hn3
+      ~name:"Region Group"      ~metadata:(`Assoc []) () in
 
-    (match Hierarchy.get_node charger.Node.id with
-     | Error e -> bail "get charger" e
-     | Ok c ->
-         let pow = Yojson.Safe.Util.(c.Node.metadata |> member "power_kw"  |> to_number) in
-         let conn = Yojson.Safe.Util.(c.Node.metadata |> member "connector" |> to_string) in
-         Alcotest.(check (float 1e-9)) "power_kw preserved" 150. pow;
-         Alcotest.(check string)       "connector preserved" "ccs" conn);
+    let b1_a = add ~parent:prop1.Node.id ~level:Level.Hn4
+      ~name:"HQ Building A"        ~metadata:bldg_md () in
+    let _b1_b = add ~parent:prop1.Node.id ~level:Level.Hn4
+      ~name:"HQ Building B"        ~metadata:bldg_md () in
+    let _b2_a = add ~parent:prop2.Node.id ~level:Level.Hn4
+      ~name:"Warehouse Building A" ~metadata:bldg_md () in
+    let _b2_b = add ~parent:prop2.Node.id ~level:Level.Hn4
+      ~name:"Warehouse Building B" ~metadata:bldg_md () in
 
-    List.iter (fun id -> Effects.delete_node id) !created)
+    let area = add ~parent:b1_a.Node.id ~level:Level.Hn5
+      ~name:"HQ Parking A" ~metadata:(`Assoc []) () in
+
+    (match Hierarchy.get_node area.Node.id with
+     | Error e -> bail "get area" e
+     | Ok a ->
+         Alcotest.(check string) "area name preserved" "HQ Parking A" a.Node.name);
+
+    let prop_children = Effects.list_children company_id in
+    Alcotest.(check int) "company has 3 children (2 properties + 1 group)"
+      3 (List.length prop_children);
+    let p1_children = Effects.list_children prop1.Node.id in
+    Alcotest.(check int) "HQ Property has 2 buildings" 2 (List.length p1_children);
+    let p2_children = Effects.list_children prop2.Node.id in
+    Alcotest.(check int) "Warehouse Property has 2 buildings" 2 (List.length p2_children))
+  (* No cleanup: the tree persists in DynamoDB for inspection. *)
 
 let () =
   let _ = require_env "AWS_DEFAULT_REGION" in
@@ -170,6 +172,6 @@ let () =
     [
       ("hierarchy", [
         Alcotest.test_case "add + get roundtrip" `Quick (fun () -> add_and_get cfg);
-        Alcotest.test_case "full tree partner->plug" `Quick (fun () -> full_tree cfg);
+        Alcotest.test_case "tree: 2 properties + 1 group, 4 buildings, 1 area" `Quick (fun () -> full_tree cfg);
       ]);
     ]

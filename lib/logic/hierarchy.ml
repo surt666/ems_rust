@@ -1,27 +1,37 @@
 let ( let* ) = Result.bind
 
-let add_node ~parent ~level ~name ~metadata =
+let add_node ?label ~parent ~level ~name ~metadata () =
   let* parent_node =
     match Effects.get_node parent with
     | None -> Error (Errors.Not_found parent)
     | Some n -> Ok n
   in
+  let parent_level = Node_id.level parent_node.Node.id in
   let* () =
-    if Level.depth (Node_id.level parent_node.Node.id) < Level.depth level
+    if Level.depth parent_level < Level.depth level
     then Ok ()
     else Error (Errors.Validation [ { Metadata.path = ""; message = "child depth must exceed parent depth" } ])
   in
   let* _host, schema = Schema_check.find_for parent in
+  let candidates = Schema.edges_between schema parent_level level in
+  let edge_msg m =
+    Errors.Validation [ { Metadata.path = ""; message = m } ]
+  in
   let* edge_spec =
-    match Schema.allowed_child schema (Node_id.level parent_node.Node.id) level with
-    | Some s -> Ok s
-    | None ->
-        Error (Errors.Validation [ {
-          Metadata.path = "";
-          message = Printf.sprintf "edge %s -> %s not allowed by schema"
-            (Level.to_string (Node_id.level parent_node.Node.id))
-            (Level.to_string level);
-        } ])
+    match label, candidates with
+    | Some l, _ ->
+        (match List.find_opt (fun (s : Schema.edge_spec) -> s.label = l) candidates with
+         | Some s -> Ok s
+         | None ->
+             Error (edge_msg (Printf.sprintf "edge %s -> %s (%s) not allowed by schema"
+                                (Level.to_string parent_level) (Level.to_string level) l)))
+    | None, [ single ] -> Ok single
+    | None, [] ->
+        Error (edge_msg (Printf.sprintf "edge %s -> %s not allowed by schema"
+                           (Level.to_string parent_level) (Level.to_string level)))
+    | None, _many ->
+        Error (edge_msg (Printf.sprintf "edge %s -> %s is ambiguous; specify ~label"
+                           (Level.to_string parent_level) (Level.to_string level)))
   in
   let* () =
     let specs = Schema.metadata_for schema level in
@@ -35,10 +45,8 @@ let add_node ~parent ~level ~name ~metadata =
   let* () =
     match edge_spec.Schema.max with
     | Some m when List.length existing >= m ->
-        Error (Errors.Validation [ {
-          Metadata.path = "";
-          message = Printf.sprintf "max %d %s per parent already reached" m edge_spec.Schema.label;
-        } ])
+        Error (edge_msg (Printf.sprintf "max %d %s per parent already reached"
+                           m edge_spec.Schema.label))
     | _ -> Ok ()
   in
   let uuid = Effects.gen_uuid () in

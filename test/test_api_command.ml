@@ -9,7 +9,7 @@ let seed () =
     Schema.{
       version = 1;
       edges = [
-        (Level.Hn2, [ (Level.Hn3, { label = "property"; min = None; max = None }) ]);
+        (Level.Hn2, [ (Level.Hn3, [ { label = "property"; min = None; max = None } ]) ]);
       ];
       metadata = [];
     }

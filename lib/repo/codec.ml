@@ -29,21 +29,23 @@ let rec attr_to_json (a : Dyn.attribute_value) : Yojson.Safe.t =
   | Dyn.B _ | Dyn.BS _ | Dyn.NS _ | Dyn.SS _ -> `Null
 
 let schema_to_attr (sch : Schema.t) : Dyn.attribute_value =
-  let edge_spec_m (spec : Schema.edge_spec) =
-    let base = [ ("label", s spec.label) ] in
-    let with_min =
-      match spec.min with Some m -> ("min", n (string_of_int m)) :: base | None -> base
-    in
-    let with_max =
-      match spec.max with Some m -> ("max", n (string_of_int m)) :: with_min | None -> with_min
-    in
-    Dyn.M with_max
+  let edge_spec_body (spec : Schema.edge_spec) =
+    let base = [] in
+    let base = match spec.min with Some m -> ("min", n (string_of_int m)) :: base | None -> base in
+    let base = match spec.max with Some m -> ("max", n (string_of_int m)) :: base | None -> base in
+    Dyn.M base
   in
   let edges_m =
     List.map
       (fun (lvl, cs) ->
         let inner =
-          List.map (fun (child, spec) -> (Level.to_string child, edge_spec_m spec)) cs
+          List.map
+            (fun (child, specs) ->
+              let label_m =
+                List.map (fun (sp : Schema.edge_spec) -> (sp.label, edge_spec_body sp)) specs
+              in
+              (Level.to_string child, Dyn.M label_m))
+            cs
         in
         (Level.to_string lvl, Dyn.M inner))
       sch.edges
@@ -200,10 +202,8 @@ let decode_field_spec (v : Dyn.attribute_value) : (Metadata.field_spec, string) 
   in
   Ok Metadata.{ typ; required }
 
-let decode_edge_spec (v : Dyn.attribute_value) : (Schema.edge_spec, string) result =
-  let* kvs = as_map v in
-  let* label_v = field kvs "label" in
-  let* label = as_string label_v in
+let decode_edge_spec ~label (body : Dyn.attribute_value) : (Schema.edge_spec, string) result =
+  let* kvs = as_map body in
   Ok Schema.{
     label;
     min = opt_int_of_n (List.assoc_opt "min" kvs);
@@ -240,13 +240,22 @@ let decode_schema (v : Dyn.attribute_value) : (Schema.t, string) result =
     decode_level_keyed_map edges_kvs
       ~decode_inner:(fun inner_kvs ->
         List.fold_left
-          (fun acc (child_s, spec_v) ->
+          (fun acc (child_s, labels_v) ->
             let* acc = acc in
             match Level.of_string child_s with
             | Error _ -> Ok acc
             | Ok child ->
-                let* spec = decode_edge_spec spec_v in
-                Ok ((child, spec) :: acc))
+                let* label_kvs = as_map labels_v in
+                let* specs =
+                  List.fold_left
+                    (fun acc (label, body) ->
+                      let* acc = acc in
+                      let* sp = decode_edge_spec ~label body in
+                      Ok (sp :: acc))
+                    (Ok []) label_kvs
+                  |> Result.map List.rev
+                in
+                Ok ((child, specs) :: acc))
           (Ok []) inner_kvs
         |> Result.map List.rev)
   in

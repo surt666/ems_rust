@@ -23,7 +23,7 @@ let run_add_node json =
   in
   let* parent = Node_id.of_string parent_s in
   let* level  = Level.of_string level_s     in
-  match Hierarchy.add_node ~parent ~level ~name ~metadata with
+  match Hierarchy.add_node ~parent ~level ~name ~metadata () with
   | Ok n -> Ok (Api_json.ok_response (Api_json.node_to_json n))
   | Error e -> Ok (Api_json.error_response e)
 

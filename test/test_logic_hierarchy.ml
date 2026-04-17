@@ -6,8 +6,8 @@ let sample_schema : Schema.t =
   Schema.{
     version = 1;
     edges = [
-      (Level.Hn2, [ (Level.Hn3, { label = "property"; min = None; max = Some 2 }) ]);
-      (Level.Hn3, [ (Level.Hn4, { label = "building"; min = Some 1; max = None }) ]);
+      (Level.Hn2, [ (Level.Hn3, [ { label = "property"; min = None; max = Some 2 } ]) ]);
+      (Level.Hn3, [ (Level.Hn4, [ { label = "building"; min = Some 1; max = None } ]) ]);
     ];
     metadata = [
       (Level.Hn4, [
@@ -32,14 +32,14 @@ let add_property_and_building () =
   Memory.run st (fun () ->
     match
       Hierarchy.add_node
-        ~parent:c2 ~level:Level.Hn3 ~name:"Ostergade" ~metadata:(`Assoc [])
+        ~parent:c2 ~level:Level.Hn3 ~name:"Ostergade" ~metadata:(`Assoc []) ()
     with
     | Error e -> Alcotest.failf "%s" (Errors.message e)
     | Ok prop ->
         (match
           Hierarchy.add_node
             ~parent:prop.Node.id ~level:Level.Hn4 ~name:"B1"
-            ~metadata:(`Assoc [ ("lat", `Float 55.) ])
+            ~metadata:(`Assoc [ ("lat", `Float 55.) ]) ()
         with
         | Error e -> Alcotest.failf "%s" (Errors.message e)
         | Ok b1 ->
@@ -53,7 +53,7 @@ let rejects_disallowed_edge () =
   Memory.run st (fun () ->
     match
       Hierarchy.add_node
-        ~parent:c2 ~level:Level.Hn5 ~name:"bad" ~metadata:(`Assoc [])
+        ~parent:c2 ~level:Level.Hn5 ~name:"bad" ~metadata:(`Assoc []) ()
     with
     | Ok _ -> Alcotest.fail "expected Validation"
     | Error (Errors.Validation _) -> ()
@@ -67,11 +67,11 @@ let rejects_bad_metadata () =
     match
       let* prop =
         Hierarchy.add_node
-          ~parent:c2 ~level:Level.Hn3 ~name:"P" ~metadata:(`Assoc [])
+          ~parent:c2 ~level:Level.Hn3 ~name:"P" ~metadata:(`Assoc []) ()
       in
       Hierarchy.add_node
         ~parent:prop.Node.id ~level:Level.Hn4 ~name:"B"
-        ~metadata:(`Assoc [ ("lat", `Float 200.) ])
+        ~metadata:(`Assoc [ ("lat", `Float 200.) ]) ()
     with
     | Ok _ -> Alcotest.fail "expected Validation"
     | Error (Errors.Validation errs) ->
@@ -83,9 +83,9 @@ let enforces_cardinality_max () =
   let st = Memory.empty () in
   let c2 = seed_company st in
   Memory.run st (fun () ->
-    let _ = Hierarchy.add_node ~parent:c2 ~level:Level.Hn3 ~name:"P1" ~metadata:(`Assoc []) in
-    let _ = Hierarchy.add_node ~parent:c2 ~level:Level.Hn3 ~name:"P2" ~metadata:(`Assoc []) in
-    match Hierarchy.add_node ~parent:c2 ~level:Level.Hn3 ~name:"P3" ~metadata:(`Assoc []) with
+    let _ = Hierarchy.add_node ~parent:c2 ~level:Level.Hn3 ~name:"P1" ~metadata:(`Assoc []) () in
+    let _ = Hierarchy.add_node ~parent:c2 ~level:Level.Hn3 ~name:"P2" ~metadata:(`Assoc []) () in
+    match Hierarchy.add_node ~parent:c2 ~level:Level.Hn3 ~name:"P3" ~metadata:(`Assoc []) () with
     | Ok _ -> Alcotest.fail "expected Validation on max=2 exceeded"
     | Error (Errors.Validation _) -> ()
     | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))

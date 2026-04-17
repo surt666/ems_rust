@@ -9,7 +9,7 @@ let seed_with_one_child () =
     Schema.{
       version = 1;
       edges = [
-        (Level.Hn2, [ (Level.Hn3, { label = "property"; min = None; max = None }) ]);
+        (Level.Hn2, [ (Level.Hn3, [ { label = "property"; min = None; max = None } ]) ]);
       ];
       metadata = [];
     }
@@ -23,7 +23,7 @@ let seed_with_one_child () =
     Effects.put_node n2;
     match
       Hierarchy.add_node ~parent:c2 ~level:Level.Hn3 ~name:"P"
-        ~metadata:(`Assoc [])
+        ~metadata:(`Assoc []) ()
     with
     | Ok _ -> ()
     | Error e -> Alcotest.failf "%s" (Errors.message e));

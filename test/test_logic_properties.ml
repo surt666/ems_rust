@@ -7,8 +7,8 @@ let mk_schema () : Schema.t =
   Schema.{
     version = 1;
     edges = [
-      (Level.Hn2, [ (Level.Hn3, { label = "property"; min = None; max = None }) ]);
-      (Level.Hn3, [ (Level.Hn4, { label = "building"; min = None; max = None }) ]);
+      (Level.Hn2, [ (Level.Hn3, [ { label = "property"; min = None; max = None } ]) ]);
+      (Level.Hn3, [ (Level.Hn4, [ { label = "building"; min = None; max = None } ]) ]);
     ];
     metadata = [];
   }
@@ -39,7 +39,7 @@ let add_is_retrievable () =
       Memory.run st (fun () ->
         match
           Hierarchy.add_node
-            ~parent:c2 ~level:Level.Hn3 ~name ~metadata:(`Assoc [])
+            ~parent:c2 ~level:Level.Hn3 ~name ~metadata:(`Assoc []) ()
         with
         | Error _ -> Alcotest.failf "add_node errored on name=%S" name
         | Ok n ->

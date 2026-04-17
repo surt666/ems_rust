@@ -6,8 +6,8 @@ let sample_schema : Schema.t =
   Schema.{
     version = 1;
     edges = [
-      (Level.Hn2, [ (Level.Hn3, { label = "property"; min = None; max = None }) ]);
-      (Level.Hn3, [ (Level.Hn4, { label = "building"; min = None; max = None }) ]);
+      (Level.Hn2, [ (Level.Hn3, [ { label = "property"; min = None; max = None } ]) ]);
+      (Level.Hn3, [ (Level.Hn4, [ { label = "building"; min = None; max = None } ]) ]);
     ];
     metadata = [];
   }
