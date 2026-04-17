@@ -1,6 +1,6 @@
 (test
  (name test_ocaml_lambda_test)
  (libraries ocaml_lambda_test lambda-runtime yojson alcotest base core
-   base_quickcheck astring)
+   base_quickcheck astring ptime.clock.os)
  (preprocess
   (pps ppx_jane)))
