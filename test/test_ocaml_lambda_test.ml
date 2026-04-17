@@ -10,4 +10,5 @@ let () =
       ("logic.schema_check", Test_logic_schema_check.tests);
       ("logic.hierarchy", Test_logic_hierarchy.tests);
       ("logic.properties", Test_logic_properties.tests);
+      ("api.json", Test_api_json.tests);
     ]
