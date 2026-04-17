@@ -134,6 +134,139 @@ let as_string (v : Dyn.attribute_value) =
   | Dyn.S s -> Ok s
   | _ -> Error "expected S"
 
+let as_map (v : Dyn.attribute_value) =
+  match v with
+  | Dyn.M kvs -> Ok kvs
+  | _ -> Error "expected M"
+
+let as_list (v : Dyn.attribute_value) =
+  match v with
+  | Dyn.L xs -> Ok xs
+  | _ -> Error "expected L"
+
+let opt_int_of_n : Dyn.attribute_value option -> int option = function
+  | Some (Dyn.N s) -> int_of_string_opt s
+  | _ -> None
+
+let opt_float_of_n : Dyn.attribute_value option -> float option = function
+  | Some (Dyn.N s) -> (try Some (float_of_string s) with _ -> None)
+  | _ -> None
+
+let opt_int64_of_n : Dyn.attribute_value option -> int64 option = function
+  | Some (Dyn.N s) -> (try Some (Int64.of_string s) with _ -> None)
+  | _ -> None
+
+let decode_field_spec (v : Dyn.attribute_value) : (Metadata.field_spec, string) result =
+  let* kvs = as_map v in
+  let* type_v = field kvs "type" in
+  let* typ_s = as_string type_v in
+  let required =
+    match List.assoc_opt "required" kvs with
+    | Some (Dyn.BOOL b) -> b
+    | _ -> false
+  in
+  let* typ =
+    match typ_s with
+    | "string" ->
+        Ok (Metadata.String {
+          min_len = opt_int_of_n (List.assoc_opt "min_len" kvs);
+          max_len = opt_int_of_n (List.assoc_opt "max_len" kvs);
+        })
+    | "number" ->
+        Ok (Metadata.Number {
+          min = opt_float_of_n (List.assoc_opt "min" kvs);
+          max = opt_float_of_n (List.assoc_opt "max" kvs);
+        })
+    | "integer" ->
+        Ok (Metadata.Integer {
+          min = opt_int64_of_n (List.assoc_opt "min" kvs);
+          max = opt_int64_of_n (List.assoc_opt "max" kvs);
+        })
+    | "boolean" -> Ok Metadata.Boolean
+    | "timestamp" -> Ok Metadata.Timestamp
+    | "enum" ->
+        let* one_of_v = field kvs "one_of" in
+        let* xs = as_list one_of_v in
+        let* vals =
+          List.fold_left
+            (fun acc v ->
+              let* acc = acc in
+              let* s = as_string v in
+              Ok (s :: acc))
+            (Ok []) xs
+        in
+        Ok (Metadata.Enum { one_of = List.rev vals })
+    | other -> Error (Printf.sprintf "unknown field type %S" other)
+  in
+  Ok Metadata.{ typ; required }
+
+let decode_edge_spec (v : Dyn.attribute_value) : (Schema.edge_spec, string) result =
+  let* kvs = as_map v in
+  let* label_v = field kvs "label" in
+  let* label = as_string label_v in
+  Ok Schema.{
+    label;
+    min = opt_int_of_n (List.assoc_opt "min" kvs);
+    max = opt_int_of_n (List.assoc_opt "max" kvs);
+  }
+
+let decode_level_keyed_map ~decode_inner kvs =
+  List.fold_left
+    (fun acc (lvl_s, inner_v) ->
+      let* acc = acc in
+      match Level.of_string lvl_s with
+      | Error _ -> Ok acc
+      | Ok lvl ->
+          let* inner_kvs = as_map inner_v in
+          let* inner = decode_inner inner_kvs in
+          Ok ((lvl, inner) :: acc))
+    (Ok []) kvs
+  |> Result.map List.rev
+
+let decode_schema (v : Dyn.attribute_value) : (Schema.t, string) result =
+  let* kvs = as_map v in
+  let* ver_v = field kvs "version" in
+  let* version =
+    match ver_v with
+    | Dyn.N s ->
+        (match int_of_string_opt s with
+         | Some i -> Ok i
+         | None -> Error "bad version N")
+    | _ -> Error "expected N for version"
+  in
+  let* edges_v = field kvs "edges" in
+  let* edges_kvs = as_map edges_v in
+  let* edges =
+    decode_level_keyed_map edges_kvs
+      ~decode_inner:(fun inner_kvs ->
+        List.fold_left
+          (fun acc (child_s, spec_v) ->
+            let* acc = acc in
+            match Level.of_string child_s with
+            | Error _ -> Ok acc
+            | Ok child ->
+                let* spec = decode_edge_spec spec_v in
+                Ok ((child, spec) :: acc))
+          (Ok []) inner_kvs
+        |> Result.map List.rev)
+  in
+  let* metadata =
+    match List.assoc_opt "metadata" kvs with
+    | None -> Ok []
+    | Some m_v ->
+        let* m_kvs = as_map m_v in
+        decode_level_keyed_map m_kvs
+          ~decode_inner:(fun inner_kvs ->
+            List.fold_left
+              (fun acc (fname, spec_v) ->
+                let* acc = acc in
+                let* spec = decode_field_spec spec_v in
+                Ok ((fname, spec) :: acc))
+              (Ok []) inner_kvs
+            |> Result.map List.rev)
+  in
+  Ok Schema.{ version; edges; metadata }
+
 let node_of_item kvs =
   let* pk = field kvs "pk" in
   let* pk = as_string pk in
@@ -158,11 +291,19 @@ let node_of_item kvs =
     | Some v -> attr_to_json v
     | None -> `Assoc []
   in
+  let schema =
+    match List.assoc_opt "schema" kvs with
+    | None -> None
+    | Some v ->
+        (match decode_schema v with
+         | Ok s -> Some s
+         | Error _ -> None)
+  in
   Ok {
     Node.id;
     name;
     parent;
     created;
     metadata;
-    schema = None;
+    schema;
   }
