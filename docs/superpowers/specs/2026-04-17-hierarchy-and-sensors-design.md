@@ -90,6 +90,9 @@ graph TD
   WH -->|building| WBB["Warehouse Building B (hn4)"]
   HBA -->|area| AREA["HQ Parking A (hn5)"]
 
+  HBA -->|has_sensor| S1["S1<br/>Electricity<br/>abs(Self - S2')"]
+  AREA -->|has_sensor| S2["S2<br/>Electricity<br/>identity"]
+
   CP -->|parkinglot| LOT["Parking Lot North (hn3)"]
   LOT -->|chargingpool| POOL["Pool A (hn4)"]
   POOL -->|charger| C1["CP-01 (hn5)<br/>power_kw=150, ccs"]
@@ -121,14 +124,12 @@ Single-table design, table name in `$ITEST_DYNAMO_TABLE` (prod: `hierarchy_new`)
 
 **Sensor rows:**
 
-| Attribute | Active assignment row             | History row        | Sensor edge row       |
-|-----------|-----------------------------------|--------------------|-----------------------|
-| `pk`      | `S#<uuid>`                        | `S#<uuid>`         | `<parent_node_pk>`    |
-| `sk`      | `active#<iso8601>`                | `<iso8601>`        | `has_sensor#S#<uuid>` |
-| `gsi1pk`  | `<parent_node_pk>`                | —                  | —                     |
-| `gsi1sk`  | `active#<iso8601>`                | —                  | —                     |
+| Attribute | Active assignment row | History row   | Sensor edge row       |
+|-----------|-----------------------|---------------|-----------------------|
+| `pk`      | `S#<uuid>`            | `S#<uuid>`    | `<parent_node_pk>`    |
+| `sk`      | `active#<iso8601>`    | `<iso8601>`   | `has_sensor#S#<uuid>` |
 
-Only the active assignment row carries GSI attributes (sparse index). History rows have no GSI attributes and are never modified after creation.
+No GSI on sensor rows.
 
 `gsi1` is used for `list_children` — query `gsi1pk = parent_pk` returns every child in one round trip.
 
@@ -159,27 +160,25 @@ A sensor's logical identity is a stable `uuid`. Physical daq devices break and g
 
 **Sensor rows** — one partition per logical sensor (`pk = S#<uuid>`):
 
-| Attribute        | Active assignment                                  | History row     | Purpose |
-|------------------|----------------------------------------------------|-----------------|---------|
-| `pk`             | `S#<uuid>`                                         | `S#<uuid>`      | logical sensor identity |
-| `sk`             | `active#2026-04-18T10:00:00Z`                      | `2026-03-01T...`| `active#` prefix marks the live device; plain timestamp for history |
-| `gsi1pk`         | `<parent_node_pk>`                                 | —               | sparse — only active rows appear in the GSI |
-| `gsi1sk`         | `active#2026-04-18T10:00:00Z`                      | —               | |
-| `daq_address`    | `daq:adeunis_pu_v1:123:0018b210000191c7:counter_a` | (same)          | physical device address |
-| `hierarchy_path` | `P1#C1#PR1#B2`                                     | (same)          | cached human path; denormalized |
-| `purpose`        | `Electricity` \| `Heat` \| …                       | (same)          | what is being measured |
-| `meter_type`     | `counter` \| `gauge`                               | (same)          | semantic kind |
-| `unit`           | `kWh`, `m3`, …                                     | (same)          | optional, informational |
-| `formula`        | (see §6.3)                                         | (same)          | expression evaluated at read time |
+| Attribute        | Active assignment                                  | History row      | Purpose |
+|------------------|----------------------------------------------------|------------------|---------|
+| `pk`             | `S#<uuid>`                                         | `S#<uuid>`       | logical sensor identity |
+| `sk`             | `active#2026-04-18T10:00:00Z`                      | `2026-03-01T...` | `active#` prefix marks the live device; plain timestamp for history |
+| `daq_address`    | `daq:adeunis_pu_v1:123:0018b210000191c7:counter_a` | (same)           | physical device address |
+| `hierarchy_path` | `P1#C1#PR1#B2`                                     | (same)           | cached human path; denormalized |
+| `purpose`        | `Electricity` \| `Heat` \| …                       | (same)           | what is being measured |
+| `meter_type`     | `counter` \| `gauge`                               | (same)           | semantic kind |
+| `unit`           | `kWh`, `m3`, …                                     | (same)           | optional, informational |
+| `formula`        | (see §6.3)                                         | (same)           | expression evaluated at read time |
 
 Query patterns:
-- **Active sensors on a node**: GSI query `gsi1pk = HN5#uuid`, `gsi1sk begins_with active#` — no filter, no dedup, exactly one row per sensor.
+- **Active sensors on a node**: query `pk = <parent_node_pk>`, `sk begins_with has_sensor#` → sensor uuids; then parallel queries `pk = S#<uuid>`, `sk begins_with active#`, limit 1 for each. Two round trips; sensors per node are small so the fan-out is cheap.
 - **Full history for a sensor**: query `pk = S#<uuid>` — returns the active row plus all history rows sorted by sk.
 
 **Device replacement** — because sk is part of the primary key it cannot be updated in place. A replacement is a 3-op `TransactWriteItems` (read old active row first, then in one transaction):
 1. **Delete** `{pk: S#uuid, sk: active#<old-timestamp>}`
 2. **Put** `{pk: S#uuid, sk: <old-timestamp>, ...attributes...}` — demotes old device to history with no GSI attributes; the timestamp is preserved so the row records when that device *was* active from
-3. **Put** `{pk: S#uuid, sk: active#<now>, gsi1pk: ..., gsi1sk: active#<now>, daq_address: <new>, ...}` — new active row timestamped at the moment of replacement
+3. **Put** `{pk: S#uuid, sk: active#<now>, daq_address: <new>, ...}` — new active row timestamped at the moment of replacement
 
 The history rows therefore form a timeline: each plain-timestamp row shows which physical device was active and from when, up until the next replacement.
 
@@ -224,38 +223,66 @@ Levels with no entry in `sensors` simply cannot host meters, and attachment fail
 
 ### 6.3 Formula model
 
-Default is identity — "what the meter reports" — which must be representable without the user writing anything. Anything else is an expression referencing this sensor and/or others by local alias.
+Every sensor produces a computed value (written S') that is always non-negative. The default formula is identity (`S' = S`). More complex formulas subtract out sub-metered contributions so that summing all sensors in a subtree gives total consumption without double-counting.
 
 ```ocaml
 type formula =
-  | Identity                        (* = 1 * value, the common case *)
+  | Identity                        (* S' = Self, the common case *)
   | Expr of {
       ast  : expr;
-      refs : (string * string) list;   (* alias -> sensor uuid, e.g. "S1" -> "<uuid>" *)
+      refs : (string * string) list;   (* alias -> sensor uuid, e.g. "S3" -> "<uuid>" *)
     }
 
 and expr =
   | Num  of float
-  | Self                            (* this meter's value *)
-  | Ref  of string                  (* alias from refs, e.g. "S1" *)
-  | Neg  of expr
+  | Self                            (* raw reading of this meter *)
+  | Ref  of string                  (* computed value (S') of a referenced sensor *)
+  | Abs  of expr
   | Add  of expr * expr
   | Sub  of expr * expr
   | Mul  of expr * expr
   | Div  of expr * expr
 ```
 
-Examples:
-- `1 * value`  → `Identity`
-- `S1 - S2`    → `Expr { ast = Sub (Ref "S1", Ref "S2"); refs = [("S1", uuid_a); ("S2", uuid_b)] }`
-- `S1 * 1 - S2 * 1` → same as above (multiplier elided; parser folds `Mul (_, Num 1.0)`)
+**Key distinction:** `Self` is the raw meter reading. `Ref "S3"` resolves to the *computed* value S3' of the referenced sensor — evaluation is therefore topological; leaves are evaluated before the sensors that reference them.
 
-`refs` maps human-readable aliases to sensor uuids. The uuid is the stable identity (the non-prefix part of `S#<uuid>`), so sensors can be renamed without rewriting every formula that references them. Evaluation looks up `S#<uuid>` node rows, fetches their latest readings, substitutes, and reduces.
+**Worked example** — a building with two areas:
+
+```mermaid
+graph TD
+  B["Building"] --> A1["Area 1"]
+  B --> A2["Area 2"]
+
+  B -->|has_sensor| S1["S1<br/>abs(Self - S2' - S3')"]
+  A1 -->|has_sensor| S2["S2<br/>identity"]
+  A2 -->|has_sensor| S3["S3<br/>abs(Self - S4' - S5')"]
+  A2 -->|has_sensor| S4["S4<br/>identity"]
+  A2 -->|has_sensor| S5["S5<br/>identity"]
+
+  S1 -.-> S2
+  S1 -.-> S3
+  S3 -.-> S4
+  S3 -.-> S5
+```
+
+Solid edges = hierarchy. Dashed edges = formula references (`Ref` resolves to the referenced sensor's computed value S').
+
+Formulas and what they express:
+- `S2' = Self` — area 1 is fully captured by its own meter
+- `S4' = Self`, `S5' = Self` — identity; raw sub-meter readings
+- `S3' = abs(Self - S4' - S5')` — area 2 remainder after sub-meters; zero if S4+S5 accounts for everything, positive if there is unmetered consumption
+- `S1' = abs(Self - S2' - S3')` — building remainder after the two areas
+
+AST for S3: `Expr { ast = Abs (Sub (Sub (Self, Ref "S4"), Ref "S5")); refs = [("S4", uuid4); ("S5", uuid5)] }`
+
+Total consumption for the building: `S1' + S2' + S3' + S4' + S5'` — each sensor contributes its net share with no double-counting.
+
+`refs` maps human-readable aliases to sensor uuids. The uuid is the stable identity, so sensors can be renamed without rewriting every formula that references them. Cycles are rejected at schema validation time.
 
 ### 6.4 How this stays additive
 
 - The existing `edges` / `metadata` model is untouched; `sensors` is a new optional key on the schema record.
-- Sensors are hierarchy nodes (`pk = S#<uuid>`, `sk = NODE#`). The `gsi1sk = SENSOR#…` prefix separates them from `CHILD#…` entries in the GSI, so `list_children` and `list_sensors` share the same index without conflict.
+- Sensors live in their own partitions (`pk = S#<uuid>`), separate from hierarchy nodes. The existing `gsi1` index is untouched.
 - Existing node rows don't change shape. `daq_address` is a plain attribute on sensor assignment rows; there is no `partner_id` concept in the hierarchy — that was a flink-table partitioning artifact.
 - `Schema_check.find_for` already gives any node its owning schema — `Hierarchy.attach_sensor` reuses it unchanged.
 - Formula evaluation is pure and lives in a new `Formula` module; it has no side effects beyond the `Effects.get_sensor_value` it will introduce.
