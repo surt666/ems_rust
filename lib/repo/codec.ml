@@ -276,6 +276,163 @@ let decode_schema (v : Dyn.attribute_value) : (Schema.t, string) result =
   in
   Ok Schema.{ version; edges; metadata; sensors = [] }
 
+let rec expr_to_attr : Formula.expr -> Dyn.attribute_value = function
+  | Formula.Num f  -> Dyn.M [ ("t", s "num"); ("v", n (Printf.sprintf "%.17g" f)) ]
+  | Formula.Self   -> Dyn.M [ ("t", s "self") ]
+  | Formula.Ref a  -> Dyn.M [ ("t", s "ref"); ("a", s a) ]
+  | Formula.Abs e  -> Dyn.M [ ("t", s "abs"); ("e", expr_to_attr e) ]
+  | Formula.Add (a, b) ->
+      Dyn.M [ ("t", s "add"); ("l", expr_to_attr a); ("r", expr_to_attr b) ]
+  | Formula.Sub (a, b) ->
+      Dyn.M [ ("t", s "sub"); ("l", expr_to_attr a); ("r", expr_to_attr b) ]
+  | Formula.Mul (a, b) ->
+      Dyn.M [ ("t", s "mul"); ("l", expr_to_attr a); ("r", expr_to_attr b) ]
+  | Formula.Div (a, b) ->
+      Dyn.M [ ("t", s "div"); ("l", expr_to_attr a); ("r", expr_to_attr b) ]
+
+let rec expr_of_attr (v : Dyn.attribute_value) : (Formula.expr, string) result =
+  let* kvs = as_map v in
+  let* tag = field kvs "t" in
+  let* tag_s = as_string tag in
+  match tag_s with
+  | "num" ->
+      let* v = field kvs "v" in
+      (match v with
+       | Dyn.N s -> (try Ok (Formula.Num (float_of_string s))
+                     with _ -> Error "bad num")
+       | _ -> Error "num needs N")
+  | "self" -> Ok Formula.Self
+  | "ref" ->
+      let* a = field kvs "a" in
+      let* a_s = as_string a in
+      Ok (Formula.Ref a_s)
+  | "abs" ->
+      let* e = field kvs "e" in
+      let* e' = expr_of_attr e in
+      Ok (Formula.Abs e')
+  | "add" | "sub" | "mul" | "div" ->
+      let* l = field kvs "l" in
+      let* l' = expr_of_attr l in
+      let* r = field kvs "r" in
+      let* r' = expr_of_attr r in
+      (match tag_s with
+       | "add" -> Ok (Formula.Add (l', r'))
+       | "sub" -> Ok (Formula.Sub (l', r'))
+       | "mul" -> Ok (Formula.Mul (l', r'))
+       | _     -> Ok (Formula.Div (l', r')))
+  | other -> Error (Printf.sprintf "unknown expr tag %S" other)
+
+let formula_to_attr (f : Formula.t) : Dyn.attribute_value =
+  match f with
+  | Formula.Identity -> Dyn.M [ ("kind", s "identity") ]
+  | Formula.Expr { ast; refs } ->
+      let refs_m =
+        List.map (fun (a, u) -> (a, s (Uuidm.to_string u))) refs
+      in
+      Dyn.M [
+        ("kind", s "expr");
+        ("ast",  expr_to_attr ast);
+        ("refs", Dyn.M refs_m);
+      ]
+
+let formula_of_attr (v : Dyn.attribute_value) : (Formula.t, string) result =
+  let* kvs = as_map v in
+  let* kind_v = field kvs "kind" in
+  let* kind_s = as_string kind_v in
+  match kind_s with
+  | "identity" -> Ok Formula.Identity
+  | "expr" ->
+      let* ast_v = field kvs "ast" in
+      let* ast = expr_of_attr ast_v in
+      let* refs_v = field kvs "refs" in
+      let* refs_m = as_map refs_v in
+      let* refs =
+        List.fold_left
+          (fun acc (a, v) ->
+            let* acc = acc in
+            let* u_s = as_string v in
+            match Uuidm.of_string u_s with
+            | Some u -> Ok ((a, u) :: acc)
+            | None -> Error (Printf.sprintf "bad ref uuid %S" u_s))
+          (Ok []) refs_m
+      in
+      Ok (Formula.Expr { ast; refs = List.rev refs })
+  | other -> Error (Printf.sprintf "unknown formula kind %S" other)
+
+let sensor_to_item ~active (sn : Sensor.t) : (string * Dyn.attribute_value) list =
+  let pk = Sensor_id.to_string sn.Sensor.id in
+  let sk_t =
+    if active
+    then Sensor_sk.Active sn.Sensor.active_from
+    else Sensor_sk.History sn.Sensor.active_from
+  in
+  let base =
+    [
+      ("pk", s pk);
+      ("sk", s (Sensor_sk.to_string sk_t));
+      ("type", s "sensor");
+      ("parent", s (Node_id.to_string sn.Sensor.parent));
+      ("daq_address", s sn.Sensor.daq_address);
+      ("hierarchy_path", s sn.Sensor.hierarchy_path);
+      ("purpose", s sn.Sensor.purpose);
+      ("meter_type", s (Sensor.meter_type_to_string sn.Sensor.meter_type));
+      ("formula", formula_to_attr sn.Sensor.formula);
+      ("active_from", s (Ptime.to_rfc3339 ~tz_offset_s:0 sn.Sensor.active_from));
+    ]
+  in
+  match sn.Sensor.unit with
+  | Some u -> ("unit", s u) :: base
+  | None -> base
+
+let sensor_edge_item ~parent ~sensor_id ~created =
+  let pk = Node_id.to_string parent in
+  let sid = Sensor_id.to_string sensor_id in
+  [
+    ("pk", s pk);
+    ("sk", s (Printf.sprintf "has_sensor#%s" sid));
+    ("type", s "sensor_edge");
+    ("sensor_id", s sid);
+    ("created", s (Ptime.to_rfc3339 ~tz_offset_s:0 created));
+  ]
+
+let sensor_of_item kvs : (Sensor.t, string) result =
+  let* pk = field kvs "pk" in
+  let* pk_s = as_string pk in
+  let* id = Sensor_id.of_string pk_s in
+  let* parent_v = field kvs "parent" in
+  let* parent_s = as_string parent_v in
+  let* parent = Node_id.of_string parent_s in
+  let* daq_v = field kvs "daq_address" in
+  let* daq_address = as_string daq_v in
+  let* hp_v = field kvs "hierarchy_path" in
+  let* hierarchy_path = as_string hp_v in
+  let* purpose_v = field kvs "purpose" in
+  let* purpose = as_string purpose_v in
+  let* mt_v = field kvs "meter_type" in
+  let* mt_s = as_string mt_v in
+  let* meter_type = Sensor.meter_type_of_string mt_s in
+  let unit =
+    match List.assoc_opt "unit" kvs with
+    | Some (Dyn.S u) -> Some u
+    | _ -> None
+  in
+  let* af_v = field kvs "active_from" in
+  let* af_s = as_string af_v in
+  let active_from =
+    match Ptime.of_rfc3339 af_s with
+    | Ok (t, _, _) -> t
+    | Error _ -> Ptime.epoch
+  in
+  let* formula =
+    match List.assoc_opt "formula" kvs with
+    | Some v -> formula_of_attr v
+    | None -> Ok Formula.Identity
+  in
+  Ok Sensor.{
+    id; active_from; parent; daq_address; hierarchy_path;
+    purpose; meter_type; unit; formula;
+  }
+
 let node_of_item kvs =
   let* pk = field kvs "pk" in
   let* pk = as_string pk in
