@@ -186,6 +186,40 @@ let get_active_unknown () =
     | Error (Errors.Not_found _) -> ()
     | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
 
+let replace_device_promotes_new () =
+  let st = Memory.empty () in
+  let c2 = seed_company st in
+  let bldg = seed_building st c2 in
+  Memory.run st (fun () ->
+    let s =
+      match
+        Sensors.attach ~parent:bldg ~kind:"electricity"
+          ~daq_address:"daq:old" ~purpose:"Electricity"
+          ~meter_type:Sensor.Counter ()
+      with
+      | Ok x -> x
+      | Error e -> Alcotest.failf "attach: %s" (Errors.message e)
+    in
+    match Sensors.replace_device ~sensor_id:s.Sensor.id ~new_daq_address:"daq:new" () with
+    | Error e -> Alcotest.failf "replace: %s" (Errors.message e)
+    | Ok s2 ->
+        Alcotest.(check string) "new daq" "daq:new" s2.Sensor.daq_address;
+        (match Sensors.get_active s.Sensor.id with
+         | Ok cur ->
+             Alcotest.(check string) "active is new" "daq:new" cur.Sensor.daq_address;
+             Alcotest.(check bool) "active_from updated" true
+               (not (Ptime.equal s.Sensor.active_from cur.Sensor.active_from))
+         | Error e -> Alcotest.failf "get: %s" (Errors.message e)))
+
+let replace_unknown_fails () =
+  let st = Memory.empty () in
+  Memory.run st (fun () ->
+    let id = Sensor_id.make (uuid_of "ffffffff-0000-4000-8000-000000000002") in
+    match Sensors.replace_device ~sensor_id:id ~new_daq_address:"x" () with
+    | Ok _ -> Alcotest.fail "expected Not_found"
+    | Error (Errors.Not_found _) -> ()
+    | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
+
 let tests =
   [
     Alcotest.test_case "attach happy path"       `Quick attach_happy;
@@ -197,4 +231,6 @@ let tests =
     Alcotest.test_case "list_active empty"            `Quick list_active_empty_when_none;
     Alcotest.test_case "get_active happy"   `Quick get_active_happy;
     Alcotest.test_case "get_active unknown" `Quick get_active_unknown;
+    Alcotest.test_case "replace_device promotes new" `Quick replace_device_promotes_new;
+    Alcotest.test_case "replace_device unknown"      `Quick replace_unknown_fails;
   ]

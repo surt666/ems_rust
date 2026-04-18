@@ -84,3 +84,22 @@ let get_active id =
       (* Reuse Not_found by synthesizing a pseudo node-id from the sensor's uuid *)
       Error (Errors.Not_found
                (Node_id.make Level.Hn9 (Sensor_id.uuid id)))
+
+let replace_device ~sensor_id ~new_daq_address () =
+  let* old =
+    match Effects.get_active_sensor sensor_id with
+    | Some s -> Ok s
+    | None ->
+        Error (Errors.Not_found
+                 (Node_id.make Level.Hn9 (Sensor_id.uuid sensor_id)))
+  in
+  let now = Effects.now () in
+  let new_sensor =
+    { old with
+      Sensor.active_from = now;
+      daq_address = new_daq_address;
+    }
+  in
+  Effects.replace_sensor_device
+    ~old_active_from:old.Sensor.active_from ~new_sensor;
+  Ok new_sensor
