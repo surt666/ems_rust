@@ -159,6 +159,33 @@ let list_active_empty_when_none () =
     | Error e -> Alcotest.failf "list: %s" (Errors.message e)
     | Ok xs -> Alcotest.(check int) "zero" 0 (List.length xs))
 
+let get_active_happy () =
+  let st = Memory.empty () in
+  let c2 = seed_company st in
+  let bldg = seed_building st c2 in
+  Memory.run st (fun () ->
+    let s =
+      match
+        Sensors.attach ~parent:bldg ~kind:"electricity"
+          ~daq_address:"daq:k" ~purpose:"Electricity"
+          ~meter_type:Sensor.Counter ()
+      with
+      | Ok x -> x
+      | Error e -> Alcotest.failf "attach: %s" (Errors.message e)
+    in
+    match Sensors.get_active s.Sensor.id with
+    | Ok s2 -> Alcotest.(check string) "daq" "daq:k" s2.Sensor.daq_address
+    | Error e -> Alcotest.failf "get: %s" (Errors.message e))
+
+let get_active_unknown () =
+  let st = Memory.empty () in
+  Memory.run st (fun () ->
+    let id = Sensor_id.make (uuid_of "ffffffff-0000-4000-8000-000000000001") in
+    match Sensors.get_active id with
+    | Ok _ -> Alcotest.fail "expected not found"
+    | Error (Errors.Not_found _) -> ()
+    | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
+
 let tests =
   [
     Alcotest.test_case "attach happy path"       `Quick attach_happy;
@@ -168,4 +195,6 @@ let tests =
     Alcotest.test_case "rejects meter mismatch"  `Quick rejects_meter_type_mismatch;
     Alcotest.test_case "list_active returns attached" `Quick list_active_returns_attached;
     Alcotest.test_case "list_active empty"            `Quick list_active_empty_when_none;
+    Alcotest.test_case "get_active happy"   `Quick get_active_happy;
+    Alcotest.test_case "get_active unknown" `Quick get_active_unknown;
   ]

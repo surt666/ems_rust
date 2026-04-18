@@ -76,3 +76,11 @@ let list_active ~parent =
       ids
   in
   Ok xs
+
+let get_active id =
+  match Effects.get_active_sensor id with
+  | Some s -> Ok s
+  | None ->
+      (* Reuse Not_found by synthesizing a pseudo node-id from the sensor's uuid *)
+      Error (Errors.Not_found
+               (Node_id.make Level.Hn9 (Sensor_id.uuid id)))
