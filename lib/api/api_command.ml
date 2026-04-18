@@ -14,7 +14,6 @@ let ( let* ) = Result.bind
 
 let run_add_node json =
   let* parent_s = require_string json "parent_id" in
-  let* level_s  = require_string json "level"     in
   let* name     = require_string json "name"      in
   let metadata =
     match field json "metadata" with
@@ -26,6 +25,15 @@ let run_add_node json =
     | Some (`String s) -> Some s
     | _ -> None
   in
+  let* level =
+    match field json "level" with
+    | None -> Ok None
+    | Some (`String s) ->
+        (match Level.of_string s with
+         | Ok lv -> Ok (Some lv)
+         | Error e -> Error e)
+    | Some _ -> Error "non-string field \"level\""
+  in
   let* schema =
     match field json "schema" with
     | None -> Ok None
@@ -35,8 +43,7 @@ let run_add_node json =
          | Error msg -> Error (Printf.sprintf "invalid schema: %s" msg))
   in
   let* parent = Node_id.of_string parent_s in
-  let* level  = Level.of_string level_s     in
-  match Hierarchy.add_node ?label ?schema ~parent ~level ~name ~metadata () with
+  match Hierarchy.add_node ?label ?schema ?level ~parent ~name ~metadata () with
   | Ok n -> Ok (Api_json.ok_response (Api_json.node_to_json n))
   | Error e -> Ok (Api_json.error_response e)
 

@@ -160,6 +160,63 @@ let company_without_schema_fails () =
     | Error (Errors.Bad_request _) -> ()
     | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
 
+let infers_level_default_parent_plus_one () =
+  let st = Memory.empty () in
+  let c2 = seed_company st in
+  Memory.run st (fun () ->
+    match
+      Hierarchy.add_node ~parent:c2 ~name:"P" ~metadata:(`Assoc []) ()
+    with
+    | Error e -> Alcotest.failf "%s" (Errors.message e)
+    | Ok n ->
+        Alcotest.(check bool) "resolved to hn3" true
+          (Node_id.level n.Node.id = Level.Hn3))
+
+let infers_level_from_label () =
+  let st = Memory.empty () in
+  let c2 = seed_company st in
+  Memory.run st (fun () ->
+    match
+      Hierarchy.add_node ~parent:c2 ~label:"property"
+        ~name:"P" ~metadata:(`Assoc []) ()
+    with
+    | Error e -> Alcotest.failf "%s" (Errors.message e)
+    | Ok n ->
+        Alcotest.(check bool) "resolved to hn3 via label" true
+          (Node_id.level n.Node.id = Level.Hn3))
+
+let cross_level_label_schema : Schema.t =
+  Schema.{
+    version = 1;
+    edges = [
+      (Level.Hn2, [
+        (Level.Hn3, [ { label = "floor";  min = None; max = None } ]);
+        (Level.Hn4, [ { label = "zone";   min = None; max = None } ]);
+      ]);
+    ];
+    metadata = [];
+    sensors = [];
+  }
+
+let infers_level_from_cross_level_label () =
+  let st = Memory.empty () in
+  let c2 = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-0000000000bb") in
+  let n2 =
+    Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"X"
+      ~parent:Node_id.root ~created:Ptime.epoch
+      ~metadata:(`Assoc []) ~schema:(Some cross_level_label_schema)
+  in
+  Memory.run st (fun () -> Effects.put_node n2);
+  Memory.run st (fun () ->
+    match
+      Hierarchy.add_node ~parent:c2 ~label:"zone"
+        ~name:"Z" ~metadata:(`Assoc []) ()
+    with
+    | Error e -> Alcotest.failf "%s" (Errors.message e)
+    | Ok n ->
+        Alcotest.(check bool) "label=zone resolved to hn4" true
+          (Node_id.level n.Node.id = Level.Hn4))
+
 let tests =
   [
     Alcotest.test_case "add property + building" `Quick add_property_and_building;
@@ -170,4 +227,9 @@ let tests =
     Alcotest.test_case "rejects creating root" `Quick rejects_root_creation;
     Alcotest.test_case "creates company with schema" `Quick creates_company_with_schema;
     Alcotest.test_case "company without schema fails" `Quick company_without_schema_fails;
+    Alcotest.test_case "infers level = parent+1 by default" `Quick
+      infers_level_default_parent_plus_one;
+    Alcotest.test_case "infers level from label" `Quick infers_level_from_label;
+    Alcotest.test_case "infers level from cross-level label" `Quick
+      infers_level_from_cross_level_label;
   ]

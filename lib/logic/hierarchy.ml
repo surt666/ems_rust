@@ -39,11 +39,42 @@ let add_under_schema ?label ~parent ~parent_level ~level ~metadata () =
   in
   Ok edge_spec.Schema.label
 
-let add_node ?label ?schema ~parent ~level ~name ~metadata () =
+let resolve_child_level ?label ~parent ~parent_level () =
+  match parent_level with
+  | Level.Hn0 -> Ok Level.Hn1
+  | Level.Hn1 -> Ok Level.Hn2
+  | _ ->
+      let* _host, schema = Schema_check.find_for parent in
+      (match label with
+       | Some l ->
+           let matches =
+             List.filter_map
+               (fun (child, specs) ->
+                 if List.exists (fun (s : Schema.edge_spec) -> s.label = l) specs
+                 then Some child else None)
+               (Schema.allowed_children schema parent_level)
+           in
+           (match matches with
+            | [ c ] -> Ok c
+            | [] ->
+                Error (bad (Printf.sprintf "no edge from %s with label %S"
+                              (Level.to_string parent_level) l))
+            | _ ->
+                Error (bad (Printf.sprintf
+                              "label %S matches multiple target levels; specify level"
+                              l)))
+       | None ->
+           (match Level.of_depth (Level.depth parent_level + 1) with
+            | Some lv -> Ok lv
+            | None ->
+                Error (bad (Printf.sprintf "no default child level for %s"
+                              (Level.to_string parent_level)))))
+
+let add_node ?label ?schema ?level ~parent ~name ~metadata () =
   let* () =
-    if level = Level.Hn0
-    then Error (Errors.Bad_request "cannot create root via add_node")
-    else Ok ()
+    match level with
+    | Some Level.Hn0 -> Error (Errors.Bad_request "cannot create root via add_node")
+    | _ -> Ok ()
   in
   let* parent_node =
     match Effects.get_node parent with
@@ -51,6 +82,11 @@ let add_node ?label ?schema ~parent ~level ~name ~metadata () =
     | Some n -> Ok n
   in
   let parent_level = Node_id.level parent_node.Node.id in
+  let* level =
+    match level with
+    | Some lv -> Ok lv
+    | None -> resolve_child_level ?label ~parent ~parent_level ()
+  in
   let* () =
     if Level.depth parent_level < Level.depth level then Ok ()
     else Error (bad "child depth must exceed parent depth")
