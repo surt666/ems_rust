@@ -121,12 +121,14 @@ Single-table design, table name in `$ITEST_DYNAMO_TABLE` (prod: `hierarchy_new`)
 
 **Sensor rows:**
 
-| Attribute | Sensor assignment row          | Sensor edge row            |
-|-----------|--------------------------------|----------------------------|
-| `pk`      | `S#<uuid>`                     | `<parent_node_pk>`         |
-| `sk`      | `S#<uuid>#<iso8601-timestamp>` | `has_sensor#S#<uuid>`      |
+| Attribute | Active assignment row             | History row        | Sensor edge row       |
+|-----------|-----------------------------------|--------------------|-----------------------|
+| `pk`      | `S#<uuid>`                        | `S#<uuid>`         | `<parent_node_pk>`    |
+| `sk`      | `active#<iso8601>`                | `<iso8601>`        | `has_sensor#S#<uuid>` |
+| `gsi1pk`  | `<parent_node_pk>`                | —                  | —                     |
+| `gsi1sk`  | `active#<iso8601>`                | —                  | —                     |
 
-Sensor rows carry no GSI attributes. The parent edge (`sk = has_sensor#S#<uuid>`) is how you discover which sensors are attached to a node; looking up the sensor itself is a direct pk query.
+Only the active assignment row carries GSI attributes (sparse index). History rows have no GSI attributes and are never modified after creation.
 
 `gsi1` is used for `list_children` — query `gsi1pk = parent_pk` returns every child in one round trip.
 
@@ -153,32 +155,44 @@ Goal: attach physical meter readings to nodes. Schema decides which levels can h
 
 ### 6.1 Data shape
 
-A sensor's logical identity is a stable `uuid`. Physical daq devices break and get replaced; each replacement is recorded as a new assignment row under the same `uuid`. The newest row (highest sort key) is the current device.
+A sensor's logical identity is a stable `uuid`. Physical daq devices break and get replaced; each replacement records the old device as a history row and promotes the new one to active. Only the active row carries GSI attributes, so querying by node returns only live sensors with no filter expression.
 
-**Sensor assignment rows** — one partition per logical sensor, one row per physical device assignment:
+**Sensor rows** — one partition per logical sensor (`pk = S#<uuid>`):
 
-| Attribute        | Example                                            | Purpose |
-|------------------|----------------------------------------------------|---------|
-| `pk`             | `S#<uuid>`                                         | logical sensor identity |
-| `sk`             | `S#<uuid>#2026-04-18T10:00:00Z`                    | `pk` + ISO 8601 timestamp; latest sk = current assignment |
-| `daq_address`    | `daq:adeunis_pu_v1:123:0018b210000191c7:counter_a` | physical device address for this assignment |
-| `hierarchy_path` | `P1#C1#PR1#B2`                                     | cached human path; denormalized for readability |
-| `meter_type`     | `counter` \| `gauge`                               | semantic kind |
-| `unit`           | `kWh`, `m3`, …                                     | optional, informational |
-| `formula`        | (see §6.3)                                         | expression evaluated at read time |
+| Attribute        | Active assignment                                  | History row     | Purpose |
+|------------------|----------------------------------------------------|-----------------|---------|
+| `pk`             | `S#<uuid>`                                         | `S#<uuid>`      | logical sensor identity |
+| `sk`             | `active#2026-04-18T10:00:00Z`                      | `2026-03-01T...`| `active#` prefix marks the live device; plain timestamp for history |
+| `gsi1pk`         | `<parent_node_pk>`                                 | —               | sparse — only active rows appear in the GSI |
+| `gsi1sk`         | `active#2026-04-18T10:00:00Z`                      | —               | |
+| `daq_address`    | `daq:adeunis_pu_v1:123:0018b210000191c7:counter_a` | (same)          | physical device address |
+| `hierarchy_path` | `P1#C1#PR1#B2`                                     | (same)          | cached human path; denormalized |
+| `purpose`        | `Electricity` \| `Heat` \| …                       | (same)          | what is being measured |
+| `meter_type`     | `counter` \| `gauge`                               | (same)          | semantic kind |
+| `unit`           | `kWh`, `m3`, …                                     | (same)          | optional, informational |
+| `formula`        | (see §6.3)                                         | (same)          | expression evaluated at read time |
 
-Query pattern: `pk = S#<uuid>`, sort by `sk` descending, limit 1 → current physical device.
+Query patterns:
+- **Active sensors on a node**: GSI query `gsi1pk = HN5#uuid`, `gsi1sk begins_with active#` — no filter, no dedup, exactly one row per sensor.
+- **Full history for a sensor**: query `pk = S#<uuid>` — returns the active row plus all history rows sorted by sk.
+
+**Device replacement** — because sk is part of the primary key it cannot be updated in place. A replacement is a 3-op `TransactWriteItems` (read old active row first, then in one transaction):
+1. **Delete** `{pk: S#uuid, sk: active#<old-timestamp>}`
+2. **Put** `{pk: S#uuid, sk: <old-timestamp>, ...attributes...}` — demotes old device to history with no GSI attributes; the timestamp is preserved so the row records when that device *was* active from
+3. **Put** `{pk: S#uuid, sk: active#<now>, gsi1pk: ..., gsi1sk: active#<now>, daq_address: <new>, ...}` — new active row timestamped at the moment of replacement
+
+The history rows therefore form a timeline: each plain-timestamp row shows which physical device was active and from when, up until the next replacement.
+
+Replacements are rare (a broken device is an exceptional event), so the read-then-transact cost is acceptable.
 
 **Sensor edge row** (written into the parent node's partition):
 
 | Attribute | Example                | Purpose |
 |-----------|------------------------|---------|
 | `pk`      | `<parent_node_pk>`     | the hierarchy node this sensor is attached to |
-| `sk`      | `has_sensor#S#<uuid>`  | queryable alongside `has_<label>` child edges; reveals attached sensor uuids |
+| `sk`      | `has_sensor#S#<uuid>`  | written once at attachment; survives device replacements |
 
-To list sensors on a node: query `pk = <parent_node_pk>`, filter `sk begins_with has_sensor#`. No GSI needed.
-
-**Flink-optimized table** — a separate DynamoDB table fed by a DDB stream from the hierarchy table. The flink pipeline reads from this table, which uses a partition scheme tuned for high-throughput reads (e.g. `pk` = a shard key derived from the daq address). The hierarchy table remains the source of truth; the flink table is a derived projection.
+**Flink-optimized table** — a separate DynamoDB table fed by a DDB stream from the hierarchy table. The flink pipeline reads from this table using a partition scheme tuned for high-throughput reads. The hierarchy table remains the source of truth; the flink table is a derived projection.
 
 ### 6.2 Schema extension
 
