@@ -78,3 +78,79 @@ let tests =
     Alcotest.test_case "list_children label filter" `Quick list_children_filters_by_label;
     Alcotest.test_case "delete removes edges" `Quick delete_node_removes_edges;
   ]
+
+let ptime_of s = Ptime.of_rfc3339 s |> Result.get_ok |> fun (t, _, _) -> t
+let uuid_of s = Uuidm.of_string s |> Option.get
+
+let mk_sensor ~sensor_uuid ~parent ~active_from ~daq : Sensor.t =
+  {
+    id = Sensor_id.make sensor_uuid;
+    active_from;
+    parent;
+    daq_address = daq;
+    hierarchy_path = "";
+    purpose = "Electricity";
+    meter_type = Sensor.Counter;
+    unit = Some "kWh";
+    formula = Formula.Identity;
+  }
+
+let memory_put_and_get_active_sensor () =
+  let st = Memory.empty () in
+  let parent = Node_id.make Level.Hn4 (uuid_of "aaaaaaaa-0000-4000-8000-000000000001") in
+  let s_uuid = uuid_of "bbbbbbbb-0000-4000-8000-000000000001" in
+  let s =
+    mk_sensor ~sensor_uuid:s_uuid ~parent
+      ~active_from:(ptime_of "2026-04-18T10:00:00Z")
+      ~daq:"daq:x"
+  in
+  Memory.run st (fun () ->
+    Effects.put_sensor ~sensor:s ~parent;
+    match Effects.get_active_sensor s.Sensor.id with
+    | Some s2 ->
+        Alcotest.(check string) "daq preserved" "daq:x" s2.Sensor.daq_address
+    | None -> Alcotest.fail "expected active")
+
+let memory_list_sensor_ids_returns_attached () =
+  let st = Memory.empty () in
+  let parent = Node_id.make Level.Hn4 (uuid_of "aaaaaaaa-0000-4000-8000-000000000002") in
+  let s1 =
+    mk_sensor
+      ~sensor_uuid:(uuid_of "bbbbbbbb-0000-4000-8000-000000000010") ~parent
+      ~active_from:(ptime_of "2026-04-18T10:00:00Z") ~daq:"daq:a"
+  in
+  let s2 =
+    mk_sensor
+      ~sensor_uuid:(uuid_of "bbbbbbbb-0000-4000-8000-000000000011") ~parent
+      ~active_from:(ptime_of "2026-04-18T11:00:00Z") ~daq:"daq:b"
+  in
+  Memory.run st (fun () ->
+    Effects.put_sensor ~sensor:s1 ~parent;
+    Effects.put_sensor ~sensor:s2 ~parent;
+    let ids = Effects.list_sensor_ids parent in
+    Alcotest.(check int) "two sensors attached" 2 (List.length ids))
+
+let memory_replace_device_demotes_old_and_promotes_new () =
+  let st = Memory.empty () in
+  let parent = Node_id.make Level.Hn4 (uuid_of "aaaaaaaa-0000-4000-8000-000000000003") in
+  let s_uuid = uuid_of "bbbbbbbb-0000-4000-8000-000000000020" in
+  let old_t = ptime_of "2026-03-01T00:00:00Z" in
+  let new_t = ptime_of "2026-04-18T10:00:00Z" in
+  let old_s = mk_sensor ~sensor_uuid:s_uuid ~parent ~active_from:old_t ~daq:"daq:old" in
+  let new_s = mk_sensor ~sensor_uuid:s_uuid ~parent ~active_from:new_t ~daq:"daq:new" in
+  Memory.run st (fun () ->
+    Effects.put_sensor ~sensor:old_s ~parent;
+    Effects.replace_sensor_device ~old_active_from:old_t ~new_sensor:new_s;
+    match Effects.get_active_sensor old_s.Sensor.id with
+    | Some s ->
+        Alcotest.(check string) "active daq is the new one"
+          "daq:new" s.Sensor.daq_address
+    | None -> Alcotest.fail "expected active after replace")
+
+let tests =
+  tests @
+  [
+    Alcotest.test_case "put + get_active"         `Quick memory_put_and_get_active_sensor;
+    Alcotest.test_case "list_sensor_ids"          `Quick memory_list_sensor_ids_returns_attached;
+    Alcotest.test_case "replace_device"           `Quick memory_replace_device_demotes_old_and_promotes_new;
+  ]

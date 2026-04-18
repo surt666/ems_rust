@@ -1,6 +1,9 @@
+type sensor_row = Active of Sensor.t | History of Sensor.t
+
 type state = {
   nodes    : (string, Node.t) Hashtbl.t;
   edges    : (Node_id.t * string * Node_id.t) list ref;
+  sensors  : (string, sensor_row list) Hashtbl.t;
   rng      : Random.State.t;
   clock    : unit -> Ptime.t;
 }
@@ -9,6 +12,7 @@ let empty ?(seed = 42) ?(clock = Ptime_clock.now) () =
   {
     nodes = Hashtbl.create 32;
     edges = ref [];
+    sensors = Hashtbl.create 32;
     rng = Random.State.make [| seed |];
     clock;
   }
@@ -22,6 +26,15 @@ let fresh_uuid rng =
 
 let find_node st id =
   Hashtbl.find_opt st.nodes (Node_id.to_string id)
+
+let sensor_rows st id =
+  Hashtbl.find_opt st.sensors (Sensor_id.to_string id) |> Option.value ~default:[]
+
+let set_sensor_rows st id rows =
+  Hashtbl.replace st.sensors (Sensor_id.to_string id) rows
+
+let active_of_rows rows =
+  List.find_map (function Active s -> Some s | History _ -> None) rows
 
 let run (st : state) (f : unit -> 'a) : 'a =
   let open Effect.Deep in
@@ -82,5 +95,49 @@ let run (st : state) (f : unit -> 'a) : 'a =
                     not (Node_id.equal p id) && not (Node_id.equal c id))
                   !(st.edges);
               Some (fun k -> continue k ())
+          | Effects.Put_sensor { sensor; parent } ->
+              let rows = sensor_rows st sensor.Sensor.id in
+              set_sensor_rows st sensor.Sensor.id (Active sensor :: rows);
+              st.edges :=
+                (parent, "sensor", Node_id.make Level.Hn9 (Sensor_id.uuid sensor.Sensor.id))
+                :: !(st.edges);
+              Some (fun k -> continue k ())
+          | Effects.Get_active_sensor id ->
+              let v = active_of_rows (sensor_rows st id) in
+              Some (fun k -> continue k v)
+          | Effects.List_sensor_ids parent ->
+              let ids =
+                List.filter_map
+                  (fun (p, lbl, c) ->
+                    if Node_id.equal p parent && lbl = "sensor"
+                    then Some (Sensor_id.make (Node_id.uuid c))
+                    else None)
+                  !(st.edges)
+              in
+              Some (fun k -> continue k ids)
+          | Effects.Replace_sensor_device { old_active_from; new_sensor } ->
+              let id = new_sensor.Sensor.id in
+              let rows = sensor_rows st id in
+              let demote = function
+                | Active s when Ptime.equal s.Sensor.active_from old_active_from ->
+                    History s
+                | other -> other
+              in
+              let demoted = List.map demote rows in
+              set_sensor_rows st id (Active new_sensor :: demoted);
+              Some (fun k -> continue k ())
+          | Effects.Delete_sensor { sensor_id; parent } ->
+              Hashtbl.remove st.sensors (Sensor_id.to_string sensor_id);
+              let target = Sensor_id.uuid sensor_id in
+              st.edges :=
+                List.filter
+                  (fun (p, lbl, c) ->
+                    not
+                      (Node_id.equal p parent && lbl = "sensor"
+                       && Uuidm.equal (Node_id.uuid c) target))
+                  !(st.edges);
+              Some (fun k -> continue k ())
+          | Effects.Get_sensor_reading _id ->
+              Some (fun k -> continue k None)
           | _ -> None);
     }
