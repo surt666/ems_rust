@@ -121,16 +121,14 @@ Single-table design, table name in `$ITEST_DYNAMO_TABLE` (prod: `hierarchy_new`)
 
 **Sensor rows:**
 
-| Attribute | Sensor node row    | Sensor edge row          |
-|-----------|--------------------|--------------------------|
-| `pk`      | `S#<uuid>`         | `<parent_node_pk>`       |
-| `sk`      | `NODE#`            | `has_sensor#S#<uuid>`    |
-| `gsi1pk`  | `<parent_node_pk>` | —                        |
-| `gsi1sk`  | `SENSOR#S#<uuid>`  | —                        |
+| Attribute | Sensor assignment row          | Sensor edge row            |
+|-----------|--------------------------------|----------------------------|
+| `pk`      | `S#<uuid>`                     | `<parent_node_pk>`         |
+| `sk`      | `S#<uuid>#<iso8601-timestamp>` | `has_sensor#S#<uuid>`      |
+
+Sensor rows carry no GSI attributes. The parent edge (`sk = has_sensor#S#<uuid>`) is how you discover which sensors are attached to a node; looking up the sensor itself is a direct pk query.
 
 `gsi1` is used for `list_children` — query `gsi1pk = parent_pk` returns every child in one round trip.
-- `gsi1sk` begins with `CHILD#` → hierarchy children only
-- `gsi1sk` begins with `SENSOR#` → sensors attached to this node
 
 `delete_node` is cascading: walks the subtree via `list_children`, removes every edge and every node row.
 
@@ -155,32 +153,32 @@ Goal: attach physical meter readings to nodes. Schema decides which levels can h
 
 ### 6.1 Data shape
 
-A sensor is a first-class node in the hierarchy table. Its `uuid` (the non-prefix part of `pk = S#<uuid>`) is its stable logical identity — the separate `logical_id` field is eliminated, and `node_id` is no longer needed because the sensor row IS the node.
+A sensor's logical identity is a stable `uuid`. Physical daq devices break and get replaced; each replacement is recorded as a new assignment row under the same `uuid`. The newest row (highest sort key) is the current device.
 
-**Sensor node row** (`pk = S#<uuid>`, `sk = NODE#`):
+**Sensor assignment rows** — one partition per logical sensor, one row per physical device assignment:
 
 | Attribute        | Example                                            | Purpose |
 |------------------|----------------------------------------------------|---------|
-| `pk`             | `S#<uuid>`                                         | sensor node key; uuid is the stable logical identity |
-| `sk`             | `NODE#`                                            | row type marker |
-| `gsi1pk`         | `<parent_node_pk>`                                 | enables listing sensors on a node via GSI |
-| `gsi1sk`         | `SENSOR#S#<uuid>`                                  | prefix separates sensors from `CHILD#` entries |
-| `partner_id`     | `09826`                                            | tenant scope (matches flink's `pk` for this device) |
-| `daq_address`    | `daq:adeunis_pu_v1:123:0018b210000191c7:counter_a` | physical device key (matches flink's `sk`) |
+| `pk`             | `S#<uuid>`                                         | logical sensor identity |
+| `sk`             | `S#<uuid>#2026-04-18T10:00:00Z`                    | `pk` + ISO 8601 timestamp; latest sk = current assignment |
+| `daq_address`    | `daq:adeunis_pu_v1:123:0018b210000191c7:counter_a` | physical device address for this assignment |
 | `hierarchy_path` | `P1#C1#PR1#B2`                                     | cached human path; denormalized for readability |
 | `meter_type`     | `counter` \| `gauge`                               | semantic kind |
 | `unit`           | `kWh`, `m3`, …                                     | optional, informational |
 | `formula`        | (see §6.3)                                         | expression evaluated at read time |
-| `updated_at`     | `2026-03-28T12:00:00Z`                             | last reading timestamp |
+
+Query pattern: `pk = S#<uuid>`, sort by `sk` descending, limit 1 → current physical device.
 
 **Sensor edge row** (written into the parent node's partition):
 
-| Attribute | Example                    | Purpose |
-|-----------|----------------------------|---------|
-| `pk`      | `<parent_node_pk>`         | the node this sensor is attached to |
-| `sk`      | `has_sensor#S#<uuid>`      | links parent → sensor; prefix makes it queryable alongside `has_<label>` edges |
+| Attribute | Example                | Purpose |
+|-----------|------------------------|---------|
+| `pk`      | `<parent_node_pk>`     | the hierarchy node this sensor is attached to |
+| `sk`      | `has_sensor#S#<uuid>`  | queryable alongside `has_<label>` child edges; reveals attached sensor uuids |
 
-`partner_id` + `daq_address` form the natural key the flink pipeline uses to write readings. The hierarchy table joins these to the node graph via the sensor node. `hierarchy_path` is cached for path-based queries but the edge structure is the source of truth.
+To list sensors on a node: query `pk = <parent_node_pk>`, filter `sk begins_with has_sensor#`. No GSI needed.
+
+**Flink-optimized table** — a separate DynamoDB table fed by a DDB stream from the hierarchy table. The flink pipeline reads from this table, which uses a partition scheme tuned for high-throughput reads (e.g. `pk` = a shard key derived from the daq address). The hierarchy table remains the source of truth; the flink table is a derived projection.
 
 ### 6.2 Schema extension
 
@@ -244,7 +242,7 @@ Examples:
 
 - The existing `edges` / `metadata` model is untouched; `sensors` is a new optional key on the schema record.
 - Sensors are hierarchy nodes (`pk = S#<uuid>`, `sk = NODE#`). The `gsi1sk = SENSOR#…` prefix separates them from `CHILD#…` entries in the GSI, so `list_children` and `list_sensors` share the same index without conflict.
-- Existing node rows don't change shape. The flink job's natural key (`partner_id` + `daq_address`) is stored as plain attributes on the sensor node, not as pk/sk.
+- Existing node rows don't change shape. `daq_address` is a plain attribute on sensor assignment rows; there is no `partner_id` concept in the hierarchy — that was a flink-table partitioning artifact.
 - `Schema_check.find_for` already gives any node its owning schema — `Hierarchy.attach_sensor` reuses it unchanged.
 - Formula evaluation is pure and lives in a new `Formula` module; it has no side effects beyond the `Effects.get_sensor_value` it will introduce.
 
