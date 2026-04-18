@@ -110,14 +110,27 @@ Two invariants to notice:
 
 Single-table design, table name in `$ITEST_DYNAMO_TABLE` (prod: `hierarchy_new`).
 
-| Attribute | Node row                      | Edge row                                |
-|-----------|-------------------------------|-----------------------------------------|
-| `pk`      | `<LEVEL>#<uuid>`              | `<parent_pk>`                           |
-| `sk`      | `NODE#`                       | `has_<label>#<child_pk>`                |
-| `gsi1pk`  | `<parent_pk>` (or `ROOT#root`)| — (edges don't need the inverted index) |
-| `gsi1sk`  | `CHILD#<LEVEL>#<uuid>`        | —                                       |
+**Hierarchy rows:**
+
+| Attribute | Node row                       | Edge row                                |
+|-----------|--------------------------------|-----------------------------------------|
+| `pk`      | `<LEVEL>#<uuid>`               | `<parent_pk>`                           |
+| `sk`      | `NODE#`                        | `has_<label>#<child_pk>`                |
+| `gsi1pk`  | `<parent_pk>` (or `ROOT#root`) | — (edges don't need the inverted index) |
+| `gsi1sk`  | `CHILD#<LEVEL>#<uuid>`         | —                                       |
+
+**Sensor rows:**
+
+| Attribute | Sensor node row    | Sensor edge row          |
+|-----------|--------------------|--------------------------|
+| `pk`      | `S#<uuid>`         | `<parent_node_pk>`       |
+| `sk`      | `NODE#`            | `has_sensor#S#<uuid>`    |
+| `gsi1pk`  | `<parent_node_pk>` | —                        |
+| `gsi1sk`  | `SENSOR#S#<uuid>`  | —                        |
 
 `gsi1` is used for `list_children` — query `gsi1pk = parent_pk` returns every child in one round trip.
+- `gsi1sk` begins with `CHILD#` → hierarchy children only
+- `gsi1sk` begins with `SENSOR#` → sensors attached to this node
 
 `delete_node` is cascading: walks the subtree via `list_children`, removes every edge and every node row.
 
@@ -142,21 +155,32 @@ Goal: attach physical meter readings to nodes. Schema decides which levels can h
 
 ### 6.1 Data shape
 
-One sensor row per physical meter, same table:
+A sensor is a first-class node in the hierarchy table. Its `uuid` (the non-prefix part of `pk = S#<uuid>`) is its stable logical identity — the separate `logical_id` field is eliminated, and `node_id` is no longer needed because the sensor row IS the node.
+
+**Sensor node row** (`pk = S#<uuid>`, `sk = NODE#`):
 
 | Attribute        | Example                                            | Purpose |
 |------------------|----------------------------------------------------|---------|
-| `pk`             | `09826`                                            | partner/customer id (tenant scope) |
-| `sk`             | `daq:adeunis_pu_v1:123:0018b210000191c7:counter_a` | physical device address |
-| `hierarchy_path` | `P1#C1#PR1#B2`                                     | short human path pointing at the owning node |
-| `node_id`        | `HN4#<uuid>`                                       | canonical FK into the node table |
-| `logical_id`     | `tjrM38B0S3agQ7+veTHJxg==`                         | opaque, stable sensor identity; used by formulas |
+| `pk`             | `S#<uuid>`                                         | sensor node key; uuid is the stable logical identity |
+| `sk`             | `NODE#`                                            | row type marker |
+| `gsi1pk`         | `<parent_node_pk>`                                 | enables listing sensors on a node via GSI |
+| `gsi1sk`         | `SENSOR#S#<uuid>`                                  | prefix separates sensors from `CHILD#` entries |
+| `partner_id`     | `09826`                                            | tenant scope (matches flink's `pk` for this device) |
+| `daq_address`    | `daq:adeunis_pu_v1:123:0018b210000191c7:counter_a` | physical device key (matches flink's `sk`) |
+| `hierarchy_path` | `P1#C1#PR1#B2`                                     | cached human path; denormalized for readability |
 | `meter_type`     | `counter` \| `gauge`                               | semantic kind |
 | `unit`           | `kWh`, `m3`, …                                     | optional, informational |
 | `formula`        | (see §6.3)                                         | expression evaluated at read time |
 | `updated_at`     | `2026-03-28T12:00:00Z`                             | last reading timestamp |
 
-`hierarchy_path` is cached for readability / path-based queries; `node_id` is the source of truth.
+**Sensor edge row** (written into the parent node's partition):
+
+| Attribute | Example                    | Purpose |
+|-----------|----------------------------|---------|
+| `pk`      | `<parent_node_pk>`         | the node this sensor is attached to |
+| `sk`      | `has_sensor#S#<uuid>`      | links parent → sensor; prefix makes it queryable alongside `has_<label>` edges |
+
+`partner_id` + `daq_address` form the natural key the flink pipeline uses to write readings. The hierarchy table joins these to the node graph via the sensor node. `hierarchy_path` is cached for path-based queries but the edge structure is the source of truth.
 
 ### 6.2 Schema extension
 
@@ -195,13 +219,13 @@ type formula =
   | Identity                        (* = 1 * value, the common case *)
   | Expr of {
       ast  : expr;
-      refs : (string * Logical_id.t) list;   (* S1 -> <logical_id>, ... *)
+      refs : (string * string) list;   (* alias -> sensor uuid, e.g. "S1" -> "<uuid>" *)
     }
 
 and expr =
   | Num  of float
   | Self                            (* this meter's value *)
-  | Ref  of string                  (* name from refs, e.g. "S1" *)
+  | Ref  of string                  (* alias from refs, e.g. "S1" *)
   | Neg  of expr
   | Add  of expr * expr
   | Sub  of expr * expr
@@ -211,16 +235,17 @@ and expr =
 
 Examples:
 - `1 * value`  → `Identity`
-- `S1 - S2`    → `Expr { ast = Sub (Ref "S1", Ref "S2"); refs = [("S1", id_a); ("S2", id_b)] }`
+- `S1 - S2`    → `Expr { ast = Sub (Ref "S1", Ref "S2"); refs = [("S1", uuid_a); ("S2", uuid_b)] }`
 - `S1 * 1 - S2 * 1` → same as above (multiplier elided; parser folds `Mul (_, Num 1.0)`)
 
-`refs` deliberately decouples formula text from `logical_id`s, so sensors can be renamed/re-keyed without rewriting every formula that mentions them. Evaluation walks `refs`, fetches each referenced sensor's latest reading, substitutes, and reduces.
+`refs` maps human-readable aliases to sensor uuids. The uuid is the stable identity (the non-prefix part of `S#<uuid>`), so sensors can be renamed without rewriting every formula that references them. Evaluation looks up `S#<uuid>` node rows, fetches their latest readings, substitutes, and reduces.
 
 ### 6.4 How this stays additive
 
 - The existing `edges` / `metadata` model is untouched; `sensors` is a new optional key on the schema record.
-- Node rows don't change shape. Sensors are a new row type identified by `sk` prefix (`SENSOR#...` or the `daq:` convention above).
-- `Schema_check.find_for` already gives any node its owning schema — sensor attachment reuses it unchanged.
+- Sensors are hierarchy nodes (`pk = S#<uuid>`, `sk = NODE#`). The `gsi1sk = SENSOR#…` prefix separates them from `CHILD#…` entries in the GSI, so `list_children` and `list_sensors` share the same index without conflict.
+- Existing node rows don't change shape. The flink job's natural key (`partner_id` + `daq_address`) is stored as plain attributes on the sensor node, not as pk/sk.
+- `Schema_check.find_for` already gives any node its owning schema — `Hierarchy.attach_sensor` reuses it unchanged.
 - Formula evaluation is pure and lives in a new `Formula` module; it has no side effects beyond the `Effects.get_sensor_value` it will introduce.
 
 ---
