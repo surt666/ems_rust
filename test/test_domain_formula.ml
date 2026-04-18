@@ -30,9 +30,63 @@ let deeply_nested_expr () =
   let _ = Formula.Expr { ast; refs = [ ("S4", uuid_a); ("S5", uuid_b) ] } in
   Alcotest.(check pass) "compiles" () ()
 
+let eval_identity () =
+  let v =
+    Formula.eval ~self:7.5 ~resolve:(fun _ -> failwith "should not call")
+      Formula.Identity
+  in
+  Alcotest.(check (float 1e-9)) "identity returns self" 7.5 v
+
+let eval_arithmetic () =
+  let ast =
+    Formula.Sub (Formula.Self, Formula.Add (Formula.Ref "S1", Formula.Ref "S2"))
+  in
+  let f = Formula.Expr { ast; refs = [ ("S1", uuid_a); ("S2", uuid_b) ] } in
+  let resolve alias =
+    match alias with
+    | "S1" -> 3.0
+    | "S2" -> 1.0
+    | _ -> failwith "unknown alias"
+  in
+  let v = Formula.eval ~self:10.0 ~resolve f in
+  Alcotest.(check (float 1e-9)) "10 - (3 + 1) = 6" 6.0 v
+
+let eval_abs_flips_negative () =
+  let ast = Formula.Abs (Formula.Sub (Formula.Self, Formula.Ref "S1")) in
+  let f = Formula.Expr { ast; refs = [ ("S1", uuid_a) ] } in
+  let resolve _ = 12.0 in
+  let v = Formula.eval ~self:5.0 ~resolve f in
+  Alcotest.(check (float 1e-9)) "|5 - 12| = 7" 7.0 v
+
+let eval_multiplier () =
+  let ast = Formula.Mul (Formula.Self, Formula.Num 2.5) in
+  let f = Formula.Expr { ast; refs = [] } in
+  let v = Formula.eval ~self:4.0 ~resolve:(fun _ -> 0.0) f in
+  Alcotest.(check (float 1e-9)) "4 * 2.5 = 10" 10.0 v
+
+let eval_div_by_zero_is_infinity () =
+  let ast = Formula.Div (Formula.Self, Formula.Num 0.0) in
+  let f = Formula.Expr { ast; refs = [] } in
+  let v = Formula.eval ~self:1.0 ~resolve:(fun _ -> 0.0) f in
+  Alcotest.(check bool) "infinite" true (Float.is_infinite v)
+
+let eval_unknown_ref_raises () =
+  let ast = Formula.Ref "missing" in
+  let f = Formula.Expr { ast; refs = [] } in
+  (try
+     let _ = Formula.eval ~self:0.0 ~resolve:(fun _ -> 0.0) f in
+     Alcotest.fail "expected exception"
+   with Formula.Unknown_ref "missing" -> ())
+
 let tests =
   [
     Alcotest.test_case "Identity constructs"    `Quick identity_constructs;
     Alcotest.test_case "Expr carries refs"      `Quick expr_has_refs;
     Alcotest.test_case "deeply nested Abs/Sub"  `Quick deeply_nested_expr;
+    Alcotest.test_case "eval Identity = self"        `Quick eval_identity;
+    Alcotest.test_case "eval arithmetic"             `Quick eval_arithmetic;
+    Alcotest.test_case "eval Abs flips negative"     `Quick eval_abs_flips_negative;
+    Alcotest.test_case "eval multiplier"             `Quick eval_multiplier;
+    Alcotest.test_case "eval div by zero = infinity" `Quick eval_div_by_zero_is_infinity;
+    Alcotest.test_case "eval unknown ref raises"     `Quick eval_unknown_ref_raises;
   ]
