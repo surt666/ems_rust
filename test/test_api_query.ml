@@ -69,9 +69,26 @@ let unknown_action_is_bad_request () =
   in
   Alcotest.(check int) "status 400" 400 status
 
+let list_sensors_empty () =
+  let st = Memory.empty () in
+  let parent =
+    Node_id.make Level.Hn4
+      (Uuidm.of_string "55555555-0000-4000-8000-000000000001" |> Option.get)
+  in
+  Memory.run st (fun () ->
+    let resp =
+      Api_query.dispatch ~action:"list_sensors"
+        ~params:[ ("parent", Node_id.to_string parent) ]
+    in
+    let status =
+      Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int)
+    in
+    Alcotest.(check int) "200" 200 status)
+
 let tests =
   [
     Alcotest.test_case "get_node" `Quick get_node_returns_node;
     Alcotest.test_case "list_children" `Quick list_children_returns_array;
     Alcotest.test_case "unknown action -> 400" `Quick unknown_action_is_bad_request;
+    Alcotest.test_case "list_sensors empty" `Quick list_sensors_empty;
   ]

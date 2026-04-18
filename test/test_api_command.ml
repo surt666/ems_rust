@@ -63,9 +63,57 @@ let invalid_json_is_400 () =
   in
   Alcotest.(check int) "400" 400 status
 
+let attach_sensor_happy () =
+  (* Tests that follow the existing seed pattern for a company with an electricity slot *)
+  let st = Memory.empty () in
+  let c2 =
+    Memory.run st (fun () ->
+      let u = Uuidm.of_string "44444444-0000-4000-8000-000000000001" |> Option.get in
+      let sch : Schema.t =
+        Schema.{
+          version = 1;
+          edges = [
+            (Level.Hn2, [ (Level.Hn3, [ { label = "building"; min = None; max = None } ]) ]);
+          ];
+          metadata = [];
+          sensors = [
+            (Level.Hn3, [
+              Sensor_slot.{ kind = "electricity"; min = None; max = None;
+                            meter_type = Either;
+                            purposes = Some [ "Electricity" ] };
+            ]);
+          ];
+        }
+      in
+      let n2 = Node.make ~uuid:u ~level:Level.Hn2 ~name:"Co"
+                 ~parent:Node_id.root ~created:Ptime.epoch
+                 ~metadata:(`Assoc []) ~schema:(Some sch) in
+      Effects.put_node n2;
+      Node_id.make Level.Hn2 u)
+  in
+  let bldg =
+    Memory.run st (fun () ->
+      match Hierarchy.add_node ~parent:c2 ~level:Level.Hn3
+              ~name:"B" ~metadata:(`Assoc []) () with
+      | Ok b -> b.Node.id
+      | Error e -> Alcotest.failf "seed: %s" (Errors.message e))
+  in
+  Memory.run st (fun () ->
+    let body =
+      Printf.sprintf
+        {|{"action":"attach_sensor","parent_id":%S,"kind":"electricity","daq_address":"daq:1","purpose":"Electricity","meter_type":"counter","unit":"kWh"}|}
+        (Node_id.to_string bldg)
+    in
+    let resp = Api_command.dispatch ~body in
+    let status =
+      Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int)
+    in
+    Alcotest.(check int) "200" 200 status)
+
 let tests =
   [
     Alcotest.test_case "add_node happy path" `Quick add_node_happy_path;
     Alcotest.test_case "delete roundtrip" `Quick delete_node_roundtrip;
     Alcotest.test_case "invalid json -> 400" `Quick invalid_json_is_400;
+    Alcotest.test_case "attach_sensor happy" `Quick attach_sensor_happy;
   ]
