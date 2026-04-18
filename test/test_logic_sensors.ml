@@ -9,14 +9,7 @@ let sample_schema () : Schema.t =
       (Level.Hn2, [ (Level.Hn3, [ { label = "building"; min = None; max = None } ]) ]);
     ];
     metadata = [];
-    sensors = [
-      (Level.Hn3, [
-        Sensor_slot.{
-          kind = "electricity"; min = None; max = Some 1;
-          meter_type = Either; purposes = Some [ "Electricity" ];
-        };
-      ]);
-    ];
+    sensors = [ Level.Hn3 ];
   }
 
 let seed_company st =
@@ -45,7 +38,7 @@ let attach_happy () =
   Memory.run st (fun () ->
     match
       Sensors.attach
-        ~parent:bldg ~kind:"electricity" ~daq_address:"daq:1"
+        ~parent:bldg ~daq_address:"daq:1"
         ~purpose:"Electricity" ~meter_type:Sensor.Counter ~unit:"kWh"
         ~formula:Formula.Identity ()
     with
@@ -55,83 +48,16 @@ let attach_happy () =
         Alcotest.(check string) "parent wired"
           (Node_id.to_string bldg) (Node_id.to_string s.Sensor.parent))
 
-let rejects_missing_kind_slot () =
+let rejects_level_not_allowed () =
   let st = Memory.empty () in
   let c2 = seed_company st in
-  let bldg = seed_building st c2 in
   Memory.run st (fun () ->
     match
       Sensors.attach
-        ~parent:bldg ~kind:"water" ~daq_address:"daq:2"
-        ~purpose:"Water" ~meter_type:Sensor.Counter ()
+        ~parent:c2 ~daq_address:"daq:2"
+        ~purpose:"Electricity" ~meter_type:Sensor.Counter ()
     with
-    | Ok _ -> Alcotest.fail "expected Validation"
-    | Error (Errors.Validation _) -> ()
-    | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
-
-let rejects_max_exceeded () =
-  let st = Memory.empty () in
-  let c2 = seed_company st in
-  let bldg = seed_building st c2 in
-  Memory.run st (fun () ->
-    let _ = Sensors.attach ~parent:bldg ~kind:"electricity"
-              ~daq_address:"daq:a" ~purpose:"Electricity"
-              ~meter_type:Sensor.Counter () in
-    match
-      Sensors.attach ~parent:bldg ~kind:"electricity"
-        ~daq_address:"daq:b" ~purpose:"Electricity"
-        ~meter_type:Sensor.Counter ()
-    with
-    | Ok _ -> Alcotest.fail "max=1 should have rejected second attach"
-    | Error (Errors.Validation _) -> ()
-    | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
-
-let rejects_purpose_not_in_whitelist () =
-  let st = Memory.empty () in
-  let c2 = seed_company st in
-  let bldg = seed_building st c2 in
-  Memory.run st (fun () ->
-    match
-      Sensors.attach ~parent:bldg ~kind:"electricity"
-        ~daq_address:"daq:x" ~purpose:"Water"
-        ~meter_type:Sensor.Counter ()
-    with
-    | Ok _ -> Alcotest.fail "purpose Water should be rejected"
-    | Error (Errors.Validation _) -> ()
-    | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
-
-let rejects_meter_type_mismatch () =
-  let st = Memory.empty () in
-  let c2 =
-    Memory.run st (fun () ->
-      let u = uuid_of "4b6a6f20-0000-0000-0000-00000000dddd" in
-      let sch : Schema.t =
-        { (sample_schema ()) with
-          sensors = [
-            (Level.Hn3, [
-              Sensor_slot.{
-                kind = "electricity"; min = None; max = None;
-                meter_type = Counter; purposes = None;
-              };
-            ]);
-          ];
-        }
-      in
-      let n = Node.make ~uuid:u ~level:Level.Hn2 ~name:"C"
-                ~parent:Node_id.root ~created:Ptime.epoch
-                ~metadata:(`Assoc []) ~schema:(Some sch)
-      in
-      Effects.put_node n;
-      Node_id.make Level.Hn2 u)
-  in
-  let bldg = seed_building st c2 in
-  Memory.run st (fun () ->
-    match
-      Sensors.attach ~parent:bldg ~kind:"electricity"
-        ~daq_address:"daq:y" ~purpose:"Electricity"
-        ~meter_type:Sensor.Gauge ()
-    with
-    | Ok _ -> Alcotest.fail "gauge should be rejected in Counter slot"
+    | Ok _ -> Alcotest.fail "expected Validation at disallowed level"
     | Error (Errors.Validation _) -> ()
     | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
 
@@ -140,7 +66,7 @@ let list_active_returns_attached () =
   let c2 = seed_company st in
   let bldg = seed_building st c2 in
   Memory.run st (fun () ->
-    let _ = Sensors.attach ~parent:bldg ~kind:"electricity"
+    let _ = Sensors.attach ~parent:bldg
               ~daq_address:"daq:1" ~purpose:"Electricity"
               ~meter_type:Sensor.Counter () in
     match Sensors.list_active ~parent:bldg with
@@ -166,7 +92,7 @@ let get_active_happy () =
   Memory.run st (fun () ->
     let s =
       match
-        Sensors.attach ~parent:bldg ~kind:"electricity"
+        Sensors.attach ~parent:bldg
           ~daq_address:"daq:k" ~purpose:"Electricity"
           ~meter_type:Sensor.Counter ()
       with
@@ -193,7 +119,7 @@ let replace_device_promotes_new () =
   Memory.run st (fun () ->
     let s =
       match
-        Sensors.attach ~parent:bldg ~kind:"electricity"
+        Sensors.attach ~parent:bldg
           ~daq_address:"daq:old" ~purpose:"Electricity"
           ~meter_type:Sensor.Counter ()
       with
@@ -227,7 +153,7 @@ let attach_detects_self_cycle () =
   Memory.run st (fun () ->
     let s =
       match
-        Sensors.attach ~parent:bldg ~kind:"electricity"
+        Sensors.attach ~parent:bldg
           ~daq_address:"daq:1" ~purpose:"Electricity"
           ~meter_type:Sensor.Counter ()
       with
@@ -247,9 +173,6 @@ let attach_detects_self_cycle () =
     | Error (Errors.Validation _) -> ()
     | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
 
-(* Wraps a Memory-backed state with a canned reading lookup.
-   The readings handler must be innermost so it intercepts Get_sensor_reading
-   before Memory.run's default handler (which returns None) can see it. *)
 let run_with_readings st readings f =
   Memory.run st (fun () ->
     let open Effect.Deep in
@@ -271,7 +194,7 @@ let evaluate_identity () =
   let s =
     Memory.run st (fun () ->
       match
-        Sensors.attach ~parent:bldg ~kind:"electricity"
+        Sensors.attach ~parent:bldg
           ~daq_address:"daq:1" ~purpose:"Electricity"
           ~meter_type:Sensor.Counter ()
       with
@@ -288,76 +211,50 @@ let evaluate_composite () =
   let st = Memory.empty () in
   let c2 = seed_company st in
   let bldg = seed_building st c2 in
-  Memory.run st (fun () ->
-    let s4 =
-      match
-        Sensors.attach ~parent:bldg ~kind:"electricity"
-          ~daq_address:"daq:4" ~purpose:"Electricity"
-          ~meter_type:Sensor.Counter ()
-      with
-      | Ok x -> x
-      | Error e -> Alcotest.failf "attach s4: %s" (Errors.message e)
-    in
-    let formula_s3 =
-      Formula.Expr {
-        ast = Formula.Abs (Formula.Sub (Formula.Self, Formula.Ref "s4"));
-        refs = [ ("s4", Sensor_id.uuid s4.Sensor.id) ];
-      }
-    in
-    let s3 =
-      match
-        Sensors.attach ~parent:bldg ~kind:"electricity"
-          ~daq_address:"daq:3" ~purpose:"Electricity"
-          ~meter_type:Sensor.Counter ~formula:formula_s3 ()
-      with
-      | Ok _ ->
-          Alcotest.fail "max=1 should block; widen the slot for this test"
-      | Error _ ->
-          (* Relax the schema for this test: use a slot with max=None *)
-          let sch : Schema.t =
-            { (sample_schema ()) with
-              sensors = [
-                (Level.Hn3, [
-                  Sensor_slot.{
-                    kind = "electricity"; min = None; max = None;
-                    meter_type = Either;
-                    purposes = Some [ "Electricity" ];
-                  };
-                ]);
-              ];
-            }
-          in
-          let c2_node =
-            Option.get (Effects.get_node c2)
-          in
-          Effects.put_node { c2_node with Node.schema = Some sch };
-          (match
-             Sensors.attach ~parent:bldg ~kind:"electricity"
-               ~daq_address:"daq:3" ~purpose:"Electricity"
-               ~meter_type:Sensor.Counter ~formula:formula_s3 ()
-           with
-           | Ok x -> x
-           | Error e -> Alcotest.failf "attach s3: %s" (Errors.message e))
-    in
-    let readings =
-      [
-        (Sensor_id.to_string s4.Sensor.id, 3.0);
-        (Sensor_id.to_string s3.Sensor.id, 10.0);
-      ]
-    in
-    run_with_readings st readings (fun () ->
-      match Sensors.evaluate s3.Sensor.id with
-      | Ok v ->
-          Alcotest.(check (float 1e-9)) "|10 - 3| = 7" 7.0 v
-      | Error e -> Alcotest.failf "eval: %s" (Errors.message e)))
+  let s4, s3 =
+    Memory.run st (fun () ->
+      let s4 =
+        match
+          Sensors.attach ~parent:bldg
+            ~daq_address:"daq:4" ~purpose:"Electricity"
+            ~meter_type:Sensor.Counter ()
+        with
+        | Ok x -> x
+        | Error e -> Alcotest.failf "attach s4: %s" (Errors.message e)
+      in
+      let formula_s3 =
+        Formula.Expr {
+          ast = Formula.Abs (Formula.Sub (Formula.Self, Formula.Ref "s4"));
+          refs = [ ("s4", Sensor_id.uuid s4.Sensor.id) ];
+        }
+      in
+      let s3 =
+        match
+          Sensors.attach ~parent:bldg
+            ~daq_address:"daq:3" ~purpose:"Electricity"
+            ~meter_type:Sensor.Counter ~formula:formula_s3 ()
+        with
+        | Ok x -> x
+        | Error e -> Alcotest.failf "attach s3: %s" (Errors.message e)
+      in
+      (s4, s3))
+  in
+  let readings =
+    [
+      (Sensor_id.to_string s4.Sensor.id, 3.0);
+      (Sensor_id.to_string s3.Sensor.id, 10.0);
+    ]
+  in
+  run_with_readings st readings (fun () ->
+    match Sensors.evaluate s3.Sensor.id with
+    | Ok v ->
+        Alcotest.(check (float 1e-9)) "|10 - 3| = 7" 7.0 v
+    | Error e -> Alcotest.failf "eval: %s" (Errors.message e))
 
 let tests =
   [
     Alcotest.test_case "attach happy path"       `Quick attach_happy;
-    Alcotest.test_case "rejects missing kind"    `Quick rejects_missing_kind_slot;
-    Alcotest.test_case "rejects max exceeded"    `Quick rejects_max_exceeded;
-    Alcotest.test_case "rejects bad purpose"     `Quick rejects_purpose_not_in_whitelist;
-    Alcotest.test_case "rejects meter mismatch"  `Quick rejects_meter_type_mismatch;
+    Alcotest.test_case "rejects disallowed level" `Quick rejects_level_not_allowed;
     Alcotest.test_case "list_active returns attached" `Quick list_active_returns_attached;
     Alcotest.test_case "list_active empty"            `Quick list_active_empty_when_none;
     Alcotest.test_case "get_active happy"   `Quick get_active_happy;

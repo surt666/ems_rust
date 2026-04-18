@@ -76,13 +76,7 @@ let attach_sensor_happy () =
             (Level.Hn2, [ (Level.Hn3, [ { label = "building"; min = None; max = None } ]) ]);
           ];
           metadata = [];
-          sensors = [
-            (Level.Hn3, [
-              Sensor_slot.{ kind = "electricity"; min = None; max = None;
-                            meter_type = Either;
-                            purposes = Some [ "Electricity" ] };
-            ]);
-          ];
+          sensors = [ Level.Hn3 ];
         }
       in
       let n2 = Node.make ~uuid:u ~level:Level.Hn2 ~name:"Co"
@@ -101,7 +95,7 @@ let attach_sensor_happy () =
   Memory.run st (fun () ->
     let body =
       Printf.sprintf
-        {|{"action":"attach_sensor","parent_id":%S,"kind":"electricity","daq_address":"daq:1","purpose":"Electricity","meter_type":"counter","unit":"kWh"}|}
+        {|{"action":"attach_sensor","parent_id":%S,"daq_address":"daq:1","purpose":"Electricity","meter_type":"counter","unit":"kWh"}|}
         (Node_id.to_string bldg)
     in
     let resp = Api_command.dispatch ~body in

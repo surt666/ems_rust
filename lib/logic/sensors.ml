@@ -27,7 +27,7 @@ let has_cycle ~self_uuid formula =
       || walk_refs [ self_uuid ] u = `Cycle)
     next
 
-let attach ?(formula = Formula.Identity) ?unit ~parent ~kind
+let attach ?(formula = Formula.Identity) ?unit ~parent
     ~daq_address ~purpose ~meter_type () =
   let* parent_node =
     match Effects.get_node parent with
@@ -36,43 +36,11 @@ let attach ?(formula = Formula.Identity) ?unit ~parent ~kind
   in
   let parent_level = Node_id.level parent_node.Node.id in
   let* _host, schema = Schema_check.find_for parent in
-  let slots = Schema.sensors_for schema parent_level in
-  let* slot =
-    match List.find_opt (fun (s : Sensor_slot.t) -> s.kind = kind) slots with
-    | Some s -> Ok s
-    | None ->
-        Error (validation_err
-                 (Printf.sprintf "no sensor slot %S at %s"
-                    kind (Level.to_string parent_level)))
-  in
   let* () =
-    if Sensor_slot.allows_meter_type slot meter_type then Ok ()
+    if Schema.allows_sensors schema parent_level then Ok ()
     else Error (validation_err
-                  (Printf.sprintf "meter type not allowed by slot %S" kind))
-  in
-  let* () =
-    if Sensor_slot.allows_purpose slot purpose then Ok ()
-    else Error (validation_err
-                  (Printf.sprintf "purpose %S not allowed by slot %S"
-                     purpose kind))
-  in
-  let attached = Effects.list_sensor_ids parent in
-  let same_kind_count =
-    List.fold_left
-      (fun acc id ->
-        match Effects.get_active_sensor id with
-        | Some s when s.Sensor.purpose = purpose || s.Sensor.daq_address = daq_address ->
-            acc + 1
-        | _ -> acc)
-      0 attached
-  in
-  let* () =
-    match slot.max with
-    | Some m when same_kind_count >= m ->
-        Error (validation_err
-                 (Printf.sprintf "max %d sensors of kind %S per parent"
-                    m kind))
-    | _ -> Ok ()
+                  (Printf.sprintf "sensors not allowed at %s"
+                     (Level.to_string parent_level)))
   in
   let uuid = Effects.gen_uuid () in
   let* () =

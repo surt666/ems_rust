@@ -83,10 +83,14 @@ let schema_to_attr (sch : Schema.t) : Dyn.attribute_value =
         (Level.to_string lvl, Dyn.M inner))
       sch.metadata
   in
+  let sensors_l =
+    Dyn.L (List.map (fun lvl -> s (Level.to_string lvl)) sch.sensors)
+  in
   Dyn.M [
     ("version", n (string_of_int sch.version));
     ("edges", Dyn.M edges_m);
     ("metadata", Dyn.M metadata_m);
+    ("sensors", sensors_l);
   ]
 
 let node_to_item (nd : Node.t) : (string * Dyn.attribute_value) list =
@@ -274,7 +278,21 @@ let decode_schema (v : Dyn.attribute_value) : (Schema.t, string) result =
               (Ok []) inner_kvs
             |> Result.map List.rev)
   in
-  Ok Schema.{ version; edges; metadata; sensors = [] }
+  let* sensors =
+    match List.assoc_opt "sensors" kvs with
+    | None -> Ok []
+    | Some v ->
+        let* xs = as_list v in
+        List.fold_left
+          (fun acc item ->
+            let* acc = acc in
+            let* s_str = as_string item in
+            let* lvl = Level.of_string s_str in
+            Ok (lvl :: acc))
+          (Ok []) xs
+        |> Result.map List.rev
+  in
+  Ok Schema.{ version; edges; metadata; sensors }
 
 let rec expr_to_attr : Formula.expr -> Dyn.attribute_value = function
   | Formula.Num f  -> Dyn.M [ ("t", s "num"); ("v", n (Printf.sprintf "%.17g" f)) ]

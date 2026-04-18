@@ -216,21 +216,7 @@ let sensor_schema () : Schema.t =
         ("lat", Metadata.{ typ = Number { min = Some (-90.); max = Some 90. }; required = true });
       ]);
     ];
-    sensors = [
-      (Level.Hn4, [
-        Sensor_slot.{
-          kind = "electricity"; min = None; max = Some 2;
-          meter_type = Either;
-          purposes = Some [ "Electricity" ];
-        };
-      ]);
-      (Level.Hn5, [
-        Sensor_slot.{
-          kind = "electricity"; min = None; max = None;
-          meter_type = Either; purposes = None;
-        };
-      ]);
-    ];
+    sensors = [ Level.Hn4; Level.Hn5 ];
   }
 
 let fresh_with_sensor_schema cfg =
@@ -260,7 +246,7 @@ let attach_list_replace cfg =
       | Ok n -> n | Error e -> bail "add bldg" e
     in
     let s =
-      match Sensors.attach ~parent:bldg.Node.id ~kind:"electricity"
+      match Sensors.attach ~parent:bldg.Node.id
               ~daq_address:"daq:itest:old" ~purpose:"Electricity"
               ~meter_type:Sensor.Counter ~unit:"kWh" () with
       | Ok s -> s | Error e -> bail "attach" e

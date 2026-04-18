@@ -99,10 +99,35 @@ let sensor_active_sk_prefixed () =
   Alcotest.(check string) "history bare timestamp"
     "2026-04-18T10:00:00Z" sk_hist
 
+let schema_sensors_roundtrip () =
+  let id = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-00000000dddd") in
+  let sch : Schema.t =
+    Schema.{
+      version = 1;
+      edges = [];
+      metadata = [];
+      sensors = [ Level.Hn4; Level.Hn5 ];
+    }
+  in
+  let n =
+    Node.make ~uuid:(Node_id.uuid id) ~level:Level.Hn2 ~name:"Co"
+      ~parent:Node_id.root ~created:Ptime.epoch
+      ~metadata:(`Assoc []) ~schema:(Some sch)
+  in
+  let item = Codec.node_to_item n in
+  match Codec.node_of_item item with
+  | Error e -> Alcotest.failf "decode: %s" e
+  | Ok n2 ->
+      let sch2 = Option.get n2.Node.schema in
+      Alcotest.(check (list string)) "levels preserved"
+        [ "hn4"; "hn5" ]
+        (List.map Level.to_string sch2.Schema.sensors)
+
 let tests =
   [
     Alcotest.test_case "node roundtrip" `Quick node_roundtrip_without_schema;
     Alcotest.test_case "edge item shape" `Quick edge_item_shape;
     Alcotest.test_case "sensor round trip"        `Quick sensor_round_trip;
     Alcotest.test_case "sensor sk active/history" `Quick sensor_active_sk_prefixed;
+    Alcotest.test_case "schema sensors roundtrip" `Quick schema_sensors_roundtrip;
   ]

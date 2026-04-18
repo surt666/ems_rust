@@ -4,7 +4,7 @@ type t = {
   version : int;
   edges : (Level.t * (Level.t * edge_spec list) list) list;
   metadata : (Level.t * (string * Metadata.field_spec) list) list;
-  sensors : (Level.t * Sensor_slot.t list) list;
+  sensors : Level.t list;
 }
 
 let allowed_children t parent =
@@ -22,10 +22,7 @@ let metadata_for t level =
   | Some fs -> fs
   | None -> []
 
-let sensors_for t level =
-  match List.assoc_opt level t.sensors with
-  | Some xs -> xs
-  | None -> []
+let allows_sensors t level = List.mem level t.sensors
 
 let validate t =
   let exception Bad of string in
@@ -62,21 +59,13 @@ let validate t =
                 raise (Bad (Printf.sprintf "%s.%s: %s" (Level.to_string level) name msg)))
           fields)
       t.metadata;
+    let seen = Hashtbl.create 4 in
     List.iter
-      (fun (level, slots) ->
-        let seen = Hashtbl.create 4 in
-        List.iter
-          (fun (slot : Sensor_slot.t) ->
-            (match Sensor_slot.validate slot with
-             | Ok () -> ()
-             | Error msg ->
-                 raise (Bad (Printf.sprintf "%s sensor slot: %s"
-                               (Level.to_string level) msg)));
-            if Hashtbl.mem seen slot.kind then
-              raise (Bad (Printf.sprintf "%s sensor slot: duplicate kind %S"
-                            (Level.to_string level) slot.kind));
-            Hashtbl.add seen slot.kind ())
-          slots)
+      (fun level ->
+        if Hashtbl.mem seen level then
+          raise (Bad (Printf.sprintf "duplicate sensors entry for level %s"
+                        (Level.to_string level)));
+        Hashtbl.add seen level ())
       t.sensors;
     Ok ()
   with Bad msg -> Error msg

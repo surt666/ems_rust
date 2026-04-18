@@ -38,7 +38,6 @@ let run_delete_node json =
 
 let run_attach_sensor json =
   let* parent_s = require_string json "parent_id" in
-  let* kind     = require_string json "kind"      in
   let* daq      = require_string json "daq_address" in
   let* purpose  = require_string json "purpose"   in
   let* mt_s     = require_string json "meter_type" in
@@ -49,7 +48,7 @@ let run_attach_sensor json =
   in
   let* parent     = Node_id.of_string parent_s in
   let* meter_type = Sensor.meter_type_of_string mt_s in
-  match Sensors.attach ~parent ~kind ~daq_address:daq ~purpose ~meter_type ?unit () with
+  match Sensors.attach ~parent ~daq_address:daq ~purpose ~meter_type ?unit () with
   | Ok s -> Ok (Api_json.ok_response (Api_json.sensor_to_json s))
   | Error e -> Ok (Api_json.error_response e)
 
