@@ -10,6 +10,18 @@ type _ Effect.t +=
   | Gen_uuid       : unit -> Uuidm.t Effect.t
   | Now            : unit -> Ptime.t Effect.t
 
+type _ Effect.t +=
+  | Put_sensor            : { sensor : Sensor.t; parent : Node_id.t } -> unit Effect.t
+  | Get_active_sensor     : Sensor_id.t -> Sensor.t option Effect.t
+  | List_sensor_ids       : Node_id.t -> Sensor_id.t list Effect.t
+  | Replace_sensor_device : {
+      old_active_from : Ptime.t;
+      new_sensor : Sensor.t;
+    } -> unit Effect.t
+  | Delete_sensor         : { sensor_id : Sensor_id.t; parent : Node_id.t }
+                              -> unit Effect.t
+  | Get_sensor_reading    : Sensor_id.t -> float option Effect.t
+
 let get_node id                 = Effect.perform (Get_node id)
 let list_children ?label parent = Effect.perform (List_children (parent, label))
 let get_schema id               = Effect.perform (Get_schema id)
@@ -18,3 +30,21 @@ let put_edge ~from_ ~to_ ~label = Effect.perform (Put_edge { from_; to_; label }
 let delete_node id              = Effect.perform (Delete_node id)
 let gen_uuid ()                 = Effect.perform (Gen_uuid ())
 let now ()                      = Effect.perform (Now ())
+
+let put_sensor ~sensor ~parent =
+  Effect.perform (Put_sensor { sensor; parent })
+
+let get_active_sensor id =
+  Effect.perform (Get_active_sensor id)
+
+let list_sensor_ids parent =
+  Effect.perform (List_sensor_ids parent)
+
+let replace_sensor_device ~old_active_from ~new_sensor =
+  Effect.perform (Replace_sensor_device { old_active_from; new_sensor })
+
+let delete_sensor ~sensor_id ~parent =
+  Effect.perform (Delete_sensor { sensor_id; parent })
+
+let get_sensor_reading id =
+  Effect.perform (Get_sensor_reading id)
