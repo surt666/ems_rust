@@ -8,6 +8,7 @@ let () =
       ("domain.node", Test_domain_node.tests);
       ("domain.formula", Test_domain_formula.tests);
       ("domain.sensor_id", Test_domain_sensor_id.tests);
+      ("domain.sensor_sk", Test_domain_sensor_sk.tests);
       ("repo.memory", Test_repo_memory.tests);
       ("logic.schema_check", Test_logic_schema_check.tests);
       ("logic.hierarchy", Test_logic_hierarchy.tests);
