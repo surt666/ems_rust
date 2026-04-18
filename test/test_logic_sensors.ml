@@ -220,6 +220,33 @@ let replace_unknown_fails () =
     | Error (Errors.Not_found _) -> ()
     | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
 
+let attach_detects_self_cycle () =
+  let st = Memory.empty () in
+  let c2 = seed_company st in
+  let bldg = seed_building st c2 in
+  Memory.run st (fun () ->
+    let s =
+      match
+        Sensors.attach ~parent:bldg ~kind:"electricity"
+          ~daq_address:"daq:1" ~purpose:"Electricity"
+          ~meter_type:Sensor.Counter ()
+      with
+      | Ok x -> x
+      | Error e -> Alcotest.failf "attach: %s" (Errors.message e)
+    in
+    let cyc =
+      Formula.Expr {
+        ast = Formula.Ref "self_again";
+        refs = [ ("self_again", Sensor_id.uuid s.Sensor.id) ];
+      }
+    in
+    match
+      Sensors.set_formula ~sensor_id:s.Sensor.id ~formula:cyc ()
+    with
+    | Ok _ -> Alcotest.fail "should reject cycle"
+    | Error (Errors.Validation _) -> ()
+    | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
+
 let tests =
   [
     Alcotest.test_case "attach happy path"       `Quick attach_happy;
@@ -233,4 +260,5 @@ let tests =
     Alcotest.test_case "get_active unknown" `Quick get_active_unknown;
     Alcotest.test_case "replace_device promotes new" `Quick replace_device_promotes_new;
     Alcotest.test_case "replace_device unknown"      `Quick replace_unknown_fails;
+    Alcotest.test_case "attach rejects cycle" `Quick attach_detects_self_cycle;
   ]

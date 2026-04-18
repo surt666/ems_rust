@@ -3,6 +3,30 @@ let ( let* ) = Result.bind
 let validation_err msg =
   Errors.Validation [ { Metadata.path = ""; message = msg } ]
 
+let rec walk_refs visited uuid =
+  if List.exists (Uuidm.equal uuid) visited then `Cycle
+  else
+    let id = Sensor_id.make uuid in
+    match Effects.get_active_sensor id with
+    | None -> `Ok
+    | Some s ->
+        let next_uuids = Formula.referenced_uuids s.Sensor.formula in
+        let visited' = uuid :: visited in
+        List.fold_left
+          (fun acc u ->
+            match acc with
+            | `Cycle -> `Cycle
+            | `Ok -> walk_refs visited' u)
+          `Ok next_uuids
+
+let has_cycle ~self_uuid formula =
+  let next = Formula.referenced_uuids formula in
+  List.exists
+    (fun u ->
+      Uuidm.equal u self_uuid
+      || walk_refs [ self_uuid ] u = `Cycle)
+    next
+
 let attach ?(formula = Formula.Identity) ?unit ~parent ~kind
     ~daq_address ~purpose ~meter_type () =
   let* parent_node =
@@ -51,6 +75,11 @@ let attach ?(formula = Formula.Identity) ?unit ~parent ~kind
     | _ -> Ok ()
   in
   let uuid = Effects.gen_uuid () in
+  let* () =
+    if has_cycle ~self_uuid:uuid formula
+    then Error (validation_err "formula refs form a cycle")
+    else Ok ()
+  in
   let now = Effects.now () in
   let sensor : Sensor.t =
     {
@@ -99,6 +128,22 @@ let replace_device ~sensor_id ~new_daq_address () =
       Sensor.active_from = now;
       daq_address = new_daq_address;
     }
+  in
+  Effects.replace_sensor_device
+    ~old_active_from:old.Sensor.active_from ~new_sensor;
+  Ok new_sensor
+
+let set_formula ~sensor_id ~formula () =
+  let* old = get_active sensor_id in
+  let self_uuid = Sensor_id.uuid sensor_id in
+  let* () =
+    if has_cycle ~self_uuid formula
+    then Error (validation_err "formula refs form a cycle")
+    else Ok ()
+  in
+  let now = Effects.now () in
+  let new_sensor =
+    { old with Sensor.active_from = now; formula }
   in
   Effects.replace_sensor_device
     ~old_active_from:old.Sensor.active_from ~new_sensor;

@@ -78,6 +78,19 @@ let eval_unknown_ref_raises () =
      Alcotest.fail "expected exception"
    with Formula.Unknown_ref "missing" -> ())
 
+let collect_refs_identity_empty () =
+  let xs = Formula.referenced_uuids Formula.Identity in
+  Alcotest.(check int) "none" 0 (List.length xs)
+
+let collect_refs_of_expr () =
+  let ast = Formula.Sub (Formula.Ref "S1", Formula.Ref "S2") in
+  let f = Formula.Expr { ast; refs = [ ("S1", uuid_a); ("S2", uuid_b) ] } in
+  let xs = Formula.referenced_uuids f |> List.sort Uuidm.compare in
+  let expected = List.sort Uuidm.compare [ uuid_a; uuid_b ] in
+  Alcotest.(check int) "two" 2 (List.length xs);
+  Alcotest.(check bool) "set equal" true
+    (List.for_all2 Uuidm.equal xs expected)
+
 let tests =
   [
     Alcotest.test_case "Identity constructs"    `Quick identity_constructs;
@@ -89,4 +102,6 @@ let tests =
     Alcotest.test_case "eval multiplier"             `Quick eval_multiplier;
     Alcotest.test_case "eval div by zero = infinity" `Quick eval_div_by_zero_is_infinity;
     Alcotest.test_case "eval unknown ref raises"     `Quick eval_unknown_ref_raises;
+    Alcotest.test_case "referenced_uuids identity" `Quick collect_refs_identity_empty;
+    Alcotest.test_case "referenced_uuids expr"     `Quick collect_refs_of_expr;
   ]

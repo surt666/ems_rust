@@ -33,3 +33,7 @@ let eval ~self ~resolve = function
         | None -> raise (Unknown_ref alias)
       in
       eval_expr ~self ~resolve:lookup ast
+
+let referenced_uuids = function
+  | Identity -> []
+  | Expr { refs; _ } -> List.map snd refs
