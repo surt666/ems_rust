@@ -16,6 +16,11 @@ let get_item cfg id =
                            (match e with
                             | `InternalServerError _ -> "internal"
                             | `ResourceNotFoundException _ -> "table not found"
+                            | `AWSServiceError { message; _type = { name; namespace } } ->
+                                Printf.sprintf "aws %s/%s: %s" namespace name
+                                  (Option.value message ~default:"<none>")
+                            | `HttpError _ -> "http"
+                            | `JsonParseError _ -> "json parse"
                             | _ -> "other"))
   | Ok { item = None; _ } -> None
   | Ok { item = Some kvs; _ } ->
@@ -23,7 +28,7 @@ let get_item cfg id =
        | Ok n -> Some n
        | Error _ -> None)
 
-let query_children cfg parent label_opt =
+let query_child_edges cfg parent label_opt =
   let pk_val = s (Node_id.to_string parent) in
   let prefix =
     match label_opt with
@@ -40,16 +45,32 @@ let query_children cfg parent label_opt =
   match Dyn.Query.request cfg.ctx input with
   | Error _ -> []
   | Ok { items = None; _ } -> []
-  | Ok { items = Some edge_rows; _ } ->
-      List.filter_map
-        (fun kvs ->
-          match (List.assoc_opt "gsi1pk" kvs : Dyn.attribute_value option) with
-          | Some (Dyn.S child_s) ->
-              (match Node_id.of_string child_s with
-               | Error _ -> None
-               | Ok child_id -> get_item cfg child_id)
-          | _ -> None)
-        edge_rows
+  | Ok { items = Some edge_rows; _ } -> edge_rows
+
+let query_child_refs cfg parent label_opt =
+  List.filter_map
+    (fun kvs ->
+      match
+        (List.assoc_opt "gsi1pk" kvs : Dyn.attribute_value option),
+        (List.assoc_opt "name" kvs : Dyn.attribute_value option)
+      with
+      | Some (Dyn.S child_s), Some (Dyn.S name) ->
+          (match Node_id.of_string child_s with
+           | Error _ -> None
+           | Ok child_id -> Some (child_id, name))
+      | _ -> None)
+    (query_child_edges cfg parent label_opt)
+
+let query_children cfg parent label_opt =
+  List.filter_map
+    (fun kvs ->
+      match (List.assoc_opt "gsi1pk" kvs : Dyn.attribute_value option) with
+      | Some (Dyn.S child_s) ->
+          (match Node_id.of_string child_s with
+           | Error _ -> None
+           | Ok child_id -> get_item cfg child_id)
+      | _ -> None)
+    (query_child_edges cfg parent label_opt)
 
 let put_node cfg (nd : Node.t) =
   let input =
@@ -60,8 +81,10 @@ let put_node cfg (nd : Node.t) =
   | Ok _ -> ()
   | Error _ -> failwith "PutItem node failed"
 
-let put_edge cfg ~from_ ~to_ ~label =
-  let item = Codec.edge_item ~from_ ~to_ ~label ~created:(Ptime_clock.now ()) in
+let put_edge cfg ~from_ ~to_ ~label ~name =
+  let item =
+    Codec.edge_item ~from_ ~to_ ~label ~name ~created:(Ptime_clock.now ())
+  in
   let input = Dyn.make_put_item_input ~item ~table_name:cfg.table () in
   match Dyn.PutItem.request cfg.ctx input with
   | Ok _ -> ()
@@ -106,21 +129,24 @@ let delete_node cfg id =
 let active_sk_prefix = "active#"
 let has_sensor_sk_prefix = "has_sensor#"
 
-let put_sensor_active cfg (sensor : Sensor.t) =
-  let item = Codec.sensor_to_item ~active:true sensor in
-  let input = Dyn.make_put_item_input ~item ~table_name:cfg.table () in
-  match Dyn.PutItem.request cfg.ctx input with
-  | Ok _ -> ()
-  | Error _ -> failwith "PutItem sensor active failed"
-
-let put_sensor_edge cfg ~parent ~sensor_id =
-  let item =
-    Codec.sensor_edge_item ~parent ~sensor_id ~created:(Ptime_clock.now ())
+let put_sensor_and_edge cfg ~(sensor : Sensor.t) ~parent =
+  let active_item = Codec.sensor_to_item ~active:true sensor in
+  let edge_item =
+    Codec.sensor_edge_item ~parent ~sensor_id:sensor.Sensor.id
+      ~created:(Ptime_clock.now ())
   in
-  let input = Dyn.make_put_item_input ~item ~table_name:cfg.table () in
-  match Dyn.PutItem.request cfg.ctx input with
+  let put_active = Dyn.make_put ~item:active_item ~table_name:cfg.table () in
+  let put_edge   = Dyn.make_put ~item:edge_item   ~table_name:cfg.table () in
+  let items =
+    [
+      Dyn.make_transact_write_item ~put:put_active ();
+      Dyn.make_transact_write_item ~put:put_edge ();
+    ]
+  in
+  let input = Dyn.make_transact_write_items_input ~transact_items:items () in
+  match Dyn.TransactWriteItems.request cfg.ctx input with
   | Ok _ -> ()
-  | Error _ -> failwith "PutItem sensor edge failed"
+  | Error _ -> failwith "TransactWriteItems put_sensor failed"
 
 let query_active_sensor cfg (id : Sensor_id.t) =
   let input =
@@ -167,9 +193,9 @@ let query_sensor_ids cfg parent =
           | _ -> None)
         rows
 
-let transact_replace cfg ~old_active_from ~new_sensor =
+let transact_replace cfg ~old_created ~new_sensor =
   let old_item = Codec.sensor_to_item ~active:true
-    { new_sensor with Sensor.active_from = old_active_from }
+    { new_sensor with Sensor.created = old_created }
   in
   let old_sk =
     match List.assoc_opt "sk" old_item with
@@ -183,7 +209,7 @@ let transact_replace cfg ~old_active_from ~new_sensor =
   in
   let history_item =
     Codec.sensor_to_item ~active:false
-      { new_sensor with Sensor.active_from = old_active_from }
+      { new_sensor with Sensor.created = old_created }
   in
   let new_active_item = Codec.sensor_to_item ~active:true new_sensor in
   let delete =
@@ -270,25 +296,26 @@ let run (cfg : cfg) (f : unit -> 'a) : 'a =
               Some (fun k -> continue k schema_opt)
           | Effects.List_children (parent, label_opt) ->
               Some (fun k -> continue k (query_children cfg parent label_opt))
+          | Effects.List_child_refs (parent, label_opt) ->
+              Some (fun k -> continue k (query_child_refs cfg parent label_opt))
           | Effects.Put_node n ->
               put_node cfg n;
               Some (fun k -> continue k ())
-          | Effects.Put_edge { from_; to_; label } ->
-              put_edge cfg ~from_ ~to_ ~label;
+          | Effects.Put_edge { from_; to_; label; name } ->
+              put_edge cfg ~from_ ~to_ ~label ~name;
               Some (fun k -> continue k ())
           | Effects.Delete_node id ->
               delete_node cfg id;
               Some (fun k -> continue k ())
           | Effects.Put_sensor { sensor; parent } ->
-              put_sensor_active cfg sensor;
-              put_sensor_edge cfg ~parent ~sensor_id:sensor.Sensor.id;
+              put_sensor_and_edge cfg ~sensor ~parent;
               Some (fun k -> continue k ())
           | Effects.Get_active_sensor id ->
               Some (fun k -> continue k (query_active_sensor cfg id))
           | Effects.List_sensor_ids parent ->
               Some (fun k -> continue k (query_sensor_ids cfg parent))
-          | Effects.Replace_sensor_device { old_active_from; new_sensor } ->
-              transact_replace cfg ~old_active_from ~new_sensor;
+          | Effects.Replace_sensor_device { old_created; new_sensor } ->
+              transact_replace cfg ~old_created ~new_sensor;
               Some (fun k -> continue k ())
           | Effects.Delete_sensor { sensor_id; parent } ->
               delete_sensor cfg sensor_id parent;

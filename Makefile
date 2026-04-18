@@ -20,7 +20,7 @@
 
 .PHONY: build build-local clean
 
-NAME ?= ocaml-lambda-test
+NAME ?= ocaml-lambda-hierarchy
 PLATFORM ?= linux/arm64
 
 build: $(NAME).zip

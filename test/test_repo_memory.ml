@@ -44,8 +44,8 @@ let list_children_filters_by_label () =
   Memory.run st (fun () ->
     Effects.put_node (mk c_a "A");
     Effects.put_node (mk c_b "B");
-    Effects.put_edge ~from_:p ~to_:c_a ~label:"building";
-    Effects.put_edge ~from_:p ~to_:c_b ~label:"area");
+    Effects.put_edge ~from_:p ~to_:c_a ~label:"building" ~name:"A";
+    Effects.put_edge ~from_:p ~to_:c_b ~label:"area" ~name:"B");
   let all = Memory.run st (fun () -> Effects.list_children p) in
   Alcotest.(check int) "no filter -> 2" 2 (List.length all);
   let bldgs = Memory.run st (fun () -> Effects.list_children ~label:"building" p) in
@@ -63,7 +63,7 @@ let delete_node_removes_edges () =
   in
   Memory.run st (fun () ->
     Effects.put_node node;
-    Effects.put_edge ~from_:p ~to_:c ~label:"building";
+    Effects.put_edge ~from_:p ~to_:c ~label:"building" ~name:"X";
     Effects.delete_node c);
   let remaining = Memory.run st (fun () -> Effects.list_children p) in
   Alcotest.(check int) "no children after delete" 0 (List.length remaining);
@@ -82,12 +82,12 @@ let tests =
 let ptime_of s = Ptime.of_rfc3339 s |> Result.get_ok |> fun (t, _, _) -> t
 let uuid_of s = Uuidm.of_string s |> Option.get
 
-let mk_sensor ~sensor_uuid ~parent ~active_from ~daq : Sensor.t =
+let mk_sensor ~sensor_uuid ~parent ~created ~daq : Sensor.t =
   {
     id = Sensor_id.make sensor_uuid;
-    active_from;
+    created;
     parent;
-    daq_address = daq;
+    daq_id = daq;
     hierarchy_path = "";
     purpose = "Electricity";
     meter_type = Sensor.Counter;
@@ -101,14 +101,14 @@ let memory_put_and_get_active_sensor () =
   let s_uuid = uuid_of "bbbbbbbb-0000-4000-8000-000000000001" in
   let s =
     mk_sensor ~sensor_uuid:s_uuid ~parent
-      ~active_from:(ptime_of "2026-04-18T10:00:00Z")
+      ~created:(ptime_of "2026-04-18T10:00:00Z")
       ~daq:"daq:x"
   in
   Memory.run st (fun () ->
     Effects.put_sensor ~sensor:s ~parent;
     match Effects.get_active_sensor s.Sensor.id with
     | Some s2 ->
-        Alcotest.(check string) "daq preserved" "daq:x" s2.Sensor.daq_address
+        Alcotest.(check string) "daq preserved" "daq:x" s2.Sensor.daq_id
     | None -> Alcotest.fail "expected active")
 
 let memory_list_sensor_ids_returns_attached () =
@@ -117,12 +117,12 @@ let memory_list_sensor_ids_returns_attached () =
   let s1 =
     mk_sensor
       ~sensor_uuid:(uuid_of "bbbbbbbb-0000-4000-8000-000000000010") ~parent
-      ~active_from:(ptime_of "2026-04-18T10:00:00Z") ~daq:"daq:a"
+      ~created:(ptime_of "2026-04-18T10:00:00Z") ~daq:"daq:a"
   in
   let s2 =
     mk_sensor
       ~sensor_uuid:(uuid_of "bbbbbbbb-0000-4000-8000-000000000011") ~parent
-      ~active_from:(ptime_of "2026-04-18T11:00:00Z") ~daq:"daq:b"
+      ~created:(ptime_of "2026-04-18T11:00:00Z") ~daq:"daq:b"
   in
   Memory.run st (fun () ->
     Effects.put_sensor ~sensor:s1 ~parent;
@@ -136,15 +136,15 @@ let memory_replace_device_demotes_old_and_promotes_new () =
   let s_uuid = uuid_of "bbbbbbbb-0000-4000-8000-000000000020" in
   let old_t = ptime_of "2026-03-01T00:00:00Z" in
   let new_t = ptime_of "2026-04-18T10:00:00Z" in
-  let old_s = mk_sensor ~sensor_uuid:s_uuid ~parent ~active_from:old_t ~daq:"daq:old" in
-  let new_s = mk_sensor ~sensor_uuid:s_uuid ~parent ~active_from:new_t ~daq:"daq:new" in
+  let old_s = mk_sensor ~sensor_uuid:s_uuid ~parent ~created:old_t ~daq:"daq:old" in
+  let new_s = mk_sensor ~sensor_uuid:s_uuid ~parent ~created:new_t ~daq:"daq:new" in
   Memory.run st (fun () ->
     Effects.put_sensor ~sensor:old_s ~parent;
-    Effects.replace_sensor_device ~old_active_from:old_t ~new_sensor:new_s;
+    Effects.replace_sensor_device ~old_created:old_t ~new_sensor:new_s;
     match Effects.get_active_sensor old_s.Sensor.id with
     | Some s ->
         Alcotest.(check string) "active daq is the new one"
-          "daq:new" s.Sensor.daq_address
+          "daq:new" s.Sensor.daq_id
     | None -> Alcotest.fail "expected active after replace")
 
 let tests =

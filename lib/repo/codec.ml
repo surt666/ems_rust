@@ -114,7 +114,7 @@ let node_to_item (nd : Node.t) : (string * Dyn.attribute_value) list =
   | Some sch -> ("schema", schema_to_attr sch) :: with_parent
   | None -> with_parent
 
-let edge_item ~from_ ~to_ ~label ~created =
+let edge_item ~from_ ~to_ ~label ~name ~created =
   let from_s = Node_id.to_string from_ in
   let to_s = Node_id.to_string to_ in
   let sk = Printf.sprintf "has_%s#%s" label to_s in
@@ -123,6 +123,7 @@ let edge_item ~from_ ~to_ ~label ~created =
     ("sk", s sk);
     ("type", s "edge");
     ("label", s label);
+    ("name", s name);
     ("created", s (Ptime.to_rfc3339 ~tz_offset_s:0 created));
     ("gsi1pk", s to_s);
     ("gsi1sk", s from_s);
@@ -381,8 +382,8 @@ let sensor_to_item ~active (sn : Sensor.t) : (string * Dyn.attribute_value) list
   let pk = Sensor_id.to_string sn.Sensor.id in
   let sk_t =
     if active
-    then Sensor_sk.Active sn.Sensor.active_from
-    else Sensor_sk.History sn.Sensor.active_from
+    then Sensor_sk.Active sn.Sensor.created
+    else Sensor_sk.History sn.Sensor.created
   in
   let base =
     [
@@ -390,12 +391,12 @@ let sensor_to_item ~active (sn : Sensor.t) : (string * Dyn.attribute_value) list
       ("sk", s (Sensor_sk.to_string sk_t));
       ("type", s "sensor");
       ("parent", s (Node_id.to_string sn.Sensor.parent));
-      ("daq_address", s sn.Sensor.daq_address);
+      ("daq_id", s sn.Sensor.daq_id);
       ("hierarchy_path", s sn.Sensor.hierarchy_path);
       ("purpose", s sn.Sensor.purpose);
       ("meter_type", s (Sensor.meter_type_to_string sn.Sensor.meter_type));
       ("formula", formula_to_attr sn.Sensor.formula);
-      ("active_from", s (Ptime.to_rfc3339 ~tz_offset_s:0 sn.Sensor.active_from));
+      ("created", s (Ptime.to_rfc3339 ~tz_offset_s:0 sn.Sensor.created));
     ]
   in
   match sn.Sensor.unit with
@@ -420,8 +421,8 @@ let sensor_of_item kvs : (Sensor.t, string) result =
   let* parent_v = field kvs "parent" in
   let* parent_s = as_string parent_v in
   let* parent = Node_id.of_string parent_s in
-  let* daq_v = field kvs "daq_address" in
-  let* daq_address = as_string daq_v in
+  let* daq_v = field kvs "daq_id" in
+  let* daq_id = as_string daq_v in
   let* hp_v = field kvs "hierarchy_path" in
   let* hierarchy_path = as_string hp_v in
   let* purpose_v = field kvs "purpose" in
@@ -434,10 +435,10 @@ let sensor_of_item kvs : (Sensor.t, string) result =
     | Some (Dyn.S u) -> Some u
     | _ -> None
   in
-  let* af_v = field kvs "active_from" in
-  let* af_s = as_string af_v in
-  let active_from =
-    match Ptime.of_rfc3339 af_s with
+  let* created_v = field kvs "created" in
+  let* created_s = as_string created_v in
+  let created =
+    match Ptime.of_rfc3339 created_s with
     | Ok (t, _, _) -> t
     | Error _ -> Ptime.epoch
   in
@@ -447,7 +448,7 @@ let sensor_of_item kvs : (Sensor.t, string) result =
     | None -> Ok Formula.Identity
   in
   Ok Sensor.{
-    id; active_from; parent; daq_address; hierarchy_path;
+    id; created; parent; daq_id; hierarchy_path;
     purpose; meter_type; unit; formula;
   }
 

@@ -6,11 +6,11 @@ let ptime_of s = Ptime.of_rfc3339 s |> Result.get_ok |> fun (t, _, _) -> t
 let make_sample () : Sensor.t =
   {
     id = Sensor_id.make (uuid_of "11111111-2222-4333-8444-000000000001");
-    active_from = ptime_of "2026-04-18T10:00:00Z";
+    created = ptime_of "2026-04-18T10:00:00Z";
     parent =
       Node_id.make Level.Hn5
         (uuid_of "22222222-2222-4333-8444-000000000002");
-    daq_address = "daq:adeunis_pu_v1:123:0018b210000191c7:counter_a";
+    daq_id = "daq:adeunis_pu_v1:123:0018b210000191c7:counter_a";
     hierarchy_path = "P1#C1#PR1#B2#A1";
     purpose = "Electricity";
     meter_type = Sensor.Counter;
@@ -21,8 +21,8 @@ let make_sample () : Sensor.t =
 let fields_preserved () =
   let s = make_sample () in
   Alcotest.(check string) "purpose"     "Electricity" s.purpose;
-  Alcotest.(check string) "daq_address"
-    "daq:adeunis_pu_v1:123:0018b210000191c7:counter_a" s.daq_address;
+  Alcotest.(check string) "daq_id"
+    "daq:adeunis_pu_v1:123:0018b210000191c7:counter_a" s.daq_id;
   Alcotest.(check bool) "counter meter" true
     (match s.meter_type with Sensor.Counter -> true | _ -> false);
   Alcotest.(check (option string)) "unit" (Some "kWh") s.unit

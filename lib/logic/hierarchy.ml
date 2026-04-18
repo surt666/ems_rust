@@ -1,37 +1,25 @@
 let ( let* ) = Result.bind
 
-let add_node ?label ~parent ~level ~name ~metadata () =
-  let* parent_node =
-    match Effects.get_node parent with
-    | None -> Error (Errors.Not_found parent)
-    | Some n -> Ok n
-  in
-  let parent_level = Node_id.level parent_node.Node.id in
-  let* () =
-    if Level.depth parent_level < Level.depth level
-    then Ok ()
-    else Error (Errors.Validation [ { Metadata.path = ""; message = "child depth must exceed parent depth" } ])
-  in
+let bad m = Errors.Validation [ { Metadata.path = ""; message = m } ]
+
+let add_under_schema ?label ~parent ~parent_level ~level ~metadata () =
   let* _host, schema = Schema_check.find_for parent in
   let candidates = Schema.edges_between schema parent_level level in
-  let edge_msg m =
-    Errors.Validation [ { Metadata.path = ""; message = m } ]
-  in
   let* edge_spec =
     match label, candidates with
     | Some l, _ ->
         (match List.find_opt (fun (s : Schema.edge_spec) -> s.label = l) candidates with
          | Some s -> Ok s
          | None ->
-             Error (edge_msg (Printf.sprintf "edge %s -> %s (%s) not allowed by schema"
-                                (Level.to_string parent_level) (Level.to_string level) l)))
+             Error (bad (Printf.sprintf "edge %s -> %s (%s) not allowed by schema"
+                           (Level.to_string parent_level) (Level.to_string level) l)))
     | None, [ single ] -> Ok single
     | None, [] ->
-        Error (edge_msg (Printf.sprintf "edge %s -> %s not allowed by schema"
-                           (Level.to_string parent_level) (Level.to_string level)))
+        Error (bad (Printf.sprintf "edge %s -> %s not allowed by schema"
+                      (Level.to_string parent_level) (Level.to_string level)))
     | None, _many ->
-        Error (edge_msg (Printf.sprintf "edge %s -> %s is ambiguous; specify ~label"
-                           (Level.to_string parent_level) (Level.to_string level)))
+        Error (bad (Printf.sprintf "edge %s -> %s is ambiguous; specify label"
+                      (Level.to_string parent_level) (Level.to_string level)))
   in
   let* () =
     let specs = Schema.metadata_for schema level in
@@ -45,17 +33,68 @@ let add_node ?label ~parent ~level ~name ~metadata () =
   let* () =
     match edge_spec.Schema.max with
     | Some m when List.length existing >= m ->
-        Error (edge_msg (Printf.sprintf "max %d %s per parent already reached"
-                           m edge_spec.Schema.label))
+        Error (bad (Printf.sprintf "max %d %s per parent already reached"
+                      m edge_spec.Schema.label))
     | _ -> Ok ()
+  in
+  Ok edge_spec.Schema.label
+
+let add_node ?label ?schema ~parent ~level ~name ~metadata () =
+  let* () =
+    if level = Level.Hn0
+    then Error (Errors.Bad_request "cannot create root via add_node")
+    else Ok ()
+  in
+  let* parent_node =
+    match Effects.get_node parent with
+    | None -> Error (Errors.Not_found parent)
+    | Some n -> Ok n
+  in
+  let parent_level = Node_id.level parent_node.Node.id in
+  let* () =
+    if Level.depth parent_level < Level.depth level then Ok ()
+    else Error (bad "child depth must exceed parent depth")
+  in
+  let* edge_label, node_schema =
+    match parent_level, level with
+    | Level.Hn0, Level.Hn1 ->
+        let* () =
+          if schema <> None
+          then Error (Errors.Bad_request "schema only allowed on hn2 nodes")
+          else Ok ()
+        in
+        Ok (Option.value label ~default:"partner", None)
+    | Level.Hn0, _ ->
+        Error (bad "root can only contain hn1 (partner) nodes")
+    | Level.Hn1, Level.Hn2 ->
+        let* sch =
+          match schema with
+          | None -> Error (Errors.Bad_request "schema is required when creating an hn2 node")
+          | Some s ->
+              (match Schema.validate s with
+               | Ok () -> Ok s
+               | Error msg -> Error (Errors.Bad_request (Printf.sprintf "invalid schema: %s" msg)))
+        in
+        Ok (Option.value label ~default:"company", Some sch)
+    | Level.Hn1, _ ->
+        Error (bad "partner can only contain hn2 (company) nodes")
+    | _ ->
+        let* () =
+          if schema <> None
+          then Error (Errors.Bad_request "schema only allowed on hn2 nodes")
+          else Ok ()
+        in
+        let* lbl = add_under_schema ?label ~parent ~parent_level ~level ~metadata () in
+        Ok (lbl, None)
   in
   let uuid = Effects.gen_uuid () in
   let created = Effects.now () in
   let child =
-    Node.make ~uuid ~level ~name ~parent ~created ~metadata ~schema:None
+    Node.make ~uuid ~level ~name ~parent ~created ~metadata ~schema:node_schema
   in
   Effects.put_node child;
-  Effects.put_edge ~from_:parent ~to_:child.Node.id ~label:edge_spec.Schema.label;
+  Effects.put_edge ~from_:parent ~to_:child.Node.id ~label:edge_label
+    ~name:child.Node.name;
   Ok child
 
 let get_node id =
@@ -66,6 +105,10 @@ let get_node id =
 let list_children ?label parent =
   let label_arg = Option.map (fun l -> "has_" ^ l ^ "#") label in
   Ok (Effects.list_children ?label:label_arg parent)
+
+let list_child_refs ?label parent =
+  let label_arg = Option.map (fun l -> "has_" ^ l ^ "#") label in
+  Ok (Effects.list_child_refs ?label:label_arg parent)
 
 let delete_node id =
   match Effects.get_node id with

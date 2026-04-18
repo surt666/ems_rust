@@ -22,7 +22,16 @@ let node_roundtrip_without_schema () =
 let edge_item_shape () =
   let p = Node_id.make Level.Hn3 (uuid "4b6a6f20-0000-0000-0000-000000000003") in
   let c = Node_id.make Level.Hn4 (uuid "4b6a6f20-0000-0000-0000-000000000004") in
-  let item = Codec.edge_item ~from_:p ~to_:c ~label:"building" ~created:Ptime.epoch in
+  let item =
+    Codec.edge_item ~from_:p ~to_:c ~label:"building" ~name:"Bld-1"
+      ~created:Ptime.epoch
+  in
+  let name =
+    match List.assoc_opt "name" item with
+    | Some (Smaws_Client_DynamoDB.S s) -> s
+    | _ -> Alcotest.fail "name missing"
+  in
+  Alcotest.(check string) "name on edge" "Bld-1" name;
   let sk =
     let v : Smaws_Client_DynamoDB.attribute_value = List.assoc "sk" item in
     match v with Smaws_Client_DynamoDB.S s -> s | _ -> Alcotest.fail "sk not S"
@@ -42,9 +51,9 @@ let sensor_round_trip () =
   let s : Sensor.t =
     {
       id = Sensor_id.make uuid;
-      active_from = t;
+      created = t;
       parent;
-      daq_address = "daq:x:y:z";
+      daq_id = "daq:x:y:z";
       hierarchy_path = "P#C#B";
       purpose = "Electricity";
       meter_type = Sensor.Counter;
@@ -58,7 +67,7 @@ let sensor_round_trip () =
   let item = Codec.sensor_to_item ~active:true s in
   match Codec.sensor_of_item item with
   | Ok s2 ->
-      Alcotest.(check string) "daq" s.daq_address s2.Sensor.daq_address;
+      Alcotest.(check string) "daq" s.daq_id s2.Sensor.daq_id;
       Alcotest.(check string) "purpose" s.purpose s2.Sensor.purpose;
       Alcotest.(check bool)   "formula kind" true
         (match s2.Sensor.formula with Formula.Expr _ -> true | _ -> false)
@@ -72,9 +81,9 @@ let sensor_active_sk_prefixed () =
   let s : Sensor.t =
     {
       id = Sensor_id.make uuid;
-      active_from = t;
+      created = t;
       parent = Node_id.root;
-      daq_address = "daq";
+      daq_id = "daq";
       hierarchy_path = "";
       purpose = "Heat";
       meter_type = Sensor.Gauge;

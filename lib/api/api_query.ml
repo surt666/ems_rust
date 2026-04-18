@@ -21,13 +21,24 @@ let list_children ~params =
        | Error e -> err_bad_request e
        | Ok p ->
            let label = param params "label" in
-           (match Hierarchy.list_children ?label p with
-            | Error err -> Api_json.error_response err
-            | Ok ns ->
-                let body =
-                  `Assoc [ ("children", `List (List.map Api_json.node_to_json ns)) ]
-                in
-                Api_json.ok_response body))
+           let full =
+             match param params "full" with
+             | Some ("true" | "1") -> true
+             | _ -> false
+           in
+           if full then
+             (match Hierarchy.list_children ?label p with
+              | Error err -> Api_json.error_response err
+              | Ok ns ->
+                  Api_json.ok_response
+                    (`Assoc [ ("children", `List (List.map Api_json.node_to_json ns)) ]))
+           else
+             (match Hierarchy.list_child_refs ?label p with
+              | Error err -> Api_json.error_response err
+              | Ok refs ->
+                  Api_json.ok_response
+                    (`Assoc [ ("children",
+                               `List (List.map Api_json.node_ref_to_json refs)) ])))
 
 let list_sensors ~params =
   match param params "parent" with

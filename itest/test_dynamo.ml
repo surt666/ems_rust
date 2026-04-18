@@ -119,7 +119,8 @@ let seed_root_partner_companies cfg =
         ~metadata:(`Assoc []) ~schema:None
     in
     Effects.put_node partner;
-    Effects.put_edge ~from_:Node_id.root ~to_:partner_id ~label:"partner";
+    Effects.put_edge ~from_:Node_id.root ~to_:partner_id ~label:"partner"
+      ~name:partner.Node.name;
     let mk_company ~name ~schema =
       let u = Effects.gen_uuid () in
       let n =
@@ -128,7 +129,8 @@ let seed_root_partner_companies cfg =
           ~metadata:(`Assoc []) ~schema:(Some schema)
       in
       Effects.put_node n;
-      Effects.put_edge ~from_:partner_id ~to_:n.Node.id ~label:"company";
+      Effects.put_edge ~from_:partner_id ~to_:n.Node.id ~label:"company"
+        ~name:n.Node.name;
       n.Node.id
     in
     let realestate = mk_company ~name:"RealEstateCo" ~schema:(property_schema ()) in
@@ -247,7 +249,7 @@ let attach_list_replace cfg =
     in
     let s =
       match Sensors.attach ~parent:bldg.Node.id
-              ~daq_address:"daq:itest:old" ~purpose:"Electricity"
+              ~daq_id:"daq:itest:old" ~purpose:"Electricity"
               ~meter_type:Sensor.Counter ~unit:"kWh" () with
       | Ok s -> s | Error e -> bail "attach" e
     in
@@ -255,15 +257,15 @@ let attach_list_replace cfg =
      | Ok xs -> Alcotest.(check int) "one sensor attached" 1 (List.length xs)
      | Error e -> bail "list" e);
     (match Sensors.replace_device ~sensor_id:s.Sensor.id
-             ~new_daq_address:"daq:itest:new" () with
+             ~new_daq_id:"daq:itest:new" () with
      | Ok s2 ->
          Alcotest.(check string) "new daq active"
-           "daq:itest:new" s2.Sensor.daq_address
+           "daq:itest:new" s2.Sensor.daq_id
      | Error e -> bail "replace" e);
     (match Sensors.get_active s.Sensor.id with
      | Ok s3 ->
          Alcotest.(check string) "read back new"
-           "daq:itest:new" s3.Sensor.daq_address
+           "daq:itest:new" s3.Sensor.daq_id
      | Error e -> bail "get" e);
     (* teardown sensor and tree *)
     Effects.delete_sensor ~sensor_id:s.Sensor.id ~parent:bldg.Node.id;

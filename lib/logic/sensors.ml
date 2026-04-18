@@ -28,7 +28,7 @@ let has_cycle ~self_uuid formula =
     next
 
 let attach ?(formula = Formula.Identity) ?unit ~parent
-    ~daq_address ~purpose ~meter_type () =
+    ~daq_id ~purpose ~meter_type () =
   let* parent_node =
     match Effects.get_node parent with
     | None -> Error (Errors.Not_found parent)
@@ -52,9 +52,9 @@ let attach ?(formula = Formula.Identity) ?unit ~parent
   let sensor : Sensor.t =
     {
       id = Sensor_id.make uuid;
-      active_from = now;
+      created = now;
       parent;
-      daq_address;
+      daq_id;
       hierarchy_path = Node_id.to_string parent;
       purpose;
       meter_type;
@@ -82,7 +82,7 @@ let get_active id =
       Error (Errors.Not_found
                (Node_id.make Level.Hn9 (Sensor_id.uuid id)))
 
-let replace_device ~sensor_id ~new_daq_address () =
+let replace_device ~sensor_id ~new_daq_id () =
   let* old =
     match Effects.get_active_sensor sensor_id with
     | Some s -> Ok s
@@ -93,12 +93,12 @@ let replace_device ~sensor_id ~new_daq_address () =
   let now = Effects.now () in
   let new_sensor =
     { old with
-      Sensor.active_from = now;
-      daq_address = new_daq_address;
+      Sensor.created = now;
+      daq_id = new_daq_id;
     }
   in
   Effects.replace_sensor_device
-    ~old_active_from:old.Sensor.active_from ~new_sensor;
+    ~old_created:old.Sensor.created ~new_sensor;
   Ok new_sensor
 
 let set_formula ~sensor_id ~formula () =
@@ -111,10 +111,10 @@ let set_formula ~sensor_id ~formula () =
   in
   let now = Effects.now () in
   let new_sensor =
-    { old with Sensor.active_from = now; formula }
+    { old with Sensor.created = now; formula }
   in
   Effects.replace_sensor_device
-    ~old_active_from:old.Sensor.active_from ~new_sensor;
+    ~old_created:old.Sensor.created ~new_sensor;
   Ok new_sensor
 
 let rec evaluate id =

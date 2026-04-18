@@ -95,7 +95,7 @@ let attach_sensor_happy () =
   Memory.run st (fun () ->
     let body =
       Printf.sprintf
-        {|{"action":"attach_sensor","parent_id":%S,"daq_address":"daq:1","purpose":"Electricity","meter_type":"counter","unit":"kWh"}|}
+        {|{"action":"attach_sensor","parent_id":%S,"daq_id":"daq:1","purpose":"Electricity","meter_type":"counter","unit":"kWh"}|}
         (Node_id.to_string bldg)
     in
     let resp = Api_command.dispatch ~body in

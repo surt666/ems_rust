@@ -2,9 +2,9 @@ type meter_type = Counter | Gauge
 
 type t = {
   id : Sensor_id.t;
-  active_from : Ptime.t;
+  created : Ptime.t;
   parent : Node_id.t;
-  daq_address : string;
+  daq_id : string;
   hierarchy_path : string;
   purpose : string;
   meter_type : meter_type;

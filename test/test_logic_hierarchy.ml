@@ -91,10 +91,83 @@ let enforces_cardinality_max () =
     | Error (Errors.Validation _) -> ()
     | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
 
+let seed_root st =
+  Memory.run st (fun () ->
+    Effects.put_node (Node.make_root ~created:Ptime.epoch))
+
+let creates_partner_under_root () =
+  let st = Memory.empty () in
+  seed_root st;
+  Memory.run st (fun () ->
+    match
+      Hierarchy.add_node ~parent:Node_id.root ~level:Level.Hn1
+        ~name:"Acme Group" ~metadata:(`Assoc []) ()
+    with
+    | Error e -> Alcotest.failf "%s" (Errors.message e)
+    | Ok n ->
+        Alcotest.(check bool) "is hn1" true (Node_id.level n.Node.id = Level.Hn1);
+        Alcotest.(check bool) "no schema on partner" true (n.Node.schema = None))
+
+let rejects_root_creation () =
+  let st = Memory.empty () in
+  seed_root st;
+  Memory.run st (fun () ->
+    match
+      Hierarchy.add_node ~parent:Node_id.root ~level:Level.Hn0
+        ~name:"root2" ~metadata:(`Assoc []) ()
+    with
+    | Ok _ -> Alcotest.fail "expected Bad_request"
+    | Error (Errors.Bad_request _) -> ()
+    | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
+
+let creates_company_with_schema () =
+  let st = Memory.empty () in
+  seed_root st;
+  Memory.run st (fun () ->
+    let partner =
+      match
+        Hierarchy.add_node ~parent:Node_id.root ~level:Level.Hn1
+          ~name:"Group" ~metadata:(`Assoc []) ()
+      with
+      | Ok n -> n.Node.id
+      | Error e -> Alcotest.failf "partner: %s" (Errors.message e)
+    in
+    match
+      Hierarchy.add_node ~parent:partner ~level:Level.Hn2
+        ~name:"Acme" ~metadata:(`Assoc []) ~schema:sample_schema ()
+    with
+    | Error e -> Alcotest.failf "%s" (Errors.message e)
+    | Ok n ->
+        Alcotest.(check bool) "has schema" true (n.Node.schema <> None))
+
+let company_without_schema_fails () =
+  let st = Memory.empty () in
+  seed_root st;
+  Memory.run st (fun () ->
+    let partner =
+      match
+        Hierarchy.add_node ~parent:Node_id.root ~level:Level.Hn1
+          ~name:"Group" ~metadata:(`Assoc []) ()
+      with
+      | Ok n -> n.Node.id
+      | Error e -> Alcotest.failf "partner: %s" (Errors.message e)
+    in
+    match
+      Hierarchy.add_node ~parent:partner ~level:Level.Hn2
+        ~name:"Acme" ~metadata:(`Assoc []) ()
+    with
+    | Ok _ -> Alcotest.fail "expected Bad_request"
+    | Error (Errors.Bad_request _) -> ()
+    | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
+
 let tests =
   [
     Alcotest.test_case "add property + building" `Quick add_property_and_building;
     Alcotest.test_case "rejects disallowed edge" `Quick rejects_disallowed_edge;
     Alcotest.test_case "rejects bad metadata" `Quick rejects_bad_metadata;
     Alcotest.test_case "enforces max cardinality" `Quick enforces_cardinality_max;
+    Alcotest.test_case "creates partner under root" `Quick creates_partner_under_root;
+    Alcotest.test_case "rejects creating root" `Quick rejects_root_creation;
+    Alcotest.test_case "creates company with schema" `Quick creates_company_with_schema;
+    Alcotest.test_case "company without schema fails" `Quick company_without_schema_fails;
   ]

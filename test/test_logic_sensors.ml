@@ -38,13 +38,13 @@ let attach_happy () =
   Memory.run st (fun () ->
     match
       Sensors.attach
-        ~parent:bldg ~daq_address:"daq:1"
+        ~parent:bldg ~daq_id:"daq:1"
         ~purpose:"Electricity" ~meter_type:Sensor.Counter ~unit:"kWh"
         ~formula:Formula.Identity ()
     with
     | Error e -> Alcotest.failf "attach: %s" (Errors.message e)
     | Ok s ->
-        Alcotest.(check string) "daq" "daq:1" s.Sensor.daq_address;
+        Alcotest.(check string) "daq" "daq:1" s.Sensor.daq_id;
         Alcotest.(check string) "parent wired"
           (Node_id.to_string bldg) (Node_id.to_string s.Sensor.parent))
 
@@ -54,7 +54,7 @@ let rejects_level_not_allowed () =
   Memory.run st (fun () ->
     match
       Sensors.attach
-        ~parent:c2 ~daq_address:"daq:2"
+        ~parent:c2 ~daq_id:"daq:2"
         ~purpose:"Electricity" ~meter_type:Sensor.Counter ()
     with
     | Ok _ -> Alcotest.fail "expected Validation at disallowed level"
@@ -67,14 +67,14 @@ let list_active_returns_attached () =
   let bldg = seed_building st c2 in
   Memory.run st (fun () ->
     let _ = Sensors.attach ~parent:bldg
-              ~daq_address:"daq:1" ~purpose:"Electricity"
+              ~daq_id:"daq:1" ~purpose:"Electricity"
               ~meter_type:Sensor.Counter () in
     match Sensors.list_active ~parent:bldg with
     | Error e -> Alcotest.failf "list: %s" (Errors.message e)
     | Ok xs ->
         Alcotest.(check int) "one sensor" 1 (List.length xs);
         let s = List.hd xs in
-        Alcotest.(check string) "daq" "daq:1" s.Sensor.daq_address)
+        Alcotest.(check string) "daq" "daq:1" s.Sensor.daq_id)
 
 let list_active_empty_when_none () =
   let st = Memory.empty () in
@@ -93,14 +93,14 @@ let get_active_happy () =
     let s =
       match
         Sensors.attach ~parent:bldg
-          ~daq_address:"daq:k" ~purpose:"Electricity"
+          ~daq_id:"daq:k" ~purpose:"Electricity"
           ~meter_type:Sensor.Counter ()
       with
       | Ok x -> x
       | Error e -> Alcotest.failf "attach: %s" (Errors.message e)
     in
     match Sensors.get_active s.Sensor.id with
-    | Ok s2 -> Alcotest.(check string) "daq" "daq:k" s2.Sensor.daq_address
+    | Ok s2 -> Alcotest.(check string) "daq" "daq:k" s2.Sensor.daq_id
     | Error e -> Alcotest.failf "get: %s" (Errors.message e))
 
 let get_active_unknown () =
@@ -120,28 +120,28 @@ let replace_device_promotes_new () =
     let s =
       match
         Sensors.attach ~parent:bldg
-          ~daq_address:"daq:old" ~purpose:"Electricity"
+          ~daq_id:"daq:old" ~purpose:"Electricity"
           ~meter_type:Sensor.Counter ()
       with
       | Ok x -> x
       | Error e -> Alcotest.failf "attach: %s" (Errors.message e)
     in
-    match Sensors.replace_device ~sensor_id:s.Sensor.id ~new_daq_address:"daq:new" () with
+    match Sensors.replace_device ~sensor_id:s.Sensor.id ~new_daq_id:"daq:new" () with
     | Error e -> Alcotest.failf "replace: %s" (Errors.message e)
     | Ok s2 ->
-        Alcotest.(check string) "new daq" "daq:new" s2.Sensor.daq_address;
+        Alcotest.(check string) "new daq" "daq:new" s2.Sensor.daq_id;
         (match Sensors.get_active s.Sensor.id with
          | Ok cur ->
-             Alcotest.(check string) "active is new" "daq:new" cur.Sensor.daq_address;
-             Alcotest.(check bool) "active_from updated" true
-               (not (Ptime.equal s.Sensor.active_from cur.Sensor.active_from))
+             Alcotest.(check string) "active is new" "daq:new" cur.Sensor.daq_id;
+             Alcotest.(check bool) "created updated" true
+               (not (Ptime.equal s.Sensor.created cur.Sensor.created))
          | Error e -> Alcotest.failf "get: %s" (Errors.message e)))
 
 let replace_unknown_fails () =
   let st = Memory.empty () in
   Memory.run st (fun () ->
     let id = Sensor_id.make (uuid_of "ffffffff-0000-4000-8000-000000000002") in
-    match Sensors.replace_device ~sensor_id:id ~new_daq_address:"x" () with
+    match Sensors.replace_device ~sensor_id:id ~new_daq_id:"x" () with
     | Ok _ -> Alcotest.fail "expected Not_found"
     | Error (Errors.Not_found _) -> ()
     | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
@@ -154,7 +154,7 @@ let attach_detects_self_cycle () =
     let s =
       match
         Sensors.attach ~parent:bldg
-          ~daq_address:"daq:1" ~purpose:"Electricity"
+          ~daq_id:"daq:1" ~purpose:"Electricity"
           ~meter_type:Sensor.Counter ()
       with
       | Ok x -> x
@@ -195,7 +195,7 @@ let evaluate_identity () =
     Memory.run st (fun () ->
       match
         Sensors.attach ~parent:bldg
-          ~daq_address:"daq:1" ~purpose:"Electricity"
+          ~daq_id:"daq:1" ~purpose:"Electricity"
           ~meter_type:Sensor.Counter ()
       with
       | Ok x -> x
@@ -216,7 +216,7 @@ let evaluate_composite () =
       let s4 =
         match
           Sensors.attach ~parent:bldg
-            ~daq_address:"daq:4" ~purpose:"Electricity"
+            ~daq_id:"daq:4" ~purpose:"Electricity"
             ~meter_type:Sensor.Counter ()
         with
         | Ok x -> x
@@ -231,7 +231,7 @@ let evaluate_composite () =
       let s3 =
         match
           Sensors.attach ~parent:bldg
-            ~daq_address:"daq:3" ~purpose:"Electricity"
+            ~daq_id:"daq:3" ~purpose:"Electricity"
             ~meter_type:Sensor.Counter ~formula:formula_s3 ()
         with
         | Ok x -> x

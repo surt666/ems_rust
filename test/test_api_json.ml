@@ -29,8 +29,37 @@ let node_to_json_has_expected_keys () =
     (fun k -> Alcotest.(check bool) ("has key " ^ k) true (List.mem k keys))
     [ "id"; "name"; "parent"; "created"; "metadata" ]
 
+let schema_json_roundtrip () =
+  let schema : Schema.t =
+    Schema.{
+      version = 1;
+      edges = [
+        (Level.Hn2, [ (Level.Hn3, [
+          { label = "property"; min = None; max = None };
+          { label = "group";    min = None; max = Some 3 };
+        ]) ]);
+        (Level.Hn3, [ (Level.Hn4, [ { label = "building"; min = Some 1; max = None } ]) ]);
+      ];
+      metadata = [
+        (Level.Hn4, [
+          ("lat", Metadata.{ typ = Number { min = Some (-90.); max = Some 90. }; required = true });
+          ("kind", Metadata.{ typ = Enum { one_of = [ "a"; "b" ] }; required = false });
+        ]);
+      ];
+      sensors = [ Level.Hn4 ];
+    }
+  in
+  let j = Api_json.schema_to_json schema in
+  match Api_json.schema_of_json j with
+  | Error msg -> Alcotest.failf "decode: %s" msg
+  | Ok s2 ->
+      Alcotest.(check int) "version" schema.version s2.Schema.version;
+      Alcotest.(check int) "edges parents" (List.length schema.edges) (List.length s2.Schema.edges);
+      Alcotest.(check int) "sensors" 1 (List.length s2.Schema.sensors)
+
 let tests =
   [
     Alcotest.test_case "error body shape" `Quick error_body_has_expected_shape;
     Alcotest.test_case "node JSON keys" `Quick node_to_json_has_expected_keys;
+    Alcotest.test_case "schema JSON roundtrip" `Quick schema_json_roundtrip;
   ]
