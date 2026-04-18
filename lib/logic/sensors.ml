@@ -148,3 +148,27 @@ let set_formula ~sensor_id ~formula () =
   Effects.replace_sensor_device
     ~old_active_from:old.Sensor.active_from ~new_sensor;
   Ok new_sensor
+
+let rec evaluate id =
+  let* s = get_active id in
+  let* self_reading =
+    match Effects.get_sensor_reading id with
+    | Some v -> Ok v
+    | None -> Error (Errors.Not_found (Node_id.make Level.Hn9 (Sensor_id.uuid id)))
+  in
+  match s.Sensor.formula with
+  | Formula.Identity -> Ok self_reading
+  | Formula.Expr { refs; _ } as f ->
+      let rec resolve_all acc = function
+        | [] -> Ok (List.rev acc)
+        | (alias, uuid) :: rest ->
+            let* v = evaluate (Sensor_id.make uuid) in
+            resolve_all ((alias, v) :: acc) rest
+      in
+      let* resolved = resolve_all [] refs in
+      let resolve_alias alias =
+        match List.assoc_opt alias resolved with
+        | Some v -> v
+        | None -> raise (Formula.Unknown_ref alias)
+      in
+      Ok (Formula.eval ~self:self_reading ~resolve:resolve_alias f)

@@ -247,6 +247,110 @@ let attach_detects_self_cycle () =
     | Error (Errors.Validation _) -> ()
     | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
 
+(* Wraps a Memory-backed state with a canned reading lookup.
+   The readings handler must be innermost so it intercepts Get_sensor_reading
+   before Memory.run's default handler (which returns None) can see it. *)
+let run_with_readings st readings f =
+  Memory.run st (fun () ->
+    let open Effect.Deep in
+    try_with f ()
+      {
+        effc =
+          (fun (type a) (eff : a Effect.t) ->
+            match eff with
+            | Effects.Get_sensor_reading id ->
+                let v = List.assoc_opt (Sensor_id.to_string id) readings in
+                Some (fun (k : (a, _) continuation) -> continue k v)
+            | _ -> None);
+      })
+
+let evaluate_identity () =
+  let st = Memory.empty () in
+  let c2 = seed_company st in
+  let bldg = seed_building st c2 in
+  let s =
+    Memory.run st (fun () ->
+      match
+        Sensors.attach ~parent:bldg ~kind:"electricity"
+          ~daq_address:"daq:1" ~purpose:"Electricity"
+          ~meter_type:Sensor.Counter ()
+      with
+      | Ok x -> x
+      | Error e -> Alcotest.failf "attach: %s" (Errors.message e))
+  in
+  let readings = [ (Sensor_id.to_string s.Sensor.id, 42.0) ] in
+  run_with_readings st readings (fun () ->
+    match Sensors.evaluate s.Sensor.id with
+    | Ok v -> Alcotest.(check (float 1e-9)) "raw passed through" 42.0 v
+    | Error e -> Alcotest.failf "eval: %s" (Errors.message e))
+
+let evaluate_composite () =
+  let st = Memory.empty () in
+  let c2 = seed_company st in
+  let bldg = seed_building st c2 in
+  Memory.run st (fun () ->
+    let s4 =
+      match
+        Sensors.attach ~parent:bldg ~kind:"electricity"
+          ~daq_address:"daq:4" ~purpose:"Electricity"
+          ~meter_type:Sensor.Counter ()
+      with
+      | Ok x -> x
+      | Error e -> Alcotest.failf "attach s4: %s" (Errors.message e)
+    in
+    let formula_s3 =
+      Formula.Expr {
+        ast = Formula.Abs (Formula.Sub (Formula.Self, Formula.Ref "s4"));
+        refs = [ ("s4", Sensor_id.uuid s4.Sensor.id) ];
+      }
+    in
+    let s3 =
+      match
+        Sensors.attach ~parent:bldg ~kind:"electricity"
+          ~daq_address:"daq:3" ~purpose:"Electricity"
+          ~meter_type:Sensor.Counter ~formula:formula_s3 ()
+      with
+      | Ok _ ->
+          Alcotest.fail "max=1 should block; widen the slot for this test"
+      | Error _ ->
+          (* Relax the schema for this test: use a slot with max=None *)
+          let sch : Schema.t =
+            { (sample_schema ()) with
+              sensors = [
+                (Level.Hn3, [
+                  Sensor_slot.{
+                    kind = "electricity"; min = None; max = None;
+                    meter_type = Either;
+                    purposes = Some [ "Electricity" ];
+                  };
+                ]);
+              ];
+            }
+          in
+          let c2_node =
+            Option.get (Effects.get_node c2)
+          in
+          Effects.put_node { c2_node with Node.schema = Some sch };
+          (match
+             Sensors.attach ~parent:bldg ~kind:"electricity"
+               ~daq_address:"daq:3" ~purpose:"Electricity"
+               ~meter_type:Sensor.Counter ~formula:formula_s3 ()
+           with
+           | Ok x -> x
+           | Error e -> Alcotest.failf "attach s3: %s" (Errors.message e))
+    in
+    let readings =
+      [
+        (Sensor_id.to_string s4.Sensor.id, 3.0);
+        (Sensor_id.to_string s3.Sensor.id, 10.0);
+      ]
+    in
+    run_with_readings st readings (fun () ->
+      match Sensors.evaluate s3.Sensor.id with
+      | Ok v ->
+          Alcotest.(check (float 1e-9)) "|10 - 3| = 7" 7.0 v
+      | Error e -> Alcotest.failf "eval: %s" (Errors.message e)))
+
 let tests =
   [
     Alcotest.test_case "attach happy path"       `Quick attach_happy;
@@ -261,4 +365,6 @@ let tests =
     Alcotest.test_case "replace_device promotes new" `Quick replace_device_promotes_new;
     Alcotest.test_case "replace_device unknown"      `Quick replace_unknown_fails;
     Alcotest.test_case "attach rejects cycle" `Quick attach_detects_self_cycle;
+    Alcotest.test_case "evaluate identity"  `Quick evaluate_identity;
+    Alcotest.test_case "evaluate composite" `Quick evaluate_composite;
   ]
