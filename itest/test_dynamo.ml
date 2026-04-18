@@ -203,6 +203,86 @@ let full_tree cfg =
       2 (List.length (Effects.list_children charger1.Node.id)))
   (* No cleanup: both trees persist in DynamoDB for inspection. *)
 
+let sensor_schema () : Schema.t =
+  Schema.{
+    version = 1;
+    edges = [
+      (Level.Hn2, [ (Level.Hn3, [ { label = "property"; min = None; max = None } ]) ]);
+      (Level.Hn3, [ (Level.Hn4, [ { label = "building"; min = None; max = None } ]) ]);
+      (Level.Hn4, [ (Level.Hn5, [ { label = "area";     min = None; max = None } ]) ]);
+    ];
+    metadata = [
+      (Level.Hn4, [
+        ("lat", Metadata.{ typ = Number { min = Some (-90.); max = Some 90. }; required = true });
+      ]);
+    ];
+    sensors = [
+      (Level.Hn4, [
+        Sensor_slot.{
+          kind = "electricity"; min = None; max = Some 2;
+          meter_type = Either;
+          purposes = Some [ "Electricity" ];
+        };
+      ]);
+      (Level.Hn5, [
+        Sensor_slot.{
+          kind = "electricity"; min = None; max = None;
+          meter_type = Either; purposes = None;
+        };
+      ]);
+    ];
+  }
+
+let fresh_with_sensor_schema cfg =
+  Dynamo.run cfg (fun () ->
+    let u = Effects.gen_uuid () in
+    let c2 = Node_id.make Level.Hn2 u in
+    let n2 =
+      Node.make ~uuid:u ~level:Level.Hn2 ~name:"SensorCo"
+        ~parent:Node_id.root ~created:(Ptime_clock.now ())
+        ~metadata:(`Assoc []) ~schema:(Some (sensor_schema ()))
+    in
+    Effects.put_node n2;
+    c2)
+
+let attach_list_replace cfg =
+  let c2 = fresh_with_sensor_schema cfg in
+  Dynamo.run cfg (fun () ->
+    let bail tag e = Alcotest.failf "%s: %s" tag (Errors.message e) in
+    let prop =
+      match Hierarchy.add_node ~parent:c2 ~level:Level.Hn3
+              ~name:"P" ~metadata:(`Assoc []) () with
+      | Ok n -> n | Error e -> bail "add prop" e
+    in
+    let bldg =
+      match Hierarchy.add_node ~parent:prop.Node.id ~level:Level.Hn4
+              ~name:"B" ~metadata:(`Assoc [ ("lat", `Float 55.) ]) () with
+      | Ok n -> n | Error e -> bail "add bldg" e
+    in
+    let s =
+      match Sensors.attach ~parent:bldg.Node.id ~kind:"electricity"
+              ~daq_address:"daq:itest:old" ~purpose:"Electricity"
+              ~meter_type:Sensor.Counter ~unit:"kWh" () with
+      | Ok s -> s | Error e -> bail "attach" e
+    in
+    (match Sensors.list_active ~parent:bldg.Node.id with
+     | Ok xs -> Alcotest.(check int) "one sensor attached" 1 (List.length xs)
+     | Error e -> bail "list" e);
+    (match Sensors.replace_device ~sensor_id:s.Sensor.id
+             ~new_daq_address:"daq:itest:new" () with
+     | Ok s2 ->
+         Alcotest.(check string) "new daq active"
+           "daq:itest:new" s2.Sensor.daq_address
+     | Error e -> bail "replace" e);
+    (match Sensors.get_active s.Sensor.id with
+     | Ok s3 ->
+         Alcotest.(check string) "read back new"
+           "daq:itest:new" s3.Sensor.daq_address
+     | Error e -> bail "get" e);
+    (* teardown sensor and tree *)
+    Effects.delete_sensor ~sensor_id:s.Sensor.id ~parent:bldg.Node.id;
+    Effects.delete_node c2)
+
 let () =
   let _ = require_env "AWS_DEFAULT_REGION" in
   let _ = require_env "ITEST_DYNAMO_TABLE" in
@@ -215,5 +295,8 @@ let () =
       ("hierarchy", [
         Alcotest.test_case "add + get roundtrip" `Quick (fun () -> add_and_get cfg);
         Alcotest.test_case "two companies, distinct sub-hierarchies" `Quick (fun () -> full_tree cfg);
+      ]);
+      ("sensors", [
+        Alcotest.test_case "attach + list + replace" `Quick (fun () -> attach_list_replace cfg);
       ]);
     ]
