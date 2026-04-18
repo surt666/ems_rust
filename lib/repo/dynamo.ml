@@ -103,6 +103,147 @@ let delete_node cfg id =
   delete_where_pk_eq ~pk_attr:"pk" ~sk_attr:"sk" ~index_name_opt:None;
   delete_where_pk_eq ~pk_attr:"gsi1pk" ~sk_attr:"gsi1sk" ~index_name_opt:(Some "gsi1")
 
+let active_sk_prefix = "active#"
+let has_sensor_sk_prefix = "has_sensor#"
+
+let put_sensor_active cfg (sensor : Sensor.t) =
+  let item = Codec.sensor_to_item ~active:true sensor in
+  let input = Dyn.make_put_item_input ~item ~table_name:cfg.table () in
+  match Dyn.PutItem.request cfg.ctx input with
+  | Ok _ -> ()
+  | Error _ -> failwith "PutItem sensor active failed"
+
+let put_sensor_edge cfg ~parent ~sensor_id =
+  let item =
+    Codec.sensor_edge_item ~parent ~sensor_id ~created:(Ptime_clock.now ())
+  in
+  let input = Dyn.make_put_item_input ~item ~table_name:cfg.table () in
+  match Dyn.PutItem.request cfg.ctx input with
+  | Ok _ -> ()
+  | Error _ -> failwith "PutItem sensor edge failed"
+
+let query_active_sensor cfg (id : Sensor_id.t) =
+  let input =
+    Dyn.make_query_input
+      ~key_condition_expression:"#pk = :pk AND begins_with(#sk, :sk)"
+      ~expression_attribute_names:[ ("#pk", "pk"); ("#sk", "sk") ]
+      ~expression_attribute_values:[
+        (":pk", s (Sensor_id.to_string id));
+        (":sk", s active_sk_prefix);
+      ]
+      ~limit:1
+      ~scan_index_forward:false
+      ~table_name:cfg.table ()
+  in
+  match Dyn.Query.request cfg.ctx input with
+  | Error _ -> None
+  | Ok { items = None; _ } -> None
+  | Ok { items = Some []; _ } -> None
+  | Ok { items = Some (kvs :: _); _ } ->
+      (match Codec.sensor_of_item kvs with
+       | Ok s -> Some s
+       | Error _ -> None)
+
+let query_sensor_ids cfg parent =
+  let pk_val = s (Node_id.to_string parent) in
+  let input =
+    Dyn.make_query_input
+      ~key_condition_expression:"#pk = :pk AND begins_with(#sk, :sk)"
+      ~expression_attribute_names:[ ("#pk", "pk"); ("#sk", "sk") ]
+      ~expression_attribute_values:[ (":pk", pk_val); (":sk", s has_sensor_sk_prefix) ]
+      ~table_name:cfg.table ()
+  in
+  match Dyn.Query.request cfg.ctx input with
+  | Error _ -> []
+  | Ok { items = None; _ } -> []
+  | Ok { items = Some rows; _ } ->
+      List.filter_map
+        (fun kvs ->
+          match (List.assoc_opt "sensor_id" kvs : Dyn.attribute_value option) with
+          | Some (Dyn.S sid_s) ->
+              (match Sensor_id.of_string sid_s with
+               | Ok id -> Some id
+               | Error _ -> None)
+          | _ -> None)
+        rows
+
+let transact_replace cfg ~old_active_from ~new_sensor =
+  let old_item = Codec.sensor_to_item ~active:true
+    { new_sensor with Sensor.active_from = old_active_from }
+  in
+  let old_sk =
+    match List.assoc_opt "sk" old_item with
+    | Some (Dyn.S v) -> v
+    | _ -> failwith "old_sk"
+  in
+  let old_pk =
+    match List.assoc_opt "pk" old_item with
+    | Some (Dyn.S v) -> v
+    | _ -> failwith "old_pk"
+  in
+  let history_item =
+    Codec.sensor_to_item ~active:false
+      { new_sensor with Sensor.active_from = old_active_from }
+  in
+  let new_active_item = Codec.sensor_to_item ~active:true new_sensor in
+  let delete =
+    Dyn.make_delete
+      ~key:[ ("pk", s old_pk); ("sk", s old_sk) ]
+      ~table_name:cfg.table ()
+  in
+  let put_hist =
+    Dyn.make_put ~item:history_item ~table_name:cfg.table ()
+  in
+  let put_new =
+    Dyn.make_put ~item:new_active_item ~table_name:cfg.table ()
+  in
+  let items =
+    [
+      Dyn.make_transact_write_item ~delete ();
+      Dyn.make_transact_write_item ~put:put_hist ();
+      Dyn.make_transact_write_item ~put:put_new ();
+    ]
+  in
+  let input = Dyn.make_transact_write_items_input ~transact_items:items () in
+  match Dyn.TransactWriteItems.request cfg.ctx input with
+  | Ok _ -> ()
+  | Error _ -> failwith "TransactWriteItems replace failed"
+
+let delete_sensor cfg (id : Sensor_id.t) (parent : Node_id.t) =
+  let id_s = Sensor_id.to_string id in
+  (* Delete active + history rows in the sensor's partition *)
+  let input =
+    Dyn.make_query_input
+      ~key_condition_expression:"#pk = :pk"
+      ~expression_attribute_names:[ ("#pk", "pk") ]
+      ~expression_attribute_values:[ (":pk", s id_s) ]
+      ~table_name:cfg.table ()
+  in
+  (match Dyn.Query.request cfg.ctx input with
+   | Error _ -> ()
+   | Ok { items = None; _ } -> ()
+   | Ok { items = Some rows; _ } ->
+       List.iter
+         (fun kvs ->
+           match List.assoc_opt "pk" kvs, List.assoc_opt "sk" kvs with
+           | Some pkv, Some skv ->
+               let _ = Dyn.DeleteItem.request cfg.ctx
+                 (Dyn.make_delete_item_input
+                    ~key:[ ("pk", pkv); ("sk", skv) ]
+                    ~table_name:cfg.table ())
+               in ()
+           | _ -> ())
+         rows);
+  (* Delete the parent edge row *)
+  let edge_sk = Printf.sprintf "has_sensor#%s" id_s in
+  let _ =
+    Dyn.DeleteItem.request cfg.ctx
+      (Dyn.make_delete_item_input
+         ~key:[ ("pk", s (Node_id.to_string parent)); ("sk", s edge_sk) ]
+         ~table_name:cfg.table ())
+  in
+  ()
+
 let run (cfg : cfg) (f : unit -> 'a) : 'a =
   let open Effect.Deep in
   try_with f ()
@@ -138,5 +279,22 @@ let run (cfg : cfg) (f : unit -> 'a) : 'a =
           | Effects.Delete_node id ->
               delete_node cfg id;
               Some (fun k -> continue k ())
+          | Effects.Put_sensor { sensor; parent } ->
+              put_sensor_active cfg sensor;
+              put_sensor_edge cfg ~parent ~sensor_id:sensor.Sensor.id;
+              Some (fun k -> continue k ())
+          | Effects.Get_active_sensor id ->
+              Some (fun k -> continue k (query_active_sensor cfg id))
+          | Effects.List_sensor_ids parent ->
+              Some (fun k -> continue k (query_sensor_ids cfg parent))
+          | Effects.Replace_sensor_device { old_active_from; new_sensor } ->
+              transact_replace cfg ~old_active_from ~new_sensor;
+              Some (fun k -> continue k ())
+          | Effects.Delete_sensor { sensor_id; parent } ->
+              delete_sensor cfg sensor_id parent;
+              Some (fun k -> continue k ())
+          | Effects.Get_sensor_reading _ ->
+              (* raw readings come from the flink-optimized table, not this one *)
+              Some (fun k -> continue k None)
           | _ -> None);
     }
