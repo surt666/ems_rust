@@ -4,6 +4,7 @@ type t = {
   version : int;
   edges : (Level.t * (Level.t * edge_spec list) list) list;
   metadata : (Level.t * (string * Metadata.field_spec) list) list;
+  sensors : (Level.t * Sensor_slot.t list) list;
 }
 
 let allowed_children t parent =
@@ -19,6 +20,11 @@ let edges_between t parent child =
 let metadata_for t level =
   match List.assoc_opt level t.metadata with
   | Some fs -> fs
+  | None -> []
+
+let sensors_for t level =
+  match List.assoc_opt level t.sensors with
+  | Some xs -> xs
   | None -> []
 
 let validate t =
@@ -56,5 +62,21 @@ let validate t =
                 raise (Bad (Printf.sprintf "%s.%s: %s" (Level.to_string level) name msg)))
           fields)
       t.metadata;
+    List.iter
+      (fun (level, slots) ->
+        let seen = Hashtbl.create 4 in
+        List.iter
+          (fun (slot : Sensor_slot.t) ->
+            (match Sensor_slot.validate slot with
+             | Ok () -> ()
+             | Error msg ->
+                 raise (Bad (Printf.sprintf "%s sensor slot: %s"
+                               (Level.to_string level) msg)));
+            if Hashtbl.mem seen slot.kind then
+              raise (Bad (Printf.sprintf "%s sensor slot: duplicate kind %S"
+                            (Level.to_string level) slot.kind));
+            Hashtbl.add seen slot.kind ())
+          slots)
+      t.sensors;
     Ok ()
   with Bad msg -> Error msg

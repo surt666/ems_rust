@@ -274,7 +274,7 @@ let decode_schema (v : Dyn.attribute_value) : (Schema.t, string) result =
               (Ok []) inner_kvs
             |> Result.map List.rev)
   in
-  Ok Schema.{ version; edges; metadata }
+  Ok Schema.{ version; edges; metadata; sensors = [] }
 
 let node_of_item kvs =
   let* pk = field kvs "pk" in

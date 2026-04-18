@@ -14,6 +14,7 @@ let sample_schema () : Schema.t =
         ("lng", Metadata.{ typ = Number { min = Some (-180.); max = Some 180. }; required = true });
       ]);
     ];
+    sensors = [];
   }
 
 let self_check_accepts_sample () =
@@ -49,10 +50,47 @@ let metadata_for_lookup () =
   let md_none = Schema.metadata_for s Level.Hn5 in
   Alcotest.(check int) "no fields at hn5" 0 (List.length md_none)
 
+let sensors_field_lookup () =
+  let s : Schema.t =
+    { (sample_schema ()) with
+      sensors = [
+        (Level.Hn4, [
+          Sensor_slot.{
+            kind = "electricity"; min = None; max = Some 1;
+            meter_type = Either; purposes = Some [ "Electricity" ];
+          };
+        ]);
+      ];
+    }
+  in
+  let slots = Schema.sensors_for s Level.Hn4 in
+  Alcotest.(check int) "one slot" 1 (List.length slots);
+  let slots_hn3 = Schema.sensors_for s Level.Hn3 in
+  Alcotest.(check int) "no slots at hn3" 0 (List.length slots_hn3)
+
+let rejects_duplicate_sensor_kind () =
+  let s : Schema.t =
+    { (sample_schema ()) with
+      sensors = [
+        (Level.Hn4, [
+          Sensor_slot.{ kind = "electricity"; min = None; max = None;
+                        meter_type = Either; purposes = None };
+          Sensor_slot.{ kind = "electricity"; min = None; max = None;
+                        meter_type = Counter; purposes = None };
+        ]);
+      ];
+    }
+  in
+  match Schema.validate s with
+  | Ok () -> Alcotest.fail "expected duplicate kind error"
+  | Error _ -> ()
+
 let tests =
   [
     Alcotest.test_case "self-check accepts sample" `Quick self_check_accepts_sample;
     Alcotest.test_case "rejects depth violation" `Quick rejects_depth_violation;
     Alcotest.test_case "allowed_children lookup" `Quick allowed_children_lookup;
     Alcotest.test_case "metadata_for lookup" `Quick metadata_for_lookup;
+    Alcotest.test_case "sensors_for lookup"           `Quick sensors_field_lookup;
+    Alcotest.test_case "rejects duplicate sensor kind" `Quick rejects_duplicate_sensor_kind;
   ]

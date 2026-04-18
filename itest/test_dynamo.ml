@@ -28,6 +28,7 @@ let fresh_root cfg =
             ("lat", Metadata.{ typ = Number { min = Some (-90.); max = Some 90. }; required = true });
           ]);
         ];
+        sensors = [];
       }
     in
     let n2 =
@@ -82,6 +83,7 @@ let property_schema () : Schema.t =
         ("lng", Metadata.{ typ = Number { min = Some (-180.); max = Some 180. }; required = true });
       ]);
     ];
+    sensors = [];
   }
 
 let chargepoint_schema () : Schema.t =
@@ -102,6 +104,7 @@ let chargepoint_schema () : Schema.t =
         });
       ]);
     ];
+    sensors = [];
   }
 
 let seed_root_partner_companies cfg =

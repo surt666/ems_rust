@@ -12,6 +12,7 @@ let seed () =
         (Level.Hn2, [ (Level.Hn3, [ { label = "property"; min = None; max = None } ]) ]);
       ];
       metadata = [];
+      sensors = [];
     }
   in
   let n2 =

@@ -10,6 +10,7 @@ let sample_schema : Schema.t =
       (Level.Hn3, [ (Level.Hn4, [ { label = "building"; min = None; max = None } ]) ]);
     ];
     metadata = [];
+    sensors = [];
   }
 
 let find_schema_from_self () =

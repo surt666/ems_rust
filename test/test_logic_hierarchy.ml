@@ -14,6 +14,7 @@ let sample_schema : Schema.t =
         ("lat", Metadata.{ typ = Number { min = Some (-90.); max = Some 90. }; required = true });
       ]);
     ];
+    sensors = [];
   }
 
 let seed_company st =
