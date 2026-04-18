@@ -135,6 +135,30 @@ let rejects_meter_type_mismatch () =
     | Error (Errors.Validation _) -> ()
     | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
 
+let list_active_returns_attached () =
+  let st = Memory.empty () in
+  let c2 = seed_company st in
+  let bldg = seed_building st c2 in
+  Memory.run st (fun () ->
+    let _ = Sensors.attach ~parent:bldg ~kind:"electricity"
+              ~daq_address:"daq:1" ~purpose:"Electricity"
+              ~meter_type:Sensor.Counter () in
+    match Sensors.list_active ~parent:bldg with
+    | Error e -> Alcotest.failf "list: %s" (Errors.message e)
+    | Ok xs ->
+        Alcotest.(check int) "one sensor" 1 (List.length xs);
+        let s = List.hd xs in
+        Alcotest.(check string) "daq" "daq:1" s.Sensor.daq_address)
+
+let list_active_empty_when_none () =
+  let st = Memory.empty () in
+  let c2 = seed_company st in
+  let bldg = seed_building st c2 in
+  Memory.run st (fun () ->
+    match Sensors.list_active ~parent:bldg with
+    | Error e -> Alcotest.failf "list: %s" (Errors.message e)
+    | Ok xs -> Alcotest.(check int) "zero" 0 (List.length xs))
+
 let tests =
   [
     Alcotest.test_case "attach happy path"       `Quick attach_happy;
@@ -142,4 +166,6 @@ let tests =
     Alcotest.test_case "rejects max exceeded"    `Quick rejects_max_exceeded;
     Alcotest.test_case "rejects bad purpose"     `Quick rejects_purpose_not_in_whitelist;
     Alcotest.test_case "rejects meter mismatch"  `Quick rejects_meter_type_mismatch;
+    Alcotest.test_case "list_active returns attached" `Quick list_active_returns_attached;
+    Alcotest.test_case "list_active empty"            `Quick list_active_empty_when_none;
   ]

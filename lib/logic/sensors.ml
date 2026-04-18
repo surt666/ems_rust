@@ -67,3 +67,12 @@ let attach ?(formula = Formula.Identity) ?unit ~parent ~kind
   in
   Effects.put_sensor ~sensor ~parent;
   Ok sensor
+
+let list_active ~parent =
+  let ids = Effects.list_sensor_ids parent in
+  let xs =
+    List.filter_map
+      (fun id -> Effects.get_active_sensor id)
+      ids
+  in
+  Ok xs
