@@ -125,7 +125,7 @@ let delete_node cfg id =
   delete_where_pk_eq ~pk_attr:"gsi1pk" ~sk_attr:"gsi1sk" ~index_name_opt:(Some "gsi1")
 
 let active_sk_prefix = "active#"
-let has_sensor_sk_prefix = "has_sensor#"
+let has_sensor_sk_prefix = Edge_kind.sk_verb Edge_kind.Has_sensor ^ "#"
 
 let put_sensor_and_edge cfg ~(sensor : Sensor.t) ~parent =
   let active_item = Codec.sensor_to_item ~active:true sensor in
@@ -183,7 +183,7 @@ let query_sensor_ids cfg parent =
   | Ok { items = Some rows; _ } ->
       List.filter_map
         (fun kvs ->
-          match (List.assoc_opt "sensor_id" kvs : Dyn.attribute_value option) with
+          match (List.assoc_opt "gsi1pk" kvs : Dyn.attribute_value option) with
           | Some (Dyn.S sid_s) ->
               (match Sensor_id.of_string sid_s with
                | Ok id -> Some id
@@ -259,7 +259,7 @@ let delete_sensor cfg (id : Sensor_id.t) (parent : Node_id.t) =
            | _ -> ())
          rows);
   (* Delete the parent edge row *)
-  let edge_sk = Printf.sprintf "has_sensor#%s" id_s in
+  let edge_sk = has_sensor_sk_prefix ^ id_s in
   let _ =
     Dyn.DeleteItem.request cfg.ctx
       (Dyn.make_delete_item_input

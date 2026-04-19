@@ -403,15 +403,12 @@ let sensor_to_item ~active (sn : Sensor.t) : (string * Dyn.attribute_value) list
   | None -> base
 
 let sensor_edge_item ~parent ~sensor_id ~created =
-  let pk = Node_id.to_string parent in
-  let sid = Sensor_id.to_string sensor_id in
-  [
-    ("pk", s pk);
-    ("sk", s (Printf.sprintf "has_sensor#%s" sid));
-    ("type", s "sensor_edge");
-    ("sensor_id", s sid);
-    ("created", s (Ptime.to_rfc3339 ~tz_offset_s:0 created));
-  ]
+  edge_item
+    ~from_:(Node_id.to_string parent)
+    ~to_:(Sensor_id.to_string sensor_id)
+    ~kind:Edge_kind.Has_sensor
+    ~name:""
+    ~created
 
 let sensor_of_item kvs : (Sensor.t, string) result =
   let* pk = field kvs "pk" in

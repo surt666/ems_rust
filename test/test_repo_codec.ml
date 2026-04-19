@@ -128,6 +128,27 @@ let sensor_active_sk_prefixed () =
   Alcotest.(check string) "history bare timestamp"
     "2026-04-18T10:00:00Z" sk_hist
 
+let sensor_edge_item_shape () =
+  let parent = Node_id.make Level.Hn4 (uuid "4b6a6f20-0000-0000-0000-000000000050") in
+  let sid =
+    Sensor_id.make (uuid "4b6a6f20-0000-0000-0000-000000000051")
+  in
+  let item = Codec.sensor_edge_item ~parent ~sensor_id:sid ~created:Ptime.epoch in
+  let s_of k =
+    match List.assoc_opt k item with
+    | Some (Smaws_Client_DynamoDB.S v) -> v
+    | _ -> Alcotest.failf "missing/non-S field %s" k
+  in
+  Alcotest.(check string) "type"   "edge"       (s_of "type");
+  Alcotest.(check string) "kind"   "has_sensor" (s_of "kind");
+  Alcotest.(check string) "pk"     (Node_id.to_string parent)   (s_of "pk");
+  Alcotest.(check string) "sk"
+    ("has_sensor#" ^ Sensor_id.to_string sid) (s_of "sk");
+  Alcotest.(check string) "gsi1pk" (Sensor_id.to_string sid)    (s_of "gsi1pk");
+  Alcotest.(check string) "gsi1sk"
+    ("sensor_of#" ^ Node_id.to_string parent) (s_of "gsi1sk");
+  Alcotest.(check string) "name"   "" (s_of "name")
+
 let schema_sensors_roundtrip () =
   let id = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-00000000dddd") in
   let sch : Schema.t =
@@ -158,5 +179,6 @@ let tests =
     Alcotest.test_case "edge item shape" `Quick edge_item_shape;
     Alcotest.test_case "sensor round trip"        `Quick sensor_round_trip;
     Alcotest.test_case "sensor sk active/history" `Quick sensor_active_sk_prefixed;
+    Alcotest.test_case "sensor edge item shape"   `Quick sensor_edge_item_shape;
     Alcotest.test_case "schema sensors roundtrip" `Quick schema_sensors_roundtrip;
   ]

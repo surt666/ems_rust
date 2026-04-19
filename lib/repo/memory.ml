@@ -115,13 +115,10 @@ let run (st : state) (f : unit -> 'a) : 'a =
           | Effects.Put_sensor { sensor; parent } ->
               let rows = sensor_rows st sensor.Sensor.id in
               set_sensor_rows st sensor.Sensor.id (Active sensor :: rows);
-              let to_id =
-                Node_id.make Level.Hn9 (Sensor_id.uuid sensor.Sensor.id)
-              in
               st.edges :=
                 {
                   from_ = Node_id.to_string parent;
-                  to_   = Node_id.to_string to_id;
+                  to_   = Sensor_id.to_string sensor.Sensor.id;
                   kind  = Edge_kind.Has_sensor;
                   name  = "";
                 }
@@ -137,8 +134,8 @@ let run (st : state) (f : unit -> 'a) : 'a =
                   (fun e ->
                     if e.from_ = parent_s && e.kind = Edge_kind.Has_sensor
                     then
-                      match Node_id.of_string e.to_ with
-                      | Ok c -> Some (Sensor_id.make (Node_id.uuid c))
+                      match Sensor_id.of_string e.to_ with
+                      | Ok id -> Some id
                       | Error _ -> None
                     else None)
                   !(st.edges)
@@ -157,7 +154,7 @@ let run (st : state) (f : unit -> 'a) : 'a =
               Some (fun k -> continue k ())
           | Effects.Delete_sensor { sensor_id; parent } ->
               Hashtbl.remove st.sensors (Sensor_id.to_string sensor_id);
-              let target = Sensor_id.uuid sensor_id in
+              let target_s = Sensor_id.to_string sensor_id in
               let parent_s = Node_id.to_string parent in
               st.edges :=
                 List.filter
@@ -165,9 +162,7 @@ let run (st : state) (f : unit -> 'a) : 'a =
                     not
                       (e.from_ = parent_s
                        && e.kind = Edge_kind.Has_sensor
-                       && (match Node_id.of_string e.to_ with
-                           | Ok c -> Uuidm.equal (Node_id.uuid c) target
-                           | Error _ -> false)))
+                       && e.to_ = target_s))
                   !(st.edges);
               Some (fun k -> continue k ())
           | Effects.Get_sensor_reading _id ->
