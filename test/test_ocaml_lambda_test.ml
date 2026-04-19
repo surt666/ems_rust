@@ -18,6 +18,7 @@ let () =
       ("logic.properties", Test_logic_properties.tests);
       ("logic.sensors", Test_logic_sensors.tests);
       ("logic.users", Test_logic_users.tests);
+      ("logic.access", Test_logic_access.tests);
       ("api.json", Test_api_json.tests);
       ("api.query", Test_api_query.tests);
       ("api.command", Test_api_command.tests);
