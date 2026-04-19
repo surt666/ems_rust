@@ -26,6 +26,52 @@ curl -G "$BASE/query/get_node" --data-urlencode "id=HN2#2ab951b2-e31c-4049-9dbb-
 curl -G "$BASE/query/get_user" --data-urlencode "id=U#alice@example.com"
 ```
 
+## Typical workflow
+
+A new tenant is bootstrapped by chaining a handful of calls. Every
+mutation response includes the new id, which is the input to the next
+call:
+
+```sh
+# 1. create the user who will operate the tree
+curl -X POST "$BASE/command" -d '{
+  "action": "create_user", "email": "alice@acme.test",
+  "name": "Alice", "cognito_group": "admin"
+}'
+# → { "id": "U#alice@acme.test", … }
+
+# 2. create the partner (hn1) under the implicit root hn0
+curl -X POST "$BASE/command" -d '{
+  "action": "add_node", "parent_id": "<hn0-root>",
+  "name": "Acme Partner"
+}'
+# → { "id": "HN1#0c5a…", … }
+
+# 3. create the company (hn2) — schema lives here
+curl -X POST "$BASE/command" -d '{
+  "action": "add_node", "parent_id": "HN1#0c5a…",
+  "name": "Acme Co",
+  "schema": { "version": 1, "edges": { … }, "sensors": ["hn6"] }
+}'
+# → { "id": "HN2#2ab9…", … }
+
+# 4. block Alice from a sub-tree (descendants inherit the block)
+curl -X POST "$BASE/command" -d '{
+  "action": "block_user",
+  "user_id": "U#alice@acme.test", "node_id": "HN2#2ab9…"
+}'
+
+# 5. ask for the effective capability at a descendant node
+curl -G "$BASE/query/effective_permission" \
+  --data-urlencode "user=U#alice@acme.test" \
+  --data-urlencode "node=HN3#aa…"
+# → { "capability": null, "reason": "blocked" }
+```
+
+The Lambda only reports — it does not reject the caller. Enforcement
+lives in the upstream authorizer; `effective_permission` is what it
+consults.
+
 ---
 
 ## Commands — `POST /command`

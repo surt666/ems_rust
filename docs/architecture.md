@@ -167,9 +167,9 @@ for the single top-level handler wiring.
 
 ## 4. Storage model
 
-Single DynamoDB table, two item shapes distinguished by the `sk` prefix and a
-`type` attribute. `GSI1` inverts hierarchy edges so "who points at Y" is one
-query.
+Single DynamoDB table, four item shapes distinguished by the `sk` prefix and a
+`type` attribute — `node`, `edge`, `sensor`, `user`. `GSI1` inverts edges so
+"who points at Y" is one query for any edge kind (hierarchy, sensor, or block).
 
 ```
 Table: hierarchy_new  (or $ITEST_DYNAMO_TABLE)
@@ -215,6 +215,39 @@ Input: `{ parent_id; level?; label?; name; metadata; schema? }`.
 6. `perform Put_node child` + `perform Put_edge { from_; to_; label; name }`.
    The Dynamo handler batches these into a single `TransactWriteItems`.
 7. Return the new node.
+
+## 5.1 Walking a request — `create_user`
+
+Shorter than `add_node`, and useful for seeing every layer in one trip:
+
+```
+POST /command   { "action": "create_user", "email": "alice@…", … }
+        │
+        ▼
+bin/main.ml                       parses the HTTP envelope, routes by method
+        │
+        ▼
+lib/api/api_command.ml            decodes JSON → typed args, dispatches
+        │                         on "action"; calls Users.create
+        ▼
+lib/logic/users.ml                pure logic, performs effects:
+  perform Get_user uid              → None expected; else Conflict
+  perform Now                       → Ptime.t for `created`
+  perform Put_user user             → write row
+        │
+        ▼
+lib/effects.ml                    declares the effects as types — no impl
+        │
+        ▼
+lib/repo/dynamo.ml                handler match on the effect constructor;
+  codec.ml user_to_item               encodes to a DynamoDB item map;
+  smaws PutItem                       issues the request;
+  failures → Errors.t                 never raises into logic
+```
+
+The logic function is ignorant of DynamoDB; the handler is ignorant of
+HTTP. Swapping `dynamo.ml` for `memory.ml` in the binary's handler stack
+is the whole of the test seam.
 
 ## 6. API surface (CQRS)
 

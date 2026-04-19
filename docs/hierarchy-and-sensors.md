@@ -304,6 +304,27 @@ truth is `lib/domain/edge_kind.ml`. The forward `sk` prefix comes from
 For a `Has_label "building"` edge the row is the familiar
 `has_building#<child_pk>` — that's the `Has_label` case of the general shape.
 
+#### Worked example — a block edge
+
+`block_user { user_id = "U#alice@acme.test"; node_id = "HN4#bb..." }`
+writes one edge row with `kind = Blocked`:
+
+| Attribute | Value                                        | Where it comes from             |
+|-----------|----------------------------------------------|---------------------------------|
+| `pk`      | `U#alice@acme.test`                          | `from_` side of the edge        |
+| `sk`      | `blocked#HN4#bb...`                          | `sk_verb Blocked = "blocked"`   |
+| `type`    | `edge`                                       | constant                        |
+| `kind`    | `blocked`                                    | `Edge_kind.to_string Blocked`   |
+| `gsi1pk`  | `HN4#bb...`                                  | `to_` side of the edge          |
+| `gsi1sk`  | `blocks#U#alice@acme.test`                   | `gsi_verb Blocked = "blocks"`   |
+
+"Nodes Alice is blocked on" is `Query pk=U#alice@acme.test,
+sk begins_with blocked#`. "Users blocked on HN4#bb..." is the
+mirror image on GSI1: `Query gsi1pk=HN4#bb..., gsi1sk begins_with
+blocks#`. A hierarchy edge or sensor edge would use the same shape
+with the `Has_label`/`Has_sensor` sk/gsi verbs instead — the GSI
+inversion is uniform across kinds.
+
 ### 6.2 Sensors — see §5.2.
 
 ### 6.3 Query patterns
@@ -363,7 +384,7 @@ and every edge. Sensor partitions under deleted nodes are also wiped (via
 | `lib/effects.ml`              | flat effect declarations + perform wrappers           |
 | `lib/logic/hierarchy.ml`      | `add_node`, `list_children`, `delete_node`, level resolution |
 | `lib/logic/schema_check.ml`   | `find_for` — walk up to the hn2 schema                |
-| `lib/logic/sensors.ml`        | `attach`, `list_active`, `replace_device`, `evaluate` |
+| `lib/logic/sensors.ml`        | `attach`, `list_active`, `get_active`, `replace_device`, `set_formula`, `evaluate` |
 | `lib/logic/users.ml`          | `create`, `get`, `update`, `delete`, `list`           |
 | `lib/logic/access.ml`         | `block`, `unblock`, `effective_permission`, blocked-list queries |
 | `lib/repo/codec.ml`           | node/edge/sensor/user ↔ DynamoDB attribute map        |
