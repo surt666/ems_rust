@@ -276,6 +276,17 @@ let sensor_to_json (s : Sensor.t) : Yojson.Safe.t =
     ("unit",           unit_json);
   ]
 
+let user_to_json (u : User.t) : Yojson.Safe.t =
+  `Assoc [
+    ("id",            `String (User_id.to_string u.User.id));
+    ("email",         `String (User_id.email u.User.id));
+    ("name",          `String u.User.name);
+    ("cognito_group", `String (Cognito_group.to_string u.User.cognito_group));
+    ("language",      `String (Language.to_string u.User.language));
+    ("currency",      `String (Currency.to_string u.User.currency));
+    ("created",       `String (Ptime.to_rfc3339 ~tz_offset_s:0 u.User.created));
+  ]
+
 let error_body (err : Errors.t) : string =
   let j =
     `Assoc [

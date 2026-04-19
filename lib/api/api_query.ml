@@ -64,10 +64,30 @@ let get_sensor ~params =
             | Ok s -> Api_json.ok_response (Api_json.sensor_to_json s)
             | Error err -> Api_json.error_response err))
 
+let get_user ~params =
+  match param params "id" with
+  | None -> err_bad_request "missing id"
+  | Some id_s ->
+      (match User_id.of_string id_s with
+       | Error e -> err_bad_request e
+       | Ok id ->
+           (match Users.get id with
+            | Ok u -> Api_json.ok_response (Api_json.user_to_json u)
+            | Error err -> Api_json.error_response err))
+
+let list_users ~params:_ =
+  match Users.list () with
+  | Error err -> Api_json.error_response err
+  | Ok xs ->
+      Api_json.ok_response
+        (`Assoc [ ("users", `List (List.map Api_json.user_to_json xs)) ])
+
 let dispatch ~action ~params =
   match action with
   | "get_node" -> get_node ~params
   | "list_children" -> list_children ~params
   | "list_sensors" -> list_sensors ~params
   | "get_sensor"   -> get_sensor   ~params
+  | "get_user" -> get_user ~params
+  | "list_users" -> list_users ~params
   | other -> err_bad_request (Printf.sprintf "unknown query action %S" other)

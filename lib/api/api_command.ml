@@ -80,6 +80,83 @@ let run_replace_sensor_device json =
   | Ok s -> Ok (Api_json.ok_response (Api_json.sensor_to_json s))
   | Error e -> Ok (Api_json.error_response e)
 
+let run_create_user json =
+  let* email = require_string json "email" in
+  let* name  = require_string json "name" in
+  let* group_s = require_string json "cognito_group" in
+  let* cognito_group = Cognito_group.of_string group_s in
+  let* language =
+    match field json "language" with
+    | None -> Ok None
+    | Some (`String s) ->
+        (match Language.of_string s with
+         | Ok l -> Ok (Some l)
+         | Error e -> Error e)
+    | Some _ -> Error "non-string field \"language\""
+  in
+  let* currency =
+    match field json "currency" with
+    | None -> Ok None
+    | Some (`String s) ->
+        (match Currency.of_string s with
+         | Ok c -> Ok (Some c)
+         | Error e -> Error e)
+    | Some _ -> Error "non-string field \"currency\""
+  in
+  match
+    Users.create ~email ~name ~cognito_group ?language ?currency ()
+  with
+  | Ok u -> Ok (Api_json.ok_response (Api_json.user_to_json u))
+  | Error e -> Ok (Api_json.error_response e)
+
+let run_update_user json =
+  let* id_s = require_string json "id" in
+  let* id = User_id.of_string id_s in
+  let name =
+    match field json "name" with Some (`String s) -> Some s | _ -> None
+  in
+  let* cognito_group =
+    match field json "cognito_group" with
+    | None -> Ok None
+    | Some (`String s) ->
+        (match Cognito_group.of_string s with
+         | Ok g -> Ok (Some g)
+         | Error e -> Error e)
+    | Some _ -> Error "non-string field \"cognito_group\""
+  in
+  let* language =
+    match field json "language" with
+    | None -> Ok None
+    | Some (`String s) ->
+        (match Language.of_string s with
+         | Ok l -> Ok (Some l)
+         | Error e -> Error e)
+    | Some _ -> Error "non-string field \"language\""
+  in
+  let* currency =
+    match field json "currency" with
+    | None -> Ok None
+    | Some (`String s) ->
+        (match Currency.of_string s with
+         | Ok c -> Ok (Some c)
+         | Error e -> Error e)
+    | Some _ -> Error "non-string field \"currency\""
+  in
+  match
+    Users.update ~id ?name ?cognito_group ?language ?currency ()
+  with
+  | Ok u -> Ok (Api_json.ok_response (Api_json.user_to_json u))
+  | Error e -> Ok (Api_json.error_response e)
+
+let run_delete_user json =
+  let* id_s = require_string json "id" in
+  let* id = User_id.of_string id_s in
+  match Users.delete id with
+  | Ok _ ->
+      Ok (Api_json.ok_response
+            (`Assoc [ ("deleted", `String (User_id.to_string id)) ]))
+  | Error e -> Ok (Api_json.error_response e)
+
 let dispatch ~body =
   match Yojson.Safe.from_string body with
   | exception Yojson.Json_error msg ->
@@ -101,6 +178,18 @@ let dispatch ~body =
             | Error m -> err_bad_request m)
        | Ok "replace_sensor_device" ->
            (match run_replace_sensor_device json with
+            | Ok resp -> resp
+            | Error m -> err_bad_request m)
+       | Ok "create_user" ->
+           (match run_create_user json with
+            | Ok resp -> resp
+            | Error m -> err_bad_request m)
+       | Ok "update_user" ->
+           (match run_update_user json with
+            | Ok resp -> resp
+            | Error m -> err_bad_request m)
+       | Ok "delete_user" ->
+           (match run_delete_user json with
             | Ok resp -> resp
             | Error m -> err_bad_request m)
        | Ok other ->

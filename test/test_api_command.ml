@@ -104,10 +104,47 @@ let attach_sensor_happy () =
     in
     Alcotest.(check int) "200" 200 status)
 
+let create_user_happy () =
+  let resp =
+    Memory.run (Memory.empty ()) (fun () ->
+      Api_command.dispatch
+        ~body:{|{"action":"create_user","email":"alice@ex","name":"Alice","cognito_group":"writer"}|})
+  in
+  let status =
+    Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int)
+  in
+  Alcotest.(check int) "status 200" 200 status;
+  let inner =
+    Yojson.Safe.Util.(
+      Yojson.Safe.from_string resp
+      |> member "body" |> to_string
+      |> Yojson.Safe.from_string)
+  in
+  let email = Yojson.Safe.Util.(inner |> member "email" |> to_string) in
+  Alcotest.(check string) "email echoed" "alice@ex" email
+
+let delete_user_roundtrip () =
+  let st = Memory.empty () in
+  Memory.run st (fun () ->
+    let _ =
+      Api_command.dispatch
+        ~body:{|{"action":"create_user","email":"bob@ex","name":"Bob","cognito_group":"reader"}|}
+    in
+    let resp =
+      Api_command.dispatch
+        ~body:{|{"action":"delete_user","id":"U#bob@ex"}|}
+    in
+    let status =
+      Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int)
+    in
+    Alcotest.(check int) "status 200" 200 status)
+
 let tests =
   [
     Alcotest.test_case "add_node happy path" `Quick add_node_happy_path;
     Alcotest.test_case "delete roundtrip" `Quick delete_node_roundtrip;
     Alcotest.test_case "invalid json -> 400" `Quick invalid_json_is_400;
     Alcotest.test_case "attach_sensor happy" `Quick attach_sensor_happy;
+    Alcotest.test_case "create_user happy" `Quick create_user_happy;
+    Alcotest.test_case "delete_user roundtrip" `Quick delete_user_roundtrip;
   ]

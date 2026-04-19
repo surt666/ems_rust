@@ -85,10 +85,48 @@ let list_sensors_empty () =
     in
     Alcotest.(check int) "200" 200 status)
 
+let get_user_happy () =
+  let st = Memory.empty () in
+  Memory.run st (fun () ->
+    let _ =
+      Api_command.dispatch
+        ~body:{|{"action":"create_user","email":"carol@ex","name":"Carol","cognito_group":"admin"}|}
+    in
+    let resp =
+      Api_query.dispatch ~action:"get_user"
+        ~params:[ ("id", "U#carol@ex") ]
+    in
+    let status =
+      Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int)
+    in
+    Alcotest.(check int) "status 200" 200 status)
+
+let list_users_empty () =
+  let resp =
+    Memory.run (Memory.empty ()) (fun () ->
+      Api_query.dispatch ~action:"list_users" ~params:[])
+  in
+  let status =
+    Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int)
+  in
+  Alcotest.(check int) "status 200" 200 status;
+  let inner =
+    Yojson.Safe.Util.(
+      Yojson.Safe.from_string resp
+      |> member "body" |> to_string
+      |> Yojson.Safe.from_string)
+  in
+  let users =
+    Yojson.Safe.Util.(inner |> member "users" |> to_list)
+  in
+  Alcotest.(check int) "empty list" 0 (List.length users)
+
 let tests =
   [
     Alcotest.test_case "get_node" `Quick get_node_returns_node;
     Alcotest.test_case "list_children" `Quick list_children_returns_array;
     Alcotest.test_case "unknown action -> 400" `Quick unknown_action_is_bad_request;
     Alcotest.test_case "list_sensors empty" `Quick list_sensors_empty;
+    Alcotest.test_case "get_user" `Quick get_user_happy;
+    Alcotest.test_case "list_users empty" `Quick list_users_empty;
   ]
