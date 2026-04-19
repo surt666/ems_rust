@@ -40,19 +40,24 @@ let edge_item_shape () =
     let v : Smaws_Client_DynamoDB.attribute_value = List.assoc "sk" item in
     match v with Smaws_Client_DynamoDB.S s -> s | _ -> Alcotest.fail "sk not S"
   in
-  Alcotest.(check bool) "sk has has_building#"
-    true (Astring.String.is_prefix ~affix:"has_building#HN4#" sk);
+  Alcotest.(check string) "sk"
+    ("has_building#" ^ Node_id.to_string c) sk;
   let kind_s =
     let v : Smaws_Client_DynamoDB.attribute_value = List.assoc "kind" item in
     match v with Smaws_Client_DynamoDB.S s -> s | _ -> Alcotest.fail "kind not S"
   in
   Alcotest.(check string) "kind attribute" "has_label:building" kind_s;
+  let gsi1pk =
+    let v : Smaws_Client_DynamoDB.attribute_value = List.assoc "gsi1pk" item in
+    match v with Smaws_Client_DynamoDB.S s -> s | _ -> Alcotest.fail "gsi1pk not S"
+  in
+  Alcotest.(check string) "gsi1pk" (Node_id.to_string c) gsi1pk;
   let gsi1sk =
     let v : Smaws_Client_DynamoDB.attribute_value = List.assoc "gsi1sk" item in
     match v with Smaws_Client_DynamoDB.S s -> s | _ -> Alcotest.fail "gsi1sk not S"
   in
-  Alcotest.(check bool) "gsi1sk has parent_of#"
-    true (Astring.String.is_prefix ~affix:"parent_of#HN3#" gsi1sk)
+  Alcotest.(check string) "gsi1sk"
+    ("parent_of#" ^ Node_id.to_string p) gsi1sk
 
 let sensor_round_trip () =
   let uuid = Uuidm.of_string "11111111-2222-4333-8444-000000000001" |> Option.get in
