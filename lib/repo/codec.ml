@@ -344,6 +344,7 @@ let rec expr_of_attr (v : Dyn.attribute_value) : (Formula.expr, string) result =
 let formula_to_attr (f : Formula.t) : Dyn.attribute_value =
   match f with
   | Formula.Identity -> Dyn.M [ ("kind", s "identity") ]
+  | Formula.Zero     -> Dyn.M [ ("kind", s "zero") ]
   | Formula.Expr { ast; refs } ->
       let refs_m =
         List.map (fun (a, u) -> (a, s (Uuidm.to_string u))) refs
@@ -360,6 +361,7 @@ let formula_of_attr (v : Dyn.attribute_value) : (Formula.t, string) result =
   let* kind_s = as_string kind_v in
   match kind_s with
   | "identity" -> Ok Formula.Identity
+  | "zero"     -> Ok Formula.Zero
   | "expr" ->
       let* ast_v = field kvs "ast" in
       let* ast = expr_of_attr ast_v in

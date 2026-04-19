@@ -251,6 +251,26 @@ let evaluate_composite () =
         Alcotest.(check (float 1e-9)) "|10 - 3| = 7" 7.0 v
     | Error e -> Alcotest.failf "eval: %s" (Errors.message e))
 
+let evaluate_zero_short_circuits_reading () =
+  let st = Memory.empty () in
+  let c2 = seed_company st in
+  let bldg = seed_building st c2 in
+  let s =
+    Memory.run st (fun () ->
+      match
+        Sensors.attach ~parent:bldg
+          ~daq_id:"daq:z" ~purpose:"Electricity"
+          ~meter_type:Sensor.Counter ~formula:Formula.Zero ()
+      with
+      | Ok x -> x
+      | Error e -> Alcotest.failf "attach: %s" (Errors.message e))
+  in
+  (* no readings registered — Zero must not try to fetch one *)
+  run_with_readings st [] (fun () ->
+    match Sensors.evaluate s.Sensor.id with
+    | Ok v -> Alcotest.(check (float 0.0)) "0" 0.0 v
+    | Error e -> Alcotest.failf "eval: %s" (Errors.message e))
+
 let tests =
   [
     Alcotest.test_case "attach happy path"       `Quick attach_happy;
@@ -264,4 +284,6 @@ let tests =
     Alcotest.test_case "attach rejects cycle" `Quick attach_detects_self_cycle;
     Alcotest.test_case "evaluate identity"  `Quick evaluate_identity;
     Alcotest.test_case "evaluate composite" `Quick evaluate_composite;
+    Alcotest.test_case "evaluate Zero short-circuits reading" `Quick
+      evaluate_zero_short_circuits_reading;
   ]

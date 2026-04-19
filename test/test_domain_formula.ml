@@ -82,6 +82,17 @@ let collect_refs_identity_empty () =
   let xs = Formula.referenced_uuids Formula.Identity in
   Alcotest.(check int) "none" 0 (List.length xs)
 
+let eval_zero_returns_zero () =
+  let v =
+    Formula.eval ~self:123.0 ~resolve:(fun _ -> failwith "should not call")
+      Formula.Zero
+  in
+  Alcotest.(check (float 0.0)) "0" 0.0 v
+
+let referenced_uuids_zero_empty () =
+  let xs = Formula.referenced_uuids Formula.Zero in
+  Alcotest.(check int) "none" 0 (List.length xs)
+
 let collect_refs_of_expr () =
   let ast = Formula.Sub (Formula.Ref "S1", Formula.Ref "S2") in
   let f = Formula.Expr { ast; refs = [ ("S1", uuid_a); ("S2", uuid_b) ] } in
@@ -104,4 +115,6 @@ let tests =
     Alcotest.test_case "eval unknown ref raises"     `Quick eval_unknown_ref_raises;
     Alcotest.test_case "referenced_uuids identity" `Quick collect_refs_identity_empty;
     Alcotest.test_case "referenced_uuids expr"     `Quick collect_refs_of_expr;
+    Alcotest.test_case "eval Zero = 0"             `Quick eval_zero_returns_zero;
+    Alcotest.test_case "referenced_uuids zero"     `Quick referenced_uuids_zero_empty;
   ]

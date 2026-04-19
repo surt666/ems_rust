@@ -119,14 +119,16 @@ let set_formula ~sensor_id ~formula () =
 
 let rec evaluate id =
   let* s = get_active id in
-  let* self_reading =
+  let reading () =
     match Effects.get_sensor_reading id with
     | Some v -> Ok v
     | None -> Error (Errors.Not_found (Node_id.make Level.Hn9 (Sensor_id.uuid id)))
   in
   match s.Sensor.formula with
-  | Formula.Identity -> Ok self_reading
+  | Formula.Zero     -> Ok 0.
+  | Formula.Identity -> reading ()
   | Formula.Expr { refs; _ } as f ->
+      let* self_reading = reading () in
       let rec resolve_all acc = function
         | [] -> Ok (List.rev acc)
         | (alias, uuid) :: rest ->

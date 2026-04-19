@@ -10,6 +10,7 @@ type expr =
 
 type t =
   | Identity
+  | Zero
   | Expr of { ast : expr; refs : (string * Uuidm.t) list }
 
 exception Unknown_ref of string
@@ -26,6 +27,7 @@ let rec eval_expr ~self ~resolve = function
 
 let eval ~self ~resolve = function
   | Identity -> self
+  | Zero -> 0.
   | Expr { ast; refs } ->
       let lookup alias =
         match List.assoc_opt alias refs with
@@ -35,5 +37,5 @@ let eval ~self ~resolve = function
       eval_expr ~self ~resolve:lookup ast
 
 let referenced_uuids = function
-  | Identity -> []
+  | Identity | Zero -> []
   | Expr { refs; _ } -> List.map snd refs

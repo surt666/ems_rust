@@ -238,7 +238,8 @@ sensors' computed values by uuid.
 ```ocaml
 (* lib/domain/formula.ml *)
 type formula =
-  | Identity                               (* S' = Self *)
+  | Identity                               (* S' = Self  (default) *)
+  | Zero                                   (* S' = 0     (exclude from aggregations) *)
   | Expr of {
       ast  : expr;
       refs : (string * Uuidm.t) list;      (* alias -> sensor uuid *)
@@ -255,12 +256,20 @@ and expr =
   | Div  of expr * expr
 ```
 
-`Self` is the raw reading of *this* meter. `Ref alias` resolves — via
-`refs` — to the *computed* value `S'` of another sensor. Evaluation is
-topological; leaves are evaluated before sensors that reference them.
+- **`Identity`** — `S' = Self`, the common case.
+- **`Zero`** — `S' = 0`. Keeps the sensor row and its edges intact but makes it
+  contribute nothing to aggregations. Use it when a physical sensor is present
+  but its readings shouldn't count — duplicate coverage, a meter that has
+  drifted, billing-separated consumption, etc. `Sensors.evaluate` short-circuits
+  before `Get_sensor_reading`, so a `Zero` formula evaluates correctly even
+  when no reading is available.
+- **`Expr`** — composite. `Self` is the raw reading of *this* meter;
+  `Ref alias` resolves — via `refs` — to the *computed* value `S'` of another
+  sensor. Evaluation is topological; leaves are evaluated before the sensors
+  that reference them.
 
-Cycles are rejected at attach time and on `set_formula`
-(`Sensors.has_cycle`).
+Cycles are rejected at attach time and on `set_formula` (`Sensors.has_cycle`).
+`Zero` carries no refs, so it is trivially cycle-free.
 
 Evaluation (`Sensors.evaluate`) walks the formula DAG, performing
 `Get_active_sensor` + `Get_sensor_reading` per node. The reading effect is a
