@@ -324,6 +324,65 @@ let delete_user cfg (id : User_id.t) =
   in
   ()
 
+let query_blocked_nodes cfg (user_id : User_id.t) =
+  let pk_val = s (User_id.to_string user_id) in
+  let prefix = Edge_kind.sk_verb Edge_kind.Blocked ^ "#" in
+  let input =
+    Dyn.make_query_input
+      ~key_condition_expression:"#pk = :pk AND begins_with(#sk, :sk)"
+      ~expression_attribute_names:[ ("#pk", "pk"); ("#sk", "sk") ]
+      ~expression_attribute_values:[ (":pk", pk_val); (":sk", s prefix) ]
+      ~table_name:cfg.table ()
+  in
+  match Dyn.Query.request cfg.ctx input with
+  | Error _ -> []
+  | Ok { items = None; _ } -> []
+  | Ok { items = Some rows; _ } ->
+      List.filter_map
+        (fun kvs ->
+          match (List.assoc_opt "gsi1pk" kvs : Dyn.attribute_value option) with
+          | Some (Dyn.S child_s) ->
+              (match Node_id.of_string child_s with
+               | Ok id -> Some id
+               | Error _ -> None)
+          | _ -> None)
+        rows
+
+let query_blocked_users cfg (node_id : Node_id.t) =
+  let pk_val = s (Node_id.to_string node_id) in
+  let prefix = Edge_kind.gsi_verb Edge_kind.Blocked ^ "#" in
+  let input =
+    Dyn.make_query_input
+      ~key_condition_expression:"#pk = :pk AND begins_with(#sk, :sk)"
+      ~expression_attribute_names:[ ("#pk", "gsi1pk"); ("#sk", "gsi1sk") ]
+      ~expression_attribute_values:[ (":pk", pk_val); (":sk", s prefix) ]
+      ~index_name:"gsi1"
+      ~table_name:cfg.table ()
+  in
+  match Dyn.Query.request cfg.ctx input with
+  | Error _ -> []
+  | Ok { items = None; _ } -> []
+  | Ok { items = Some rows; _ } ->
+      List.filter_map
+        (fun kvs ->
+          match (List.assoc_opt "pk" kvs : Dyn.attribute_value option) with
+          | Some (Dyn.S user_s) ->
+              (match User_id.of_string user_s with
+               | Ok id -> Some id
+               | Error _ -> None)
+          | _ -> None)
+        rows
+
+let delete_edge cfg ~from_ ~to_ ~kind =
+  let sk = Printf.sprintf "%s#%s" (Edge_kind.sk_verb kind) to_ in
+  let _ =
+    Dyn.DeleteItem.request cfg.ctx
+      (Dyn.make_delete_item_input
+         ~key:[ ("pk", s from_); ("sk", s sk) ]
+         ~table_name:cfg.table ())
+  in
+  ()
+
 let run (cfg : cfg) (f : unit -> 'a) : 'a =
   let open Effect.Deep in
   try_with f ()
@@ -386,6 +445,13 @@ let run (cfg : cfg) (f : unit -> 'a) : 'a =
               Some (fun k -> continue k (list_users cfg))
           | Effects.Delete_user id ->
               delete_user cfg id;
+              Some (fun k -> continue k ())
+          | Effects.List_blocked_nodes id ->
+              Some (fun k -> continue k (query_blocked_nodes cfg id))
+          | Effects.List_blocked_users id ->
+              Some (fun k -> continue k (query_blocked_users cfg id))
+          | Effects.Delete_edge { from_; to_; kind } ->
+              delete_edge cfg ~from_ ~to_ ~kind;
               Some (fun k -> continue k ())
           | _ -> None);
     }

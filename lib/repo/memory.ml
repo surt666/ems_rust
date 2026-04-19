@@ -179,5 +179,40 @@ let run (st : state) (f : unit -> 'a) : 'a =
           | Effects.Delete_user id ->
               Hashtbl.remove st.users (User_id.to_string id);
               Some (fun k -> continue k ())
+          | Effects.List_blocked_nodes user_id ->
+              let user_s = User_id.to_string user_id in
+              let ids =
+                List.filter_map
+                  (fun e ->
+                    match e.kind with
+                    | Edge_kind.Blocked when e.from_ = user_s ->
+                        (match Node_id.of_string e.to_ with
+                         | Ok id -> Some id
+                         | Error _ -> None)
+                    | _ -> None)
+                  !(st.edges)
+              in
+              Some (fun k -> continue k ids)
+          | Effects.List_blocked_users node_id ->
+              let node_s = Node_id.to_string node_id in
+              let ids =
+                List.filter_map
+                  (fun e ->
+                    match e.kind with
+                    | Edge_kind.Blocked when e.to_ = node_s ->
+                        (match User_id.of_string e.from_ with
+                         | Ok id -> Some id
+                         | Error _ -> None)
+                    | _ -> None)
+                  !(st.edges)
+              in
+              Some (fun k -> continue k ids)
+          | Effects.Delete_edge { from_; to_; kind } ->
+              st.edges :=
+                List.filter
+                  (fun e ->
+                    not (e.from_ = from_ && e.to_ = to_ && e.kind = kind))
+                  !(st.edges);
+              Some (fun k -> continue k ())
           | _ -> None);
     }

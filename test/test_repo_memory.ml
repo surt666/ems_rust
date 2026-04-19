@@ -166,3 +166,37 @@ let tests =
     Alcotest.test_case "list_sensor_ids"          `Quick memory_list_sensor_ids_returns_attached;
     Alcotest.test_case "replace_device"           `Quick memory_replace_device_demotes_old_and_promotes_new;
   ]
+
+let blocked_list_and_delete () =
+  let st = Memory.empty () in
+  let node_uuid =
+    Uuidm.of_string "4b6a6f20-0000-0000-0000-00000000bbbb" |> Option.get
+  in
+  let node_id = Node_id.make Level.Hn4 node_uuid in
+  let user_id = User_id.of_email "alice@example.com" in
+  Memory.run st (fun () ->
+    Effects.put_edge
+      ~from_:(User_id.to_string user_id)
+      ~to_:(Node_id.to_string node_id)
+      ~kind:Edge_kind.Blocked
+      ~name:""
+      ~created:Ptime.epoch;
+    let blocked = Effects.list_blocked_nodes user_id in
+    Alcotest.(check int) "one block" 1 (List.length blocked);
+    Alcotest.(check string) "right node"
+      (Node_id.to_string node_id)
+      (Node_id.to_string (List.hd blocked));
+    let blockers = Effects.list_blocked_users node_id in
+    Alcotest.(check int) "one blocker" 1 (List.length blockers);
+    Effects.delete_edge
+      ~from_:(User_id.to_string user_id)
+      ~to_:(Node_id.to_string node_id)
+      ~kind:Edge_kind.Blocked;
+    Alcotest.(check int) "cleared"
+      0 (List.length (Effects.list_blocked_nodes user_id)))
+
+let tests =
+  tests @
+  [
+    Alcotest.test_case "blocked list and delete" `Quick blocked_list_and_delete;
+  ]
