@@ -112,8 +112,11 @@ let run_create_user json =
 let run_update_user json =
   let* id_s = require_string json "id" in
   let* id = User_id.of_string id_s in
-  let name =
-    match field json "name" with Some (`String s) -> Some s | _ -> None
+  let* name =
+    match field json "name" with
+    | None -> Ok None
+    | Some (`String s) -> Ok (Some s)
+    | Some _ -> Error "non-string field \"name\""
   in
   let* cognito_group =
     match field json "cognito_group" with
