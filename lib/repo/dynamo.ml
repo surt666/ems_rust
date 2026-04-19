@@ -28,11 +28,11 @@ let get_item cfg id =
        | Ok n -> Some n
        | Error _ -> None)
 
-let query_child_edges cfg parent label_opt =
+let query_child_edges cfg parent kind_opt =
   let pk_val = s (Node_id.to_string parent) in
   let prefix =
-    match label_opt with
-    | Some lbl -> lbl
+    match kind_opt with
+    | Some k -> Edge_kind.sk_verb k ^ "#"
     | None -> "has_"
   in
   let input =
@@ -47,7 +47,7 @@ let query_child_edges cfg parent label_opt =
   | Ok { items = None; _ } -> []
   | Ok { items = Some edge_rows; _ } -> edge_rows
 
-let query_child_refs cfg parent label_opt =
+let query_child_refs cfg parent kind_opt =
   List.filter_map
     (fun kvs ->
       match
@@ -59,9 +59,9 @@ let query_child_refs cfg parent label_opt =
            | Error _ -> None
            | Ok child_id -> Some (child_id, name))
       | _ -> None)
-    (query_child_edges cfg parent label_opt)
+    (query_child_edges cfg parent kind_opt)
 
-let query_children cfg parent label_opt =
+let query_children cfg parent kind_opt =
   List.filter_map
     (fun kvs ->
       match (List.assoc_opt "gsi1pk" kvs : Dyn.attribute_value option) with
@@ -70,7 +70,7 @@ let query_children cfg parent label_opt =
            | Error _ -> None
            | Ok child_id -> get_item cfg child_id)
       | _ -> None)
-    (query_child_edges cfg parent label_opt)
+    (query_child_edges cfg parent kind_opt)
 
 let put_node cfg (nd : Node.t) =
   let input =
@@ -292,10 +292,10 @@ let run (cfg : cfg) (f : unit -> 'a) : 'a =
                 | None -> None
               in
               Some (fun k -> continue k schema_opt)
-          | Effects.List_children (parent, label_opt) ->
-              Some (fun k -> continue k (query_children cfg parent label_opt))
-          | Effects.List_child_refs (parent, label_opt) ->
-              Some (fun k -> continue k (query_child_refs cfg parent label_opt))
+          | Effects.List_children (parent, kind_opt) ->
+              Some (fun k -> continue k (query_children cfg parent kind_opt))
+          | Effects.List_child_refs (parent, kind_opt) ->
+              Some (fun k -> continue k (query_child_refs cfg parent kind_opt))
           | Effects.Put_node n ->
               put_node cfg n;
               Some (fun k -> continue k ())

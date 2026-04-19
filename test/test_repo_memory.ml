@@ -55,7 +55,8 @@ let list_children_filters_by_label () =
   let all = Memory.run st (fun () -> Effects.list_children p) in
   Alcotest.(check int) "no filter -> 2" 2 (List.length all);
   let bldgs =
-    Memory.run st (fun () -> Effects.list_children ~label:"has_building#" p)
+    Memory.run st (fun () ->
+      Hierarchy.list_children ~label:"building" p |> Result.get_ok)
   in
   Alcotest.(check int) "building -> 1" 1 (List.length bldgs);
   let name = (List.hd bldgs).Node.name in

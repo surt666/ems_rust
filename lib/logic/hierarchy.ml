@@ -28,7 +28,8 @@ let add_under_schema ?label ~parent ~parent_level ~level ~metadata () =
     | Error errs -> Error (Errors.Validation errs)
   in
   let existing =
-    Effects.list_children ~label:("has_" ^ edge_spec.Schema.label ^ "#") parent
+    Effects.list_children
+      ~kind:(Edge_kind.Has_label edge_spec.Schema.label) parent
   in
   let* () =
     match edge_spec.Schema.max with
@@ -143,12 +144,12 @@ let get_node id =
   | None -> Error (Errors.Not_found id)
 
 let list_children ?label parent =
-  let label_arg = Option.map (fun l -> "has_" ^ l ^ "#") label in
-  Ok (Effects.list_children ?label:label_arg parent)
+  let kind_arg = Option.map (fun l -> Edge_kind.Has_label l) label in
+  Ok (Effects.list_children ?kind:kind_arg parent)
 
 let list_child_refs ?label parent =
-  let label_arg = Option.map (fun l -> "has_" ^ l ^ "#") label in
-  Ok (Effects.list_child_refs ?label:label_arg parent)
+  let kind_arg = Option.map (fun l -> Edge_kind.Has_label l) label in
+  Ok (Effects.list_child_refs ?kind:kind_arg parent)
 
 let delete_node id =
   match Effects.get_node id with

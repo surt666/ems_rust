@@ -43,25 +43,21 @@ let set_sensor_rows st id rows =
 let active_of_rows rows =
   List.find_map (function Active s -> Some s | History _ -> None) rows
 
-let has_prefix ~prefix s =
-  let pl = String.length prefix in
-  String.length s >= pl && String.sub s 0 pl = prefix
-
-(* For each edge whose from_ parses to the given parent node, compute
-   sk = <sk_verb>#<to_>. Filter by the optional prefix. If the edge passes
-   the filter, try to parse to_ as a Node_id; skip if it fails. *)
-let edge_matches st parent prefix_opt =
+(* For each edge whose from_ parses to the given parent node, optionally
+   filter by Edge_kind. If kind_opt is None, return all child edges whose
+   to_ parses as a Node_id (i.e. node-child edges, skipping sensor/other
+   non-node targets). If kind_opt is Some k, match edges whose e.kind = k. *)
+let edge_matches st parent kind_opt =
   List.filter_map
     (fun e ->
       match Node_id.of_string e.from_ with
       | Error _ -> None
       | Ok p when not (Node_id.equal p parent) -> None
       | Ok _ ->
-          let sk = Edge_kind.sk_verb e.kind ^ "#" ^ e.to_ in
           let keep =
-            match prefix_opt with
+            match kind_opt with
             | None -> true
-            | Some prefix -> has_prefix ~prefix sk
+            | Some k -> e.kind = k
           in
           if not keep then None
           else
@@ -86,16 +82,16 @@ let run (st : state) (f : unit -> 'a) : 'a =
           | Effects.Get_schema id ->
               let schema = Option.bind (find_node st id) (fun n -> n.Node.schema) in
               Some (fun k -> continue k schema)
-          | Effects.List_children (parent, prefix_opt) ->
-              let matches = edge_matches st parent prefix_opt in
+          | Effects.List_children (parent, kind_opt) ->
+              let matches = edge_matches st parent kind_opt in
               let children =
                 List.filter_map
                   (fun (_e, c) -> find_node st c)
                   matches
               in
               Some (fun k -> continue k children)
-          | Effects.List_child_refs (parent, prefix_opt) ->
-              let matches = edge_matches st parent prefix_opt in
+          | Effects.List_child_refs (parent, kind_opt) ->
+              let matches = edge_matches st parent kind_opt in
               let refs = List.map (fun (e, c) -> (c, e.name)) matches in
               Some (fun k -> continue k refs)
           | Effects.Put_node n ->

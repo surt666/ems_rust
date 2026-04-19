@@ -1,7 +1,7 @@
 type _ Effect.t +=
   | Get_node       : Node_id.t -> Node.t option Effect.t
-  | List_children  : Node_id.t * string option -> Node.t list Effect.t
-  | List_child_refs : Node_id.t * string option -> (Node_id.t * string) list Effect.t
+  | List_children  : Node_id.t * Edge_kind.t option -> Node.t list Effect.t
+  | List_child_refs : Node_id.t * Edge_kind.t option -> (Node_id.t * string) list Effect.t
   | Get_schema     : Node_id.t -> Schema.t option Effect.t
 
   | Put_node       : Node.t -> unit Effect.t
@@ -30,9 +30,9 @@ type _ Effect.t +=
   | Get_sensor_reading    : Sensor_id.t -> float option Effect.t
 
 let get_node id                 = Effect.perform (Get_node id)
-let list_children ?label parent = Effect.perform (List_children (parent, label))
-let list_child_refs ?label parent =
-  Effect.perform (List_child_refs (parent, label))
+let list_children ?kind parent = Effect.perform (List_children (parent, kind))
+let list_child_refs ?kind parent =
+  Effect.perform (List_child_refs (parent, kind))
 let get_schema id               = Effect.perform (Get_schema id)
 let put_node n                  = Effect.perform (Put_node n)
 let put_edge ~from_ ~to_ ~kind ~name ~created =
