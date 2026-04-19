@@ -34,6 +34,12 @@ lib/
     sensor_sk.ml             # active#<ts> / <ts> sort-key codec
     sensor.ml                # sensor record + meter_type
     formula.ml               # AST + eval + referenced_uuids
+    edge_kind.ml             # Has_label | Has_sensor | Blocked + sk/gsi verbs
+    user_id.ml               # U#<email>
+    user.ml                  # user record
+    cognito_group.ml         # Reader | Writer | Admin (capability ceiling)
+    language.ml              # danish | swedish | norwegian | english | german
+    currency.ml              # DKK | SEK | NOK | USD | EUR
     errors.ml                # error sum type + http_status + message/details
 
   effects.ml                 # flat effect declarations + perform wrappers
@@ -44,6 +50,9 @@ lib/
     schema_check.ml          # find_for — walk up to hn2
     sensors.ml               # attach, list_active, replace_device,
                              #   set_formula, evaluate
+    users.ml                 # create, get, update, delete, list
+    access.ml                # block, unblock, effective_permission,
+                             #   list_blocked_nodes, list_blocked_users
 
   repo/                      # effect handlers
     memory.ml                # in-memory handler (tests)
@@ -92,17 +101,18 @@ All effects are top-level constructors of `_ Effect.t` in a single module.
 type _ Effect.t +=
   (* reads *)
   | Get_node       : Node_id.t -> Node.t option Effect.t
-  | List_children  : Node_id.t * string option -> Node.t list Effect.t
-  | List_child_refs: Node_id.t * string option ->
+  | List_children  : Node_id.t * Edge_kind.t option -> Node.t list Effect.t
+  | List_child_refs: Node_id.t * Edge_kind.t option ->
                        (Node_id.t * string) list Effect.t
   | Get_schema     : Node_id.t -> Schema.t option Effect.t
 
   (* writes *)
   | Put_node       : Node.t -> unit Effect.t
-  | Put_edge       : { from_  : Node_id.t;
-                       to_    : Node_id.t;
-                       label  : string;
-                       name   : string } -> unit Effect.t
+  | Put_edge       : { from_   : string;
+                       to_     : string;
+                       kind    : Edge_kind.t;
+                       name    : string;
+                       created : Ptime.t } -> unit Effect.t
   | Delete_node    : Node_id.t -> unit Effect.t
 
   (* determinism helpers *)
@@ -120,11 +130,26 @@ type _ Effect.t +=
   | Delete_sensor         : { sensor_id : Sensor_id.t; parent : Node_id.t }
                               -> unit Effect.t
   | Get_sensor_reading    : Sensor_id.t -> float option Effect.t
+
+(* user effects *)
+type _ Effect.t +=
+  | Put_user    : User.t -> unit Effect.t
+  | Get_user    : User_id.t -> User.t option Effect.t
+  | List_users  : unit -> User.t list Effect.t
+  | Delete_user : User_id.t -> unit Effect.t
+
+(* permission / edge-admin effects *)
+type _ Effect.t +=
+  | List_blocked_nodes : User_id.t -> Node_id.t list Effect.t
+  | List_blocked_users : Node_id.t -> User_id.t list Effect.t
+  | Delete_edge        : { from_ : string; to_ : string; kind : Edge_kind.t }
+                          -> unit Effect.t
 ```
 
 `Put_edge` carries the edge `name`. This is denormalized onto the edge row so
 that `list_child_refs` can return `(id, name)` from a single `Query` without
-N round-trips.
+N round-trips. `kind : Edge_kind.t` (not a free-form string) supplies both the
+forward `sk` verb and the inverse GSI1 verb — see `lib/domain/edge_kind.ml`.
 
 `Put_sensor` atomically writes both the active sensor row and the parent's
 sensor edge row — see `docs/hierarchy-and-sensors.md` §5.3.
@@ -204,6 +229,11 @@ POST /command
 { "action": "delete_node",           … }
 { "action": "attach_sensor",         … }
 { "action": "replace_sensor_device", … }
+{ "action": "create_user",           … }
+{ "action": "update_user",           … }
+{ "action": "delete_user",           … }
+{ "action": "block_user",            … }
+{ "action": "unblock_user",          … }
 ```
 
 ### Queries
@@ -213,6 +243,11 @@ GET /query/get_node?id=…
 GET /query/list_children?parent=…[&label=…][&full=true]
 GET /query/list_sensors?parent=…
 GET /query/get_sensor?id=…
+GET /query/get_user?id=…
+GET /query/list_users
+GET /query/list_blocked_nodes?user=…
+GET /query/list_blocked_users?node=…
+GET /query/effective_permission?user=…&node=…
 ```
 
 Adding an action is "add a variant + a case" in `api_command.ml` or
@@ -227,12 +262,15 @@ to results before returning; they never raise into logic.
 (* lib/domain/errors.ml *)
 type t =
   | Not_found      of Node_id.t
+  | Not_found_user of User_id.t
   | Bad_request    of string
   | Validation     of Metadata.error list
   | Schema_missing of Node_id.t
   | Conflict       of string
   | Internal       of string
 ```
+
+`Not_found_user` maps to the same `not_found` / `404` row as `Not_found`.
 
 Mapping at the API boundary:
 
@@ -254,7 +292,75 @@ Response body:
 `details` is populated for `Validation` only — the list of `{path, message}`
 failures.
 
-## 8. Testing
+## 8. Users and permissions
+
+### User record
+
+```ocaml
+(* lib/domain/user.ml *)
+type t = {
+  id            : User_id.t;
+  name          : string;
+  cognito_group : Cognito_group.t;
+  language      : Language.t;
+  currency      : Currency.t;
+  created       : Ptime.t;
+}
+```
+
+`User_id.t` is `U#<email>`; the uuid-ish opaque id used for nodes and sensors
+does not apply here — the email itself is the logical identity.
+
+### Capability ceiling — upstream enforcement
+
+`Cognito_group.t = Reader | Writer | Admin`. These are a **capability
+ceiling**, not the enforcement mechanism. Upstream (the frontend and the API
+Gateway Cognito authorizer) decides what the caller is allowed to do; this
+Lambda only *stores and reports*. `admin > writer > reader` by `Cognito_group.rank`.
+
+### Block edges
+
+A user may be blocked from a node. Blocks are stored as ordinary edges with
+`kind = Edge_kind.Blocked`:
+
+| Attribute | Value                                               |
+|-----------|-----------------------------------------------------|
+| `pk`      | `U#<email>`                                         |
+| `sk`      | `Edge_kind.sk_verb Blocked ^ "#" ^ <node_id>`       |
+| `gsi1pk` | `<node_id>`                                          |
+| `gsi1sk` | `Edge_kind.gsi_verb Blocked ^ "#" ^ <user_id>`       |
+
+`sk_verb Blocked = "blocked"`, `gsi_verb Blocked = "blocks"`. The default is
+**allow**: a user may touch everything that is not transitively blocked.
+Blocking an ancestor propagates down — every descendant is blocked too.
+
+### `Access.effective_permission` — the delegation point
+
+```ocaml
+Access.effective_permission ~user_id ~node_id :
+  (Cognito_group.t option, Errors.t) result
+```
+
+- `Ok (Some g)` — user exists, no block on `node_id` or any ancestor; `g` is
+  the user's `cognito_group` (capability ceiling, not authorization).
+- `Ok None` — user exists but the node or an ancestor is blocked.
+- `Error (Not_found_user _)` — user does not exist.
+
+This is the **single delegation point** for the entire permission model. Swap
+its body for Amazon Verified Permissions / Cedar later without touching the
+rest of the codebase.
+
+### Cascade
+
+- Deleting a user removes all that user's `Blocked` edges (`Users.delete`
+  enumerates via `List_blocked_nodes`, then `Delete_edge` per row).
+- Deleting a node removes all inbound `Blocked` edges (`Hierarchy.delete_node`
+  enumerates via `List_blocked_users`).
+
+Both are logic-layer iteration, not a single `TransactWriteItems`.
+Non-transactional today.
+
+## 9. Testing
 
 ### Unit tests — `test/`, offline, run by `dune runtest`
 
@@ -278,9 +384,12 @@ failures.
   edges (verified via `gsi1pk`); `TransactWriteItems` atomicity for both node
   and sensor writes; end-to-end sensor attach/list/replace.
 
-## 9. Non-goals
+## 10. Non-goals
 
-- Users and permissions.
+- In-Lambda enforcement of permissions. Upstream (frontend + API Gateway
+  authorizer) decides; this Lambda is store-and-report only.
+- Amazon Verified Permissions / Cedar integration — kept as a future drop-in
+  behind `Access.effective_permission` (see §8).
 - Optimistic schema versioning via `ConditionExpression`. No
   `update_schema` command today.
 - Caching schema per-company in warm Lambda containers.
@@ -289,7 +398,7 @@ failures.
 - Actual time-series backend behind `Get_sensor_reading` — the effect exists;
   handlers return `None` until a reading source is wired in.
 
-## 10. Deploy
+## 11. Deploy
 
 - `make build` — Docker-driven static-pie musl arm64 build, output
   `ocaml-lambda-hierarchy.zip`.

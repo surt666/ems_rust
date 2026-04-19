@@ -284,22 +284,35 @@ Table name in `$ITEST_DYNAMO_TABLE` (prod: `hierarchy_new`).
 
 ### 6.1 Hierarchy
 
-| Attribute | Node row           | Edge row                 |
-|-----------|--------------------|--------------------------|
-| `pk`      | `HN<n>#<uuid>`     | `<parent_pk>`            |
-| `sk`      | `HN<n>#<uuid>`     | `has_<label>#<child_pk>` |
-| `type`    | `node`             | `edge`                   |
+| Attribute | Node row           | Edge row                                     |
+|-----------|--------------------|----------------------------------------------|
+| `pk`      | `HN<n>#<uuid>`     | `<from_pk>`                                  |
+| `sk`      | `HN<n>#<uuid>`     | `<Edge_kind.sk_verb kind>#<to_pk>`           |
+| `type`    | `node`             | `edge`                                       |
+| `kind`    | —                  | `Edge_kind.to_string kind`                   |
 | `name`    | human label        | **stored on edge** (enables id+name listing without GetItem) |
-| `parent`  | parent pk          | —                        |
-| `created` | RFC 3339           | RFC 3339                 |
-| `metadata`| JSON map           | —                        |
-| `schema`  | hn2 only           | —                        |
-| `gsi1pk`  | —                  | `<child_pk>`             |
-| `gsi1sk`  | —                  | `<parent_pk>`            |
+| `parent`  | parent pk          | —                                            |
+| `created` | RFC 3339           | RFC 3339                                     |
+| `metadata`| JSON map           | —                                            |
+| `schema`  | hn2 only           | —                                            |
+| `gsi1pk`  | —                  | `<to_pk>`                                    |
+| `gsi1sk`  | —                  | `<Edge_kind.gsi_verb kind>#<from_pk>`        |
+
+`kind` is one of `Has_label <label> | Has_sensor | Blocked` — source of
+truth is `lib/domain/edge_kind.ml`. The forward `sk` prefix comes from
+`Edge_kind.sk_verb`; the inverse GSI1 prefix comes from `Edge_kind.gsi_verb`.
+For a `Has_label "building"` edge the row is the familiar
+`has_building#<child_pk>` — that's the `Has_label` case of the general shape.
 
 ### 6.2 Sensors — see §5.2.
 
 ### 6.3 Query patterns
+
+Prefixes below are built from `Edge_kind.sk_verb` on the pk side and
+`Edge_kind.gsi_verb` on the gsi1 side — not free-form strings. `has_`,
+`has_<label>#`, `has_sensor#`, and `blocked#` are just the concrete rendering
+of `sk_verb` for each `Edge_kind.t` case; `parent_of#`, `sensor_of#`, and
+`blocks#` are the corresponding `gsi_verb` renderings.
 
 | Use case                                  | Query                                                                     |
 |-------------------------------------------|---------------------------------------------------------------------------|
@@ -310,6 +323,8 @@ Table name in `$ITEST_DYNAMO_TABLE` (prod: `hierarchy_new`).
 | Reverse lookup — who points at Y          | `Query gsi1pk=Y`                                                          |
 | Active sensors on a node                  | `Query pk=parent, sk begins_with has_sensor#` → ids, then one Query each  |
 | Full history for a sensor                 | `Query pk=S#<uuid>` — returns active + all history rows, sorted by `sk`   |
+| Nodes a user is blocked from              | `Query pk=U#<email>, sk begins_with blocked#`                             |
+| Users blocked from a node                 | `Query gsi1pk=<node_id>, gsi1sk begins_with blocks#` (index `gsi1`)       |
 
 `list_children`'s default (edge-row) mode exists to avoid the N+1 fan-out for
 dense subtrees. `?full=true` opts into it when the caller actually needs node
@@ -319,7 +334,9 @@ metadata.
 
 `delete_node` cascades: walks the subtree via edge rows and removes every node
 and every edge. Sensor partitions under deleted nodes are also wiped (via
-`Delete_sensor`).
+`Delete_sensor`). Deleting a user or node also removes the associated
+`Blocked` edges (logic-layer, non-transactional) — see `docs/architecture.md`
+§8.
 
 ---
 
@@ -336,12 +353,20 @@ and every edge. Sensor partitions under deleted nodes are also wiped (via
 | `lib/domain/sensor_sk.ml`     | `active#<ts>` / plain-ts sort-key codec               |
 | `lib/domain/sensor.ml`        | sensor record + meter type                            |
 | `lib/domain/formula.ml`       | formula AST + eval                                    |
+| `lib/domain/edge_kind.ml`     | `Has_label | Has_sensor | Blocked` + `sk_verb` / `gsi_verb` |
+| `lib/domain/user_id.ml`       | `U#<email>` parser/printer                            |
+| `lib/domain/user.ml`          | user record                                           |
+| `lib/domain/cognito_group.ml` | `Reader | Writer | Admin` capability ceiling          |
+| `lib/domain/language.ml`      | language enum + default                               |
+| `lib/domain/currency.ml`      | currency enum + default                               |
 | `lib/domain/errors.ml`        | error sum type                                        |
 | `lib/effects.ml`              | flat effect declarations + perform wrappers           |
 | `lib/logic/hierarchy.ml`      | `add_node`, `list_children`, `delete_node`, level resolution |
 | `lib/logic/schema_check.ml`   | `find_for` — walk up to the hn2 schema                |
 | `lib/logic/sensors.ml`        | `attach`, `list_active`, `replace_device`, `evaluate` |
-| `lib/repo/codec.ml`           | node/edge/sensor ↔ DynamoDB attribute map             |
+| `lib/logic/users.ml`          | `create`, `get`, `update`, `delete`, `list`           |
+| `lib/logic/access.ml`         | `block`, `unblock`, `effective_permission`, blocked-list queries |
+| `lib/repo/codec.ml`           | node/edge/sensor/user ↔ DynamoDB attribute map        |
 | `lib/repo/dynamo.ml`          | Eio-based effect handler over smaws                   |
 | `lib/repo/memory.ml`          | in-memory handler for unit tests                      |
 | `itest/test_dynamo.ml`        | real-table integration test                           |

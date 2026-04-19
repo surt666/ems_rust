@@ -17,12 +17,13 @@ Status code is derived from the error (`400`, `404`, etc.).
 
 ## URL encoding
 
-Node and sensor ids contain `#` (e.g. `HN2#2ab951b2-...`, `S#ff0863e0-...`).
-`curl` strips everything after `#` before sending — encode it as `%23`,
-or use `--data-urlencode`:
+Node, sensor, and user ids all contain `#` (e.g. `HN2#2ab951b2-...`,
+`S#ff0863e0-...`, `U#alice@example.com`). `curl` strips everything after `#`
+before sending — encode it as `%23`, or use `--data-urlencode`:
 
 ```sh
 curl -G "$BASE/query/get_node" --data-urlencode "id=HN2#2ab951b2-e31c-4049-9dbb-ad82b196b901"
+curl -G "$BASE/query/get_user" --data-urlencode "id=U#alice@example.com"
 ```
 
 ---
@@ -167,6 +168,128 @@ Response — the new active sensor row (same `id`, new `created`, new `daq_id`).
 
 ---
 
+## Users and permissions
+
+Enforcement lives upstream (frontend + API Gateway Cognito authorizer). This
+Lambda **stores and reports** — it never rejects a call based on the caller's
+group. See `docs/architecture.md` §8.
+
+### create_user
+
+Create a user. Fails with `conflict` if a user with the same email already
+exists.
+
+```json
+{
+  "action": "create_user",
+  "email": "alice@example.com",
+  "name": "Alice",
+  "cognito_group": "writer",
+  "language": "english",
+  "currency": "EUR"
+}
+```
+
+| field         | required | notes                                                  |
+|---------------|----------|--------------------------------------------------------|
+| email         | yes      | becomes `U#<email>`                                    |
+| name          | yes      |                                                        |
+| cognito_group | yes      | `reader` \| `writer` \| `admin`                        |
+| language      | no       | `danish` \| `swedish` \| `norwegian` \| `english` \| `german` (default `danish`) |
+| currency      | no       | `DKK` \| `SEK` \| `NOK` \| `USD` \| `EUR` (default `DKK`) |
+
+Response — the created user:
+
+```json
+{
+  "id": "U#alice@example.com",
+  "email": "alice@example.com",
+  "name": "Alice",
+  "cognito_group": "writer",
+  "language": "english",
+  "currency": "EUR",
+  "created": "2026-04-19T10:00:00Z"
+}
+```
+
+### update_user
+
+Partial update. Omitted fields keep their current value.
+
+```json
+{
+  "action": "update_user",
+  "id": "U#alice@example.com",
+  "name": "Alice Smith",
+  "cognito_group": "admin"
+}
+```
+
+| field         | required | notes                              |
+|---------------|----------|------------------------------------|
+| id            | yes      | `U#<email>`                        |
+| name          | no       |                                    |
+| cognito_group | no       | `reader` \| `writer` \| `admin`    |
+| language      | no       |                                    |
+| currency      | no       |                                    |
+
+Response — the updated user record (same shape as `create_user`).
+
+### delete_user
+
+Removes the user row and cascades all that user's `Blocked` edges.
+
+```json
+{ "action": "delete_user", "id": "U#alice@example.com" }
+```
+
+```json
+{ "deleted": "U#alice@example.com" }
+```
+
+### block_user
+
+Attach a `Blocked` edge from the user to the node. The block propagates to
+every descendant of `node_id`.
+
+```json
+{
+  "action": "block_user",
+  "user_id": "U#alice@example.com",
+  "node_id": "HN4#bb...-..."
+}
+```
+
+| field   | required | notes                        |
+|---------|----------|------------------------------|
+| user_id | yes      | `U#<email>`                  |
+| node_id | yes      | `HN<n>#<uuid>`               |
+
+Response:
+
+```json
+{ "ok": true }
+```
+
+### unblock_user
+
+Remove a `Blocked` edge. Idempotent — deleting a non-existent edge also
+returns `{"ok": true}`.
+
+```json
+{
+  "action": "unblock_user",
+  "user_id": "U#alice@example.com",
+  "node_id": "HN4#bb...-..."
+}
+```
+
+```json
+{ "ok": true }
+```
+
+---
+
 ## Queries — `GET /query/<action>`
 
 ### get_node
@@ -265,3 +388,86 @@ GET /query/get_sensor?id=S%23ff08...-...
 ```
 
 Response — same shape as a single entry in `list_sensors`.
+
+### get_user
+
+```
+GET /query/get_user?id=U%23alice@example.com
+```
+
+Response — same shape as `create_user`.
+
+### list_users
+
+```
+GET /query/list_users
+```
+
+```json
+{
+  "users": [
+    {
+      "id": "U#alice@example.com",
+      "email": "alice@example.com",
+      "name": "Alice",
+      "cognito_group": "writer",
+      "language": "english",
+      "currency": "EUR",
+      "created": "2026-04-19T10:00:00Z"
+    }
+  ]
+}
+```
+
+### list_blocked_nodes
+
+Nodes on which the user carries a direct `Blocked` edge. Does not expand
+ancestors — a user blocked on an ancestor is still absent from this list for
+the descendants.
+
+```
+GET /query/list_blocked_nodes?user=U%23alice@example.com
+```
+
+```json
+{ "nodes": [ "HN4#bb...-...", "HN3#cc...-..." ] }
+```
+
+### list_blocked_users
+
+Inverse of `list_blocked_nodes`: users directly blocked on the given node.
+
+```
+GET /query/list_blocked_users?node=HN4%23bb...-...
+```
+
+```json
+{ "users": [ "U#alice@example.com", "U#bob@example.com" ] }
+```
+
+### effective_permission
+
+Resolves `(user, node)` through the block chain. Returns the user's
+`cognito_group` when allowed, `null` when blocked by the node itself or any
+ancestor. Capability group is a ceiling — enforcement is upstream.
+
+```
+GET /query/effective_permission?user=U%23alice@example.com&node=HN4%23bb...-...
+```
+
+Allowed:
+
+```json
+{ "capability": "writer" }
+```
+
+Blocked:
+
+```json
+{ "capability": null, "reason": "blocked" }
+```
+
+| param | required | notes              |
+|-------|----------|--------------------|
+| user  | yes      | `U#<email>`        |
+| node  | yes      | `HN<n>#<uuid>`     |
