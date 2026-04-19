@@ -71,7 +71,7 @@ let get_unknown_is_not_found () =
   Memory.run st (fun () ->
     match Users.get (User_id.of_email "ghost@x") with
     | Ok _ -> Alcotest.fail "expected error"
-    | Error (Errors.Not_found _) -> ()
+    | Error (Errors.Not_found_user _) -> ()
     | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
 
 let update_changes_name () =
@@ -119,7 +119,8 @@ let delete_unknown_errors () =
   Memory.run st (fun () ->
     match Users.delete (User_id.of_email "ghost@x") with
     | Ok _ -> Alcotest.fail "expected error"
-    | Error _ -> ())
+    | Error (Errors.Not_found_user _) -> ()
+    | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
 
 let tests =
   [ Alcotest.test_case "user put/get roundtrip" `Quick put_get_roundtrip

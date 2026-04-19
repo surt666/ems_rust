@@ -1,11 +1,6 @@
 let ( let* ) = Result.bind
 
-let not_found_placeholder () =
-  (* Task 8 introduces Errors.Not_found_user. Until then, synthesize a
-     Node_id so Errors.Not_found stays well-typed; callers that rely on
-     the embedded id will migrate in Task 8. *)
-  let uuid = Uuidm.v4_gen (Random.State.make_self_init ()) () in
-  Errors.Not_found (Node_id.make Level.Hn9 uuid)
+let not_found id = Errors.Not_found_user id
 
 let create ~email ~name ~cognito_group ?language ?currency () =
   match Effects.get_user (User_id.of_email email) with
@@ -24,7 +19,7 @@ let create ~email ~name ~cognito_group ?language ?currency () =
 let get id =
   match Effects.get_user id with
   | Some u -> Ok u
-  | None -> Error (not_found_placeholder ())
+  | None -> Error (not_found id)
 
 let update ~id ?name ?cognito_group ?language ?currency () =
   let* u = get id in
@@ -43,7 +38,7 @@ let update ~id ?name ?cognito_group ?language ?currency () =
 
 let delete id =
   match Effects.get_user id with
-  | None -> Error (not_found_placeholder ())
+  | None -> Error (not_found id)
   | Some _ ->
       Effects.delete_user id;
       Ok id
