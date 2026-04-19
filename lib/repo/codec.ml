@@ -488,3 +488,52 @@ let node_of_item kvs =
     metadata;
     schema;
   }
+
+let user_item (u : User.t) =
+  let uid = User_id.to_string u.User.id in
+  [
+    ("pk", s uid);
+    ("sk", s uid);
+    ("type", s "user");
+    ("name", s u.User.name);
+    ("cognito_group", s (Cognito_group.to_string u.User.cognito_group));
+    ("language", s (Language.to_string u.User.language));
+    ("currency", s (Currency.to_string u.User.currency));
+    ("created", s (Ptime.to_rfc3339 ~tz_offset_s:0 u.User.created));
+    ("gsi1pk", s "user");
+    ("gsi1sk", s uid);
+  ]
+
+let user_of_item kvs : (User.t, string) result =
+  let* pk_v = field kvs "pk" in
+  let* pk_s = as_string pk_v in
+  let* id = User_id.of_string pk_s in
+  let* name_v = field kvs "name" in
+  let* name = as_string name_v in
+  let* g_v = field kvs "cognito_group" in
+  let* g_s = as_string g_v in
+  let* cognito_group = Cognito_group.of_string g_s in
+  let language =
+    match List.assoc_opt "language" kvs with
+    | Some (Dyn.S s) ->
+        (match Language.of_string s with
+         | Ok l -> l
+         | Error _ -> Language.default)
+    | _ -> Language.default
+  in
+  let currency =
+    match List.assoc_opt "currency" kvs with
+    | Some (Dyn.S s) ->
+        (match Currency.of_string s with
+         | Ok c -> c
+         | Error _ -> Currency.default)
+    | _ -> Currency.default
+  in
+  let* c_v = field kvs "created" in
+  let* c_s = as_string c_v in
+  let created =
+    match Ptime.of_rfc3339 c_s with
+    | Ok (t, _, _) -> t
+    | Error _ -> Ptime.epoch
+  in
+  Ok { User.id; name; cognito_group; language; currency; created }

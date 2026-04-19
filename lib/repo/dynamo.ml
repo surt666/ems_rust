@@ -274,6 +274,56 @@ let delete_sensor cfg (id : Sensor_id.t) (parent : Node_id.t) =
   in
   ()
 
+let put_user cfg (u : User.t) =
+  let input =
+    Dyn.make_put_item_input
+      ~item:(Codec.user_item u) ~table_name:cfg.table ()
+  in
+  match Dyn.PutItem.request cfg.ctx input with
+  | Ok _ -> ()
+  | Error _ -> failwith "PutItem user failed"
+
+let get_user cfg (id : User_id.t) =
+  let key = pk_key (User_id.to_string id) in
+  let input = Dyn.make_get_item_input ~key ~table_name:cfg.table () in
+  match Dyn.GetItem.request cfg.ctx input with
+  | Error _ -> None
+  | Ok { item = None; _ } -> None
+  | Ok { item = Some kvs; _ } ->
+      (match Codec.user_of_item kvs with
+       | Ok u -> Some u
+       | Error _ -> None)
+
+let list_users cfg =
+  let input =
+    Dyn.make_query_input
+      ~key_condition_expression:"#pk = :pk"
+      ~expression_attribute_names:[ ("#pk", "gsi1pk") ]
+      ~expression_attribute_values:[ (":pk", s "user") ]
+      ~index_name:"gsi1"
+      ~table_name:cfg.table ()
+  in
+  match Dyn.Query.request cfg.ctx input with
+  | Error _ -> []
+  | Ok { items = None; _ } -> []
+  | Ok { items = Some rows; _ } ->
+      List.filter_map
+        (fun kvs ->
+          match Codec.user_of_item kvs with
+          | Ok u -> Some u
+          | Error _ -> None)
+        rows
+
+let delete_user cfg (id : User_id.t) =
+  let uid = User_id.to_string id in
+  let _ =
+    Dyn.DeleteItem.request cfg.ctx
+      (Dyn.make_delete_item_input
+         ~key:[ ("pk", s uid); ("sk", s uid) ]
+         ~table_name:cfg.table ())
+  in
+  ()
+
 let run (cfg : cfg) (f : unit -> 'a) : 'a =
   let open Effect.Deep in
   try_with f ()
@@ -327,5 +377,15 @@ let run (cfg : cfg) (f : unit -> 'a) : 'a =
           | Effects.Get_sensor_reading _ ->
               (* raw readings come from the flink-optimized table, not this one *)
               Some (fun k -> continue k None)
+          | Effects.Put_user u ->
+              put_user cfg u;
+              Some (fun k -> continue k ())
+          | Effects.Get_user id ->
+              Some (fun k -> continue k (get_user cfg id))
+          | Effects.List_users () ->
+              Some (fun k -> continue k (list_users cfg))
+          | Effects.Delete_user id ->
+              delete_user cfg id;
+              Some (fun k -> continue k ())
           | _ -> None);
     }

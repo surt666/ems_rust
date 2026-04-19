@@ -173,6 +173,35 @@ let schema_sensors_roundtrip () =
         [ "hn4"; "hn5" ]
         (List.map Level.to_string sch2.Schema.sensors)
 
+let user_roundtrip () =
+  let u =
+    User.make ~email:"alice@example.com" ~name:"Alice"
+      ~cognito_group:Cognito_group.Writer
+      ~language:Language.English
+      ~currency:Currency.EUR
+      ~created:Ptime.epoch ()
+  in
+  let item = Codec.user_item u in
+  (match List.assoc_opt "gsi1pk" item with
+   | Some (Smaws_Client_DynamoDB.S s) ->
+       Alcotest.(check string) "gsi1pk" "user" s
+   | _ -> Alcotest.fail "gsi1pk missing");
+  match Codec.user_of_item item with
+  | Ok u' ->
+      Alcotest.(check string) "id"
+        (User_id.to_string u.User.id) (User_id.to_string u'.User.id);
+      Alcotest.(check string) "name" u.User.name u'.User.name;
+      Alcotest.(check string) "cognito"
+        (Cognito_group.to_string u.User.cognito_group)
+        (Cognito_group.to_string u'.User.cognito_group);
+      Alcotest.(check string) "language"
+        (Language.to_string u.User.language)
+        (Language.to_string u'.User.language);
+      Alcotest.(check string) "currency"
+        (Currency.to_string u.User.currency)
+        (Currency.to_string u'.User.currency)
+  | Error e -> Alcotest.failf "user_of_item: %s" e
+
 let tests =
   [
     Alcotest.test_case "node roundtrip" `Quick node_roundtrip_without_schema;
@@ -181,4 +210,5 @@ let tests =
     Alcotest.test_case "sensor sk active/history" `Quick sensor_active_sk_prefixed;
     Alcotest.test_case "sensor edge item shape"   `Quick sensor_edge_item_shape;
     Alcotest.test_case "schema sensors roundtrip" `Quick schema_sensors_roundtrip;
+    Alcotest.test_case "user roundtrip"           `Quick user_roundtrip;
   ]
