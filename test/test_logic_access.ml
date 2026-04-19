@@ -117,9 +117,26 @@ let list_blocked_users_reverse () =
                (User_id.to_string (List.hd xs))
          | Error e -> Alcotest.failf "list: %s" (Errors.message e)))
 
+let delete_node_cascades_blocks () =
+  let st, c2, _bldg, uid = seed () in
+  Memory.run st (fun () ->
+    match Access.block ~user_id:uid ~node_id:c2 () with
+    | Error e -> Alcotest.failf "block: %s" (Errors.message e)
+    | Ok () -> ());
+  Memory.run st (fun () ->
+    match Hierarchy.delete_node c2 with
+    | Ok _ -> ()
+    | Error e -> Alcotest.failf "delete_node: %s" (Errors.message e));
+  Memory.run st (fun () ->
+    match Access.list_blocked_nodes ~user_id:uid with
+    | Ok xs ->
+        Alcotest.(check int) "zero blocked after node delete" 0 (List.length xs)
+    | Error e -> Alcotest.failf "list: %s" (Errors.message e))
+
 let tests =
   [ Alcotest.test_case "block then list" `Quick block_then_list
   ; Alcotest.test_case "block unknown user fails" `Quick block_unknown_user_fails
   ; Alcotest.test_case "effective_permission + inheritance" `Quick effective_permission_flows
   ; Alcotest.test_case "list_blocked_users reverse" `Quick list_blocked_users_reverse
+  ; Alcotest.test_case "delete_node cascades blocks" `Quick delete_node_cascades_blocks
   ]

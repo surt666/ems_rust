@@ -122,6 +122,58 @@ let delete_unknown_errors () =
     | Error (Errors.Not_found_user _) -> ()
     | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
 
+let uuid_of s = Uuidm.of_string s |> Option.get
+
+let sample_schema : Schema.t =
+  Schema.{
+    version = 1;
+    edges = [
+      (Level.Hn2, [ (Level.Hn3, [ { label = "building"; min = None; max = None } ]) ]);
+    ];
+    metadata = [];
+    sensors = [];
+  }
+
+let delete_cascades_blocked_edges () =
+  let st = Memory.empty () in
+  let node_id =
+    Node_id.make Level.Hn2 (uuid_of "4b6a6f20-0000-0000-0000-0000000000d0")
+  in
+  let node =
+    Node.make ~uuid:(Node_id.uuid node_id) ~level:Level.Hn2 ~name:"Acme"
+      ~parent:Node_id.root ~created:Ptime.epoch
+      ~metadata:(`Assoc []) ~schema:(Some sample_schema)
+  in
+  Memory.run st (fun () -> Effects.put_node node);
+  let uid =
+    Memory.run st (fun () ->
+      match
+        Users.create ~email:"a@x" ~name:"A"
+          ~cognito_group:Cognito_group.Reader ()
+      with
+      | Ok u -> u.User.id
+      | Error e -> Alcotest.failf "create: %s" (Errors.message e))
+  in
+  Memory.run st (fun () ->
+    match Access.block ~user_id:uid ~node_id () with
+    | Error e -> Alcotest.failf "block: %s" (Errors.message e)
+    | Ok () -> ());
+  Memory.run st (fun () ->
+    match Access.list_blocked_nodes ~user_id:uid with
+    | Ok xs -> Alcotest.(check int) "one blocked before delete" 1 (List.length xs)
+    | Error e -> Alcotest.failf "list: %s" (Errors.message e));
+  Memory.run st (fun () ->
+    match Users.delete uid with
+    | Ok _ -> ()
+    | Error e -> Alcotest.failf "delete: %s" (Errors.message e));
+  Memory.run st (fun () ->
+    (match Access.list_blocked_nodes ~user_id:uid with
+     | Ok xs -> Alcotest.(check int) "zero blocked after delete" 0 (List.length xs)
+     | Error e -> Alcotest.failf "list: %s" (Errors.message e));
+    match Access.list_blocked_users ~node_id with
+    | Ok xs -> Alcotest.(check int) "no users block node" 0 (List.length xs)
+    | Error e -> Alcotest.failf "list: %s" (Errors.message e))
+
 let tests =
   [ Alcotest.test_case "user put/get roundtrip" `Quick put_get_roundtrip
   ; Alcotest.test_case "user list and delete"   `Quick list_and_delete
@@ -131,4 +183,6 @@ let tests =
   ; Alcotest.test_case "update changes name"    `Quick update_changes_name
   ; Alcotest.test_case "list and delete via logic" `Quick list_and_delete_via_logic
   ; Alcotest.test_case "delete unknown errors"  `Quick delete_unknown_errors
+  ; Alcotest.test_case "delete cascades blocked edges" `Quick
+      delete_cascades_blocked_edges
   ]

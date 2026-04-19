@@ -40,6 +40,14 @@ let delete id =
   match Effects.get_user id with
   | None -> Error (not_found id)
   | Some _ ->
+      let blocked = Effects.list_blocked_nodes id in
+      List.iter
+        (fun node_id ->
+          Effects.delete_edge
+            ~from_:(User_id.to_string id)
+            ~to_:(Node_id.to_string node_id)
+            ~kind:Edge_kind.Blocked)
+        blocked;
       Effects.delete_user id;
       Ok id
 

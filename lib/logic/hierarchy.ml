@@ -155,5 +155,13 @@ let delete_node id =
   match Effects.get_node id with
   | None -> Error (Errors.Not_found id)
   | Some _ ->
+      let blockers = Effects.list_blocked_users id in
+      List.iter
+        (fun user_id ->
+          Effects.delete_edge
+            ~from_:(User_id.to_string user_id)
+            ~to_:(Node_id.to_string id)
+            ~kind:Edge_kind.Blocked)
+        blockers;
       Effects.delete_node id;
       Ok id
