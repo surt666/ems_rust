@@ -30,17 +30,23 @@ let get_item cfg id =
 
 let query_child_edges cfg parent kind_opt =
   let pk_val = s (Node_id.to_string parent) in
-  let prefix =
-    match kind_opt with
-    | Some k -> Edge_kind.sk_verb k ^ "#"
-    | None -> "has_"
-  in
   let input =
-    Dyn.make_query_input
-      ~key_condition_expression:"#pk = :pk AND begins_with(#sk, :sk)"
-      ~expression_attribute_names:[ ("#pk", "pk"); ("#sk", "sk") ]
-      ~expression_attribute_values:[ (":pk", pk_val); (":sk", s prefix) ]
-      ~table_name:cfg.table ()
+    match kind_opt with
+    | Some k ->
+        Dyn.make_query_input
+          ~key_condition_expression:"#pk = :pk AND begins_with(#sk, :sk)"
+          ~expression_attribute_names:[ ("#pk", "pk"); ("#sk", "sk") ]
+          ~expression_attribute_values:[
+            (":pk", pk_val);
+            (":sk", s (Edge_kind.sk_verb k ^ "#"));
+          ]
+          ~table_name:cfg.table ()
+    | None ->
+        Dyn.make_query_input
+          ~key_condition_expression:"#pk = :pk"
+          ~expression_attribute_names:[ ("#pk", "pk") ]
+          ~expression_attribute_values:[ (":pk", pk_val) ]
+          ~table_name:cfg.table ()
   in
   match Dyn.Query.request cfg.ctx input with
   | Error _ -> []
