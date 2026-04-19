@@ -8,6 +8,7 @@ let () =
       ("domain.node", Test_domain_node.tests);
       ("domain.formula", Test_domain_formula.tests);
       ("domain.edge_kind", Test_domain_edge_kind.tests);
+      ("domain.user", Test_domain_user.tests);
       ("domain.sensor_id", Test_domain_sensor_id.tests);
       ("domain.sensor_sk", Test_domain_sensor_sk.tests);
       ("domain.sensor", Test_domain_sensor.tests);
