@@ -58,3 +58,14 @@ let delete_sensor ~sensor_id ~parent =
 
 let get_sensor_reading id =
   Effect.perform (Get_sensor_reading id)
+
+type _ Effect.t +=
+  | Put_user    : User.t -> unit Effect.t
+  | Get_user    : User_id.t -> User.t option Effect.t
+  | List_users  : unit -> User.t list Effect.t
+  | Delete_user : User_id.t -> unit Effect.t
+
+let put_user u     = Effect.perform (Put_user u)
+let get_user id    = Effect.perform (Get_user id)
+let list_users ()  = Effect.perform (List_users ())
+let delete_user id = Effect.perform (Delete_user id)

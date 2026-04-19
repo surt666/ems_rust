@@ -11,6 +11,7 @@ type state = {
   nodes    : (string, Node.t) Hashtbl.t;
   edges    : edge list ref;
   sensors  : (string, sensor_row list) Hashtbl.t;
+  users    : (string, User.t) Hashtbl.t;
   rng      : Random.State.t;
   clock    : unit -> Ptime.t;
 }
@@ -20,6 +21,7 @@ let empty ?(seed = 42) ?(clock = Ptime_clock.now) () =
     nodes = Hashtbl.create 32;
     edges = ref [];
     sensors = Hashtbl.create 32;
+    users = Hashtbl.create 32;
     rng = Random.State.make [| seed |];
     clock;
   }
@@ -163,5 +165,19 @@ let run (st : state) (f : unit -> 'a) : 'a =
               Some (fun k -> continue k ())
           | Effects.Get_sensor_reading _id ->
               Some (fun k -> continue k None)
+          | Effects.Put_user u ->
+              Hashtbl.replace st.users (User_id.to_string u.User.id) u;
+              Some (fun k -> continue k ())
+          | Effects.Get_user id ->
+              let v = Hashtbl.find_opt st.users (User_id.to_string id) in
+              Some (fun k -> continue k v)
+          | Effects.List_users () ->
+              let xs =
+                Hashtbl.fold (fun _ u acc -> u :: acc) st.users []
+              in
+              Some (fun k -> continue k xs)
+          | Effects.Delete_user id ->
+              Hashtbl.remove st.users (User_id.to_string id);
+              Some (fun k -> continue k ())
           | _ -> None);
     }
