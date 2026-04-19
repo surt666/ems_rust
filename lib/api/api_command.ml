@@ -160,6 +160,24 @@ let run_delete_user json =
             (`Assoc [ ("deleted", `String (User_id.to_string id)) ]))
   | Error e -> Ok (Api_json.error_response e)
 
+let run_block_user json =
+  let* user_s = require_string json "user_id" in
+  let* node_s = require_string json "node_id" in
+  let* user_id = User_id.of_string user_s in
+  let* node_id = Node_id.of_string node_s in
+  match Access.block ~user_id ~node_id () with
+  | Ok () -> Ok (Api_json.ok_response (`Assoc [ ("ok", `Bool true) ]))
+  | Error e -> Ok (Api_json.error_response e)
+
+let run_unblock_user json =
+  let* user_s = require_string json "user_id" in
+  let* node_s = require_string json "node_id" in
+  let* user_id = User_id.of_string user_s in
+  let* node_id = Node_id.of_string node_s in
+  match Access.unblock ~user_id ~node_id () with
+  | Ok () -> Ok (Api_json.ok_response (`Assoc [ ("ok", `Bool true) ]))
+  | Error e -> Ok (Api_json.error_response e)
+
 let dispatch ~body =
   match Yojson.Safe.from_string body with
   | exception Yojson.Json_error msg ->
@@ -193,6 +211,14 @@ let dispatch ~body =
             | Error m -> err_bad_request m)
        | Ok "delete_user" ->
            (match run_delete_user json with
+            | Ok resp -> resp
+            | Error m -> err_bad_request m)
+       | Ok "block_user" ->
+           (match run_block_user json with
+            | Ok resp -> resp
+            | Error m -> err_bad_request m)
+       | Ok "unblock_user" ->
+           (match run_unblock_user json with
             | Ok resp -> resp
             | Error m -> err_bad_request m)
        | Ok other ->

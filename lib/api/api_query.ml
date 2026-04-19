@@ -82,6 +82,60 @@ let list_users ~params:_ =
       Api_json.ok_response
         (`Assoc [ ("users", `List (List.map Api_json.user_to_json xs)) ])
 
+let list_blocked_nodes ~params =
+  match param params "user" with
+  | None -> err_bad_request "missing user"
+  | Some id_s ->
+      (match User_id.of_string id_s with
+       | Error e -> err_bad_request e
+       | Ok user_id ->
+           (match Access.list_blocked_nodes ~user_id with
+            | Error err -> Api_json.error_response err
+            | Ok ids ->
+                Api_json.ok_response
+                  (`Assoc [ ("nodes",
+                             `List (List.map
+                                      (fun n -> `String (Node_id.to_string n)) ids)) ])))
+
+let list_blocked_users ~params =
+  match param params "node" with
+  | None -> err_bad_request "missing node"
+  | Some id_s ->
+      (match Node_id.of_string id_s with
+       | Error e -> err_bad_request e
+       | Ok node_id ->
+           (match Access.list_blocked_users ~node_id with
+            | Error err -> Api_json.error_response err
+            | Ok ids ->
+                Api_json.ok_response
+                  (`Assoc [ ("users",
+                             `List (List.map
+                                      (fun u -> `String (User_id.to_string u)) ids)) ])))
+
+let effective_permission ~params =
+  match param params "user" with
+  | None -> err_bad_request "missing user"
+  | Some user_s ->
+      (match param params "node" with
+       | None -> err_bad_request "missing node"
+       | Some node_s ->
+           (match User_id.of_string user_s with
+            | Error e -> err_bad_request e
+            | Ok user_id ->
+                (match Node_id.of_string node_s with
+                 | Error e -> err_bad_request e
+                 | Ok node_id ->
+                     (match Access.effective_permission ~user_id ~node_id with
+                      | Error err -> Api_json.error_response err
+                      | Ok (Some g) ->
+                          Api_json.ok_response
+                            (`Assoc [ ("capability",
+                                       `String (Cognito_group.to_string g)) ])
+                      | Ok None ->
+                          Api_json.ok_response
+                            (`Assoc [ ("capability", `Null);
+                                      ("reason", `String "blocked") ])))))
+
 let dispatch ~action ~params =
   match action with
   | "get_node" -> get_node ~params
@@ -90,4 +144,7 @@ let dispatch ~action ~params =
   | "get_sensor"   -> get_sensor   ~params
   | "get_user" -> get_user ~params
   | "list_users" -> list_users ~params
+  | "list_blocked_nodes"   -> list_blocked_nodes   ~params
+  | "list_blocked_users"   -> list_blocked_users   ~params
+  | "effective_permission" -> effective_permission ~params
   | other -> err_bad_request (Printf.sprintf "unknown query action %S" other)

@@ -121,6 +121,110 @@ let list_users_empty () =
   in
   Alcotest.(check int) "empty list" 0 (List.length users)
 
+let seed_user_and_blocked_node () =
+  let st, c2 = seed_with_one_child () in
+  Memory.run st (fun () ->
+    let _ =
+      Api_command.dispatch
+        ~body:{|{"action":"create_user","email":"alice@ex","name":"Alice","cognito_group":"writer"}|}
+    in
+    let body =
+      Printf.sprintf
+        {|{"action":"block_user","user_id":"U#alice@ex","node_id":%S}|}
+        (Node_id.to_string c2)
+    in
+    let _ = Api_command.dispatch ~body in
+    ());
+  (st, c2)
+
+let list_blocked_nodes_returns_nodes () =
+  let st, c2 = seed_user_and_blocked_node () in
+  let resp =
+    Memory.run st (fun () ->
+      Api_query.dispatch ~action:"list_blocked_nodes"
+        ~params:[ ("user", "U#alice@ex") ])
+  in
+  let json = Yojson.Safe.from_string resp in
+  let status = Yojson.Safe.Util.(json |> member "statusCode" |> to_int) in
+  Alcotest.(check int) "status 200" 200 status;
+  let inner =
+    Yojson.Safe.Util.(json |> member "body" |> to_string |> Yojson.Safe.from_string)
+  in
+  let nodes =
+    Yojson.Safe.Util.(inner |> member "nodes" |> to_list
+                      |> List.map to_string)
+  in
+  Alcotest.(check int) "one node" 1 (List.length nodes);
+  Alcotest.(check string) "node id" (Node_id.to_string c2) (List.hd nodes)
+
+let list_blocked_users_returns_users () =
+  let st, c2 = seed_user_and_blocked_node () in
+  let resp =
+    Memory.run st (fun () ->
+      Api_query.dispatch ~action:"list_blocked_users"
+        ~params:[ ("node", Node_id.to_string c2) ])
+  in
+  let json = Yojson.Safe.from_string resp in
+  let status = Yojson.Safe.Util.(json |> member "statusCode" |> to_int) in
+  Alcotest.(check int) "status 200" 200 status;
+  let inner =
+    Yojson.Safe.Util.(json |> member "body" |> to_string |> Yojson.Safe.from_string)
+  in
+  let users =
+    Yojson.Safe.Util.(inner |> member "users" |> to_list
+                      |> List.map to_string)
+  in
+  Alcotest.(check int) "one user" 1 (List.length users);
+  Alcotest.(check string) "user id" "U#alice@ex" (List.hd users)
+
+let effective_permission_before_and_after_block () =
+  let st, c2 = seed_with_one_child () in
+  Memory.run st (fun () ->
+    let _ =
+      Api_command.dispatch
+        ~body:{|{"action":"create_user","email":"frank@ex","name":"Frank","cognito_group":"writer"}|}
+    in
+    (* before block: writer capability *)
+    let resp =
+      Api_query.dispatch ~action:"effective_permission"
+        ~params:[ ("user", "U#frank@ex");
+                  ("node", Node_id.to_string c2) ]
+    in
+    let json = Yojson.Safe.from_string resp in
+    let status = Yojson.Safe.Util.(json |> member "statusCode" |> to_int) in
+    Alcotest.(check int) "status 200" 200 status;
+    let inner =
+      Yojson.Safe.Util.(json |> member "body" |> to_string |> Yojson.Safe.from_string)
+    in
+    let cap = Yojson.Safe.Util.(inner |> member "capability" |> to_string) in
+    Alcotest.(check string) "writer" "writer" cap;
+    (* block and re-check *)
+    let block =
+      Printf.sprintf
+        {|{"action":"block_user","user_id":"U#frank@ex","node_id":%S}|}
+        (Node_id.to_string c2)
+    in
+    let _ = Api_command.dispatch ~body:block in
+    let resp =
+      Api_query.dispatch ~action:"effective_permission"
+        ~params:[ ("user", "U#frank@ex");
+                  ("node", Node_id.to_string c2) ]
+    in
+    let json = Yojson.Safe.from_string resp in
+    let status = Yojson.Safe.Util.(json |> member "statusCode" |> to_int) in
+    Alcotest.(check int) "status 200" 200 status;
+    let inner =
+      Yojson.Safe.Util.(json |> member "body" |> to_string |> Yojson.Safe.from_string)
+    in
+    let cap_null =
+      match Yojson.Safe.Util.member "capability" inner with
+      | `Null -> true
+      | _ -> false
+    in
+    Alcotest.(check bool) "capability null" true cap_null;
+    let reason = Yojson.Safe.Util.(inner |> member "reason" |> to_string) in
+    Alcotest.(check string) "reason blocked" "blocked" reason)
+
 let tests =
   [
     Alcotest.test_case "get_node" `Quick get_node_returns_node;
@@ -129,4 +233,8 @@ let tests =
     Alcotest.test_case "list_sensors empty" `Quick list_sensors_empty;
     Alcotest.test_case "get_user" `Quick get_user_happy;
     Alcotest.test_case "list_users empty" `Quick list_users_empty;
+    Alcotest.test_case "list_blocked_nodes" `Quick list_blocked_nodes_returns_nodes;
+    Alcotest.test_case "list_blocked_users" `Quick list_blocked_users_returns_users;
+    Alcotest.test_case "effective_permission before/after block" `Quick
+      effective_permission_before_and_after_block;
   ]

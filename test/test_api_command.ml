@@ -139,6 +139,52 @@ let delete_user_roundtrip () =
     in
     Alcotest.(check int) "status 200" 200 status)
 
+let block_user_happy () =
+  let st, c2 = seed () in
+  Memory.run st (fun () ->
+    let _ =
+      Api_command.dispatch
+        ~body:{|{"action":"create_user","email":"dave@ex","name":"Dave","cognito_group":"writer"}|}
+    in
+    let body =
+      Printf.sprintf
+        {|{"action":"block_user","user_id":"U#dave@ex","node_id":%S}|}
+        (Node_id.to_string c2)
+    in
+    let resp = Api_command.dispatch ~body in
+    let json = Yojson.Safe.from_string resp in
+    let status = Yojson.Safe.Util.(json |> member "statusCode" |> to_int) in
+    Alcotest.(check int) "status 200" 200 status;
+    let inner =
+      Yojson.Safe.Util.(json |> member "body" |> to_string |> Yojson.Safe.from_string)
+    in
+    let ok = Yojson.Safe.Util.(inner |> member "ok" |> to_bool) in
+    Alcotest.(check bool) "ok true" true ok)
+
+let unblock_user_roundtrip () =
+  let st, c2 = seed () in
+  Memory.run st (fun () ->
+    let _ =
+      Api_command.dispatch
+        ~body:{|{"action":"create_user","email":"eve@ex","name":"Eve","cognito_group":"writer"}|}
+    in
+    let block_body =
+      Printf.sprintf
+        {|{"action":"block_user","user_id":"U#eve@ex","node_id":%S}|}
+        (Node_id.to_string c2)
+    in
+    let _ = Api_command.dispatch ~body:block_body in
+    let unblock_body =
+      Printf.sprintf
+        {|{"action":"unblock_user","user_id":"U#eve@ex","node_id":%S}|}
+        (Node_id.to_string c2)
+    in
+    let resp = Api_command.dispatch ~body:unblock_body in
+    let status =
+      Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int)
+    in
+    Alcotest.(check int) "status 200" 200 status)
+
 let tests =
   [
     Alcotest.test_case "add_node happy path" `Quick add_node_happy_path;
@@ -147,4 +193,6 @@ let tests =
     Alcotest.test_case "attach_sensor happy" `Quick attach_sensor_happy;
     Alcotest.test_case "create_user happy" `Quick create_user_happy;
     Alcotest.test_case "delete_user roundtrip" `Quick delete_user_roundtrip;
+    Alcotest.test_case "block_user happy" `Quick block_user_happy;
+    Alcotest.test_case "unblock_user roundtrip" `Quick unblock_user_roundtrip;
   ]
