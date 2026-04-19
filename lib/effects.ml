@@ -5,7 +5,13 @@ type _ Effect.t +=
   | Get_schema     : Node_id.t -> Schema.t option Effect.t
 
   | Put_node       : Node.t -> unit Effect.t
-  | Put_edge       : { from_ : Node_id.t; to_ : Node_id.t; label : string; name : string } -> unit Effect.t
+  | Put_edge       : {
+      from_   : string;
+      to_     : string;
+      kind    : Edge_kind.t;
+      name    : string;
+      created : Ptime.t;
+    } -> unit Effect.t
   | Delete_node    : Node_id.t -> unit Effect.t
 
   | Gen_uuid       : unit -> Uuidm.t Effect.t
@@ -29,8 +35,8 @@ let list_child_refs ?label parent =
   Effect.perform (List_child_refs (parent, label))
 let get_schema id               = Effect.perform (Get_schema id)
 let put_node n                  = Effect.perform (Put_node n)
-let put_edge ~from_ ~to_ ~label ~name =
-  Effect.perform (Put_edge { from_; to_; label; name })
+let put_edge ~from_ ~to_ ~kind ~name ~created =
+  Effect.perform (Put_edge { from_; to_; kind; name; created })
 let delete_node id              = Effect.perform (Delete_node id)
 let gen_uuid ()                 = Effect.perform (Gen_uuid ())
 let now ()                      = Effect.perform (Now ())

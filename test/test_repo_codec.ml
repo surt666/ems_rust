@@ -23,7 +23,11 @@ let edge_item_shape () =
   let p = Node_id.make Level.Hn3 (uuid "4b6a6f20-0000-0000-0000-000000000003") in
   let c = Node_id.make Level.Hn4 (uuid "4b6a6f20-0000-0000-0000-000000000004") in
   let item =
-    Codec.edge_item ~from_:p ~to_:c ~label:"building" ~name:"Bld-1"
+    Codec.edge_item
+      ~from_:(Node_id.to_string p)
+      ~to_:(Node_id.to_string c)
+      ~kind:(Edge_kind.Has_label "building")
+      ~name:"Bld-1"
       ~created:Ptime.epoch
   in
   let name =
@@ -37,7 +41,18 @@ let edge_item_shape () =
     match v with Smaws_Client_DynamoDB.S s -> s | _ -> Alcotest.fail "sk not S"
   in
   Alcotest.(check bool) "sk has has_building#"
-    true (Astring.String.is_prefix ~affix:"has_building#HN4#" sk)
+    true (Astring.String.is_prefix ~affix:"has_building#HN4#" sk);
+  let kind_s =
+    let v : Smaws_Client_DynamoDB.attribute_value = List.assoc "kind" item in
+    match v with Smaws_Client_DynamoDB.S s -> s | _ -> Alcotest.fail "kind not S"
+  in
+  Alcotest.(check string) "kind attribute" "has_label:building" kind_s;
+  let gsi1sk =
+    let v : Smaws_Client_DynamoDB.attribute_value = List.assoc "gsi1sk" item in
+    match v with Smaws_Client_DynamoDB.S s -> s | _ -> Alcotest.fail "gsi1sk not S"
+  in
+  Alcotest.(check bool) "gsi1sk has parent_of#"
+    true (Astring.String.is_prefix ~affix:"parent_of#HN3#" gsi1sk)
 
 let sensor_round_trip () =
   let uuid = Uuidm.of_string "11111111-2222-4333-8444-000000000001" |> Option.get in

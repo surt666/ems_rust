@@ -129,8 +129,12 @@ let add_node ?label ?schema ?level ~parent ~name ~metadata () =
     Node.make ~uuid ~level ~name ~parent ~created ~metadata ~schema:node_schema
   in
   Effects.put_node child;
-  Effects.put_edge ~from_:parent ~to_:child.Node.id ~label:edge_label
-    ~name:child.Node.name;
+  Effects.put_edge
+    ~from_:(Node_id.to_string parent)
+    ~to_:(Node_id.to_string child.Node.id)
+    ~kind:(Edge_kind.Has_label edge_label)
+    ~name:child.Node.name
+    ~created;
   Ok child
 
 let get_node id =

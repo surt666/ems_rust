@@ -44,8 +44,14 @@ let list_children_filters_by_label () =
   Memory.run st (fun () ->
     Effects.put_node (mk c_a "A");
     Effects.put_node (mk c_b "B");
-    Effects.put_edge ~from_:p ~to_:c_a ~label:"building" ~name:"A";
-    Effects.put_edge ~from_:p ~to_:c_b ~label:"area" ~name:"B");
+    Effects.put_edge
+      ~from_:(Node_id.to_string p) ~to_:(Node_id.to_string c_a)
+      ~kind:(Edge_kind.Has_label "building") ~name:"A"
+      ~created:Ptime.epoch;
+    Effects.put_edge
+      ~from_:(Node_id.to_string p) ~to_:(Node_id.to_string c_b)
+      ~kind:(Edge_kind.Has_label "area") ~name:"B"
+      ~created:Ptime.epoch);
   let all = Memory.run st (fun () -> Effects.list_children p) in
   Alcotest.(check int) "no filter -> 2" 2 (List.length all);
   let bldgs = Memory.run st (fun () -> Effects.list_children ~label:"building" p) in
@@ -63,7 +69,10 @@ let delete_node_removes_edges () =
   in
   Memory.run st (fun () ->
     Effects.put_node node;
-    Effects.put_edge ~from_:p ~to_:c ~label:"building" ~name:"X";
+    Effects.put_edge
+      ~from_:(Node_id.to_string p) ~to_:(Node_id.to_string c)
+      ~kind:(Edge_kind.Has_label "building") ~name:"X"
+      ~created:Ptime.epoch;
     Effects.delete_node c);
   let remaining = Memory.run st (fun () -> Effects.list_children p) in
   Alcotest.(check int) "no children after delete" 0 (List.length remaining);

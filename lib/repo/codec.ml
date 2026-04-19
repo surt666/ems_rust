@@ -114,19 +114,16 @@ let node_to_item (nd : Node.t) : (string * Dyn.attribute_value) list =
   | Some sch -> ("schema", schema_to_attr sch) :: with_parent
   | None -> with_parent
 
-let edge_item ~from_ ~to_ ~label ~name ~created =
-  let from_s = Node_id.to_string from_ in
-  let to_s = Node_id.to_string to_ in
-  let sk = Printf.sprintf "has_%s#%s" label to_s in
+let edge_item ~from_ ~to_ ~kind ~name ~created =
   [
-    ("pk", s from_s);
-    ("sk", s sk);
+    ("pk", s from_);
+    ("sk", s (Printf.sprintf "%s#%s" (Edge_kind.sk_verb kind) to_));
     ("type", s "edge");
-    ("label", s label);
+    ("kind", s (Edge_kind.to_string kind));
     ("name", s name);
     ("created", s (Ptime.to_rfc3339 ~tz_offset_s:0 created));
-    ("gsi1pk", s to_s);
-    ("gsi1sk", s from_s);
+    ("gsi1pk", s to_);
+    ("gsi1sk", s (Printf.sprintf "%s#%s" (Edge_kind.gsi_verb kind) from_));
   ]
 
 let ( let* ) = Result.bind

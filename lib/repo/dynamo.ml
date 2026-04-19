@@ -81,10 +81,8 @@ let put_node cfg (nd : Node.t) =
   | Ok _ -> ()
   | Error _ -> failwith "PutItem node failed"
 
-let put_edge cfg ~from_ ~to_ ~label ~name =
-  let item =
-    Codec.edge_item ~from_ ~to_ ~label ~name ~created:(Ptime_clock.now ())
-  in
+let put_edge cfg ~from_ ~to_ ~kind ~name ~created =
+  let item = Codec.edge_item ~from_ ~to_ ~kind ~name ~created in
   let input = Dyn.make_put_item_input ~item ~table_name:cfg.table () in
   match Dyn.PutItem.request cfg.ctx input with
   | Ok _ -> ()
@@ -301,8 +299,8 @@ let run (cfg : cfg) (f : unit -> 'a) : 'a =
           | Effects.Put_node n ->
               put_node cfg n;
               Some (fun k -> continue k ())
-          | Effects.Put_edge { from_; to_; label; name } ->
-              put_edge cfg ~from_ ~to_ ~label ~name;
+          | Effects.Put_edge { from_; to_; kind; name; created } ->
+              put_edge cfg ~from_ ~to_ ~kind ~name ~created;
               Some (fun k -> continue k ())
           | Effects.Delete_node id ->
               delete_node cfg id;

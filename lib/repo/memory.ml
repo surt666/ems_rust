@@ -89,8 +89,17 @@ let run (st : state) (f : unit -> 'a) : 'a =
           | Effects.Put_node n ->
               Hashtbl.replace st.nodes (Node_id.to_string n.Node.id) n;
               Some (fun k -> continue k ())
-          | Effects.Put_edge { from_; to_; label; name } ->
-              st.edges := (from_, label, to_, name) :: !(st.edges);
+          | Effects.Put_edge { from_; to_; kind; name; created = _ } ->
+              (match Node_id.of_string from_, Node_id.of_string to_ with
+               | Ok f, Ok t ->
+                   let label =
+                     match kind with
+                     | Edge_kind.Has_label l -> l
+                     | Edge_kind.Has_sensor  -> "sensor"
+                     | Edge_kind.Blocked     -> "blocked"
+                   in
+                   st.edges := (f, label, t, name) :: !(st.edges)
+               | _ -> ());
               Some (fun k -> continue k ())
           | Effects.Delete_node id ->
               Hashtbl.remove st.nodes (Node_id.to_string id);

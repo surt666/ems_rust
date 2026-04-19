@@ -119,8 +119,12 @@ let seed_root_partner_companies cfg =
         ~metadata:(`Assoc []) ~schema:None
     in
     Effects.put_node partner;
-    Effects.put_edge ~from_:Node_id.root ~to_:partner_id ~label:"partner"
-      ~name:partner.Node.name;
+    Effects.put_edge
+      ~from_:(Node_id.to_string Node_id.root)
+      ~to_:(Node_id.to_string partner_id)
+      ~kind:(Edge_kind.Has_label "partner")
+      ~name:partner.Node.name
+      ~created:now;
     let mk_company ~name ~schema =
       let u = Effects.gen_uuid () in
       let n =
@@ -129,8 +133,12 @@ let seed_root_partner_companies cfg =
           ~metadata:(`Assoc []) ~schema:(Some schema)
       in
       Effects.put_node n;
-      Effects.put_edge ~from_:partner_id ~to_:n.Node.id ~label:"company"
-        ~name:n.Node.name;
+      Effects.put_edge
+        ~from_:(Node_id.to_string partner_id)
+        ~to_:(Node_id.to_string n.Node.id)
+        ~kind:(Edge_kind.Has_label "company")
+        ~name:n.Node.name
+        ~created:now;
       n.Node.id
     in
     let realestate = mk_company ~name:"RealEstateCo" ~schema:(property_schema ()) in
