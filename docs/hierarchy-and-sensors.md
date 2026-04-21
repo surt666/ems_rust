@@ -1,4 +1,4 @@
-uuu# Hierarchy and Sensors
+# Hierarchy and Sensors
 
 Living reference for the node model, the per-company schema, the sensor model,
 and the DynamoDB layout that backs all of them. Kept in sync with `lib/`.
