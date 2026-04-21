@@ -1,4 +1,4 @@
-# Hierarchy and Sensors
+uuu# Hierarchy and Sensors
 
 Living reference for the node model, the per-company schema, the sensor model,
 and the DynamoDB layout that backs all of them. Kept in sync with `lib/`.
@@ -95,10 +95,7 @@ Each field carries `required`. Unknown fields are ignored, not rejected.
 
 ### 2.4 Sensors list
 
-`sensors : Level.t list` names the levels that may host sensors. Empty list =
-this company has no sensors. The earlier `sensor_slot` model (slots per level
-with kind/min/max) was dropped — see commit `1d0c0ce refactor(schema): gate
-sensors by allowed levels, drop slot model`.
+`sensors : Level.t list` names the levels that may host sensors.
 
 ### 2.5 Schema resolution
 
