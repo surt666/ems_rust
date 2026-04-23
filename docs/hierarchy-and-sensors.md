@@ -144,8 +144,8 @@ Two invariants worth calling out — both asserted in `itest/test_dynamo.ml`:
 
 Users are not tree nodes, but they attach to the tree the same way
 everything else in this system does — via DynamoDB edges. A user row
-lives at `pk = sk = U#<email>`, and permission-related edges point
-from that row into the hierarchy:
+lives at `pk = sk = U#<email>`; permission edges point from that row
+into the hierarchy:
 
 ```mermaid
 graph TD
@@ -153,20 +153,26 @@ graph TD
   HQ -->|building| HBA["HQ Building A (hn4)"]
   HQ -->|building| HBB["HQ Building B (hn4)<br/>top-secret research lab"]
 
-  Alice["Alice<br/>(U#alice@acme.test)<br/>admin for Acme Co"] -.->|blocked| HBB
+  Alice["Alice<br/>(U#alice@acme.test)"] ==>|admin| C
+  Alice -.->|blocked| HBB
 ```
 
-Default is allow. Alice administers Acme Co, so she can touch every
-node in the subtree *except* `HQ Building B` and its descendants —
-the dashed `Blocked` edge carves that branch out, and the block
-inherits through the ancestor chain.
+Two edges, two jobs. The thick `admin` edge **grants** Alice a role on
+Acme Co — her ceiling across the company subtree. The dashed `Blocked`
+edge **revokes** that on HQ Building B and everything below it. Grant
+edges propagate down through the ancestor chain the same way blocks
+do; an `effective_permission` walk from any node returns the role
+from the nearest granting ancestor, unless a block on that ancestor
+chain kills it first.
 
-The `cognito_group` field carried on the user record (`admin` here) is
-an overarching bucket — aspirational capability tier, not yet wired
-to per-node behavior. Everything actually enforced today lives at the
-DynamoDB level as a `Blocked` edge; any future per-node role model
-would take the same edge-based shape. See `docs/architecture.md` §8
-for the `effective_permission` walk and the block-edge row layout.
+Only the `Blocked` side is live in the code today (`Edge_kind.t =
+Has_label | Has_sensor | Blocked`). The per-node role grant is the
+designed-but-not-yet-built next step — same single-table edge shape
+as a block, just pointing the opposite way on the capability axis.
+The `cognito_group` on the user record is an overarching bucket above
+this model, aspirational and not wired to per-node enforcement. See
+`docs/architecture.md` §8 for the `effective_permission` algorithm
+and the block-edge row layout.
 
 ---
 

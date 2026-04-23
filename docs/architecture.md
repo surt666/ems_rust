@@ -374,11 +374,12 @@ Blocking an ancestor propagates down — every descendant is blocked too.
 
 #### Worked example — company access with a carve-out
 
-Alice administers Acme Co (her `cognito_group` is `admin`), so by
-default she can touch every node in the company subtree. Building B
-houses a top-secret research lab that only a few people are cleared
-for; blocking Alice on **that one building** — and nothing else —
-carves its subtree out of her reach without disturbing anything else.
+Alice is granted `admin` on Acme Co — a per-node role grant on the
+company node. That grant propagates down through the subtree, so she
+can touch every descendant. Building B houses a top-secret research
+lab only a few people are cleared for; a `Blocked` edge on **that
+one building** carves its subtree back out of her reach without
+disturbing anything else.
 
 ```mermaid
 graph TD
@@ -388,15 +389,15 @@ graph TD
   B1 -->|floor| F1["Floor 1 (hn5)"]
   B2 -->|floor| F2["Floor 1 (hn5)"]
 
-  U["Alice<br/>(admin)"] -.->|blocked| B2
+  U["Alice"] ==>|admin| C
+  U -.->|blocked| B2
 ```
 
-One call creates the dashed edge:
-`block_user { user_id = "U#alice@acme.test"; node_id = B2 }`.
-
-`Access.effective_permission` walks from the target node up through
-`parent` refs and looks for a `Blocked` edge from Alice on any
-ancestor:
+Two edges, two directions. The thick `admin` edge from Alice to Acme
+Co is a **grant**; the dashed edge onto Building B is a **revocation**
+that shadows it. `Access.effective_permission` walks from the target
+node up through `parent` refs: the first matching block on the chain
+wins; otherwise the nearest granting ancestor's role is returned.
 
 | Target node              | Ancestors walked          | Result                                        |
 |--------------------------|---------------------------|-----------------------------------------------|
@@ -406,12 +407,17 @@ ancestor:
 | `Building B`             | HQ, Acme Co               | `{"capability": null, "reason": "blocked"}`   |
 | `Floor 1` (under B)      | Building B, HQ, Acme Co   | `{"capability": null, "reason": "blocked"}`   |
 
-The floor inherits the block from its ancestor — there is no need to
-rewrite the block on every descendant. One `unblock_user` call on
-Building B restores access to the whole subtree atomically. The
-capability that comes back on an allowed node is still just Alice's
-global `cognito_group`; upstream decides what `admin` means as an
-actual action grant.
+The floor inherits the block from its ancestor, and the grant
+likewise inherits from Acme Co — there is no need to rewrite either
+on every descendant. One `unblock_user` on Building B restores access
+to the subtree atomically.
+
+**Status.** Only the `Blocked` half of this picture is live in code
+today (`Edge_kind.t = Has_label | Has_sensor | Blocked`); the capability
+returned on an allowed node is the user's global `cognito_group`. The
+per-node role grant — the thick `admin` edge in the diagram — is the
+designed-but-not-yet-built next step, shaped identically to a block
+edge and evaluated along the same ancestor walk.
 
 ### `Access.effective_permission` — the delegation point
 
