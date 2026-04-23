@@ -356,10 +356,28 @@ reports it back. `admin > writer > reader` by `Cognito_group.rank`, and
 any future per-node role grants will take the same edge-based shape as
 `Blocked` does today.
 
-### Block edges
+### Permission edges
 
-A user may be blocked from a node. Blocks are stored as ordinary edges with
-`kind = Edge_kind.Blocked`:
+Two edge families point from a user row into the hierarchy: **grant
+edges** (positive, per-node role) and **block edges** (negative,
+per-node carve-out). Both share the single-table shape; they differ
+only in the verb embedded in `sk` / `gsi1sk`.
+
+**Grant edges — planned, one per cognito tier:**
+
+| Role          | `pk`          | `sk`                          | `gsi1pk`    | `gsi1sk`                          |
+|---------------|---------------|-------------------------------|-------------|-----------------------------------|
+| admin-level   | `U#<email>`   | `administrates#HN<n>#<uuid>`  | `<node_id>` | `administrators#U#<email>`        |
+| writer-level  | `U#<email>`   | `writes#HN<n>#<uuid>`         | `<node_id>` | `writers#U#<email>`               |
+| reader-level  | `U#<email>`   | `reads#HN<n>#<uuid>`          | `<node_id>` | `readers#U#<email>`               |
+
+The three forward verbs (`administrates` / `writes` / `reads`) line up
+with `Cognito_group.t = Admin | Writer | Reader`. A grant on an
+ancestor propagates down through the subtree the same way a block
+does: `effective_permission` returns the role from the nearest
+granting ancestor on the walk.
+
+**Block edges — live today:**
 
 | Attribute | Value                                               |
 |-----------|-----------------------------------------------------|
@@ -368,9 +386,17 @@ A user may be blocked from a node. Blocks are stored as ordinary edges with
 | `gsi1pk` | `<node_id>`                                          |
 | `gsi1sk` | `Edge_kind.gsi_verb Blocked ^ "#" ^ <user_id>`       |
 
-`sk_verb Blocked = "blocked"`, `gsi_verb Blocked = "blocks"`. The default is
-**allow**: a user may touch everything that is not transitively blocked.
-Blocking an ancestor propagates down — every descendant is blocked too.
+`sk_verb Blocked = "blocked"`, `gsi_verb Blocked = "blocks"`. Default
+is **allow**: any user touches everything not transitively blocked.
+Blocking an ancestor propagates down — every descendant is blocked
+too.
+
+Today `Edge_kind.t = Has_label | Has_sensor | Blocked`; the three
+grant variants (`Administrates | Writes | Reads`) are the
+designed-but-not-yet-built extension. When they land, the only
+additions are three cases in `Edge_kind` and a small rewrite of
+`Access.effective_permission` to pick up the nearest-ancestor grant
+on the walk.
 
 #### Worked example — company access with a carve-out
 
@@ -389,15 +415,17 @@ graph TD
   B1 -->|floor| F1["Floor 1 (hn5)"]
   B2 -->|floor| F2["Floor 1 (hn5)"]
 
-  U["Alice"] ==>|admin| C
+  U["Alice"] ==>|administrates| C
   U -.->|blocked| B2
 ```
 
-Two edges, two directions. The thick `admin` edge from Alice to Acme
-Co is a **grant**; the dashed edge onto Building B is a **revocation**
-that shadows it. `Access.effective_permission` walks from the target
-node up through `parent` refs: the first matching block on the chain
-wins; otherwise the nearest granting ancestor's role is returned.
+Two edges, two directions. The thick `administrates` edge from Alice
+to Acme Co is a **grant** (`pk=U#alice@acme.test,
+sk=administrates#HN2#<acme-uuid>`); the dashed edge onto Building B
+is a **revocation** that shadows it. `Access.effective_permission`
+walks from the target node up through `parent` refs: the first
+matching block on the chain wins; otherwise the nearest granting
+ancestor's role is returned.
 
 | Target node              | Ancestors walked          | Result                                        |
 |--------------------------|---------------------------|-----------------------------------------------|

@@ -153,26 +153,31 @@ graph TD
   HQ -->|building| HBA["HQ Building A (hn4)"]
   HQ -->|building| HBB["HQ Building B (hn4)<br/>top-secret research lab"]
 
-  Alice["Alice<br/>(U#alice@acme.test)"] ==>|admin| C
+  Alice["Alice<br/>(U#alice@acme.test)"] ==>|administrates| C
   Alice -.->|blocked| HBB
 ```
 
-Two edges, two jobs. The thick `admin` edge **grants** Alice a role on
-Acme Co — her ceiling across the company subtree. The dashed `Blocked`
-edge **revokes** that on HQ Building B and everything below it. Grant
-edges propagate down through the ancestor chain the same way blocks
-do; an `effective_permission` walk from any node returns the role
-from the nearest granting ancestor, unless a block on that ancestor
+Two edges, two jobs. The thick `administrates` edge **grants** Alice
+a role on Acme Co; the dashed `blocked` edge **revokes** that on HQ
+Building B and everything below it. Both follow the single-table
+edge shape — `pk = U#<email>`, node id on the sk side:
+
+- grant:  `sk = administrates#HN2#<acme-uuid>`
+- block:  `sk = blocked#HN4#<b-uuid>`
+
+Three forward verbs are reserved for grants — `administrates` /
+`writes` / `reads` — one per cognito tier. Grants and blocks both
+propagate down through the ancestor chain; `effective_permission`
+returns the nearest granting ancestor's role unless a block on that
 chain kills it first.
 
-Only the `Blocked` side is live in the code today (`Edge_kind.t =
-Has_label | Has_sensor | Blocked`). The per-node role grant is the
-designed-but-not-yet-built next step — same single-table edge shape
-as a block, just pointing the opposite way on the capability axis.
-The `cognito_group` on the user record is an overarching bucket above
-this model, aspirational and not wired to per-node enforcement. See
-`docs/architecture.md` §8 for the `effective_permission` algorithm
-and the block-edge row layout.
+Only the `Blocked` half is live in the code today (`Edge_kind.t =
+Has_label | Has_sensor | Blocked`). The three grant variants are the
+designed-but-not-yet-built next step, shaped identically to blocks
+and evaluated on the same ancestor walk. The `cognito_group` on the
+user record is an overarching bucket above this — aspirational, not
+wired to per-node enforcement. See `docs/architecture.md` §8 for the
+full row layout and the `effective_permission` algorithm.
 
 ---
 
