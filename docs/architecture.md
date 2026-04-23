@@ -346,10 +346,15 @@ does not apply here — the email itself is the logical identity.
 
 ### Capability ceiling — upstream enforcement
 
-`Cognito_group.t = Reader | Writer | Admin`. These are a **capability
-ceiling**, not the enforcement mechanism. Upstream (the frontend and the API
-Gateway Cognito authorizer) decides what the caller is allowed to do; this
-Lambda only *stores and reports*. `admin > writer > reader` by `Cognito_group.rank`.
+`Cognito_group.t = Reader | Writer | Admin`. These are **overarching
+buckets** — an aspirational capability ceiling, not an actual enforcement
+mechanism. The groups are not yet wired to per-node behavior; at the
+DynamoDB level the only edges that modify access today are `Blocked`.
+Upstream (the frontend and the API Gateway Cognito authorizer) decides
+what the caller is allowed to do; this Lambda stores the group and
+reports it back. `admin > writer > reader` by `Cognito_group.rank`, and
+any future per-node role grants will take the same edge-based shape as
+`Blocked` does today.
 
 ### Block edges
 
@@ -369,11 +374,11 @@ Blocking an ancestor propagates down — every descendant is blocked too.
 
 #### Worked example — company access with a carve-out
 
-Alice is a `writer` at Acme Co, so by default she can touch every node in
-the company subtree. Building B houses a top-secret research lab that only
-a few people are cleared for; blocking Alice on **that one building** —
-and nothing else — carves its subtree out of her reach without disturbing
-anything else.
+Alice administers Acme Co (her `cognito_group` is `admin`), so by
+default she can touch every node in the company subtree. Building B
+houses a top-secret research lab that only a few people are cleared
+for; blocking Alice on **that one building** — and nothing else —
+carves its subtree out of her reach without disturbing anything else.
 
 ```mermaid
 graph TD
@@ -383,7 +388,7 @@ graph TD
   B1 -->|floor| F1["Floor 1 (hn5)"]
   B2 -->|floor| F2["Floor 1 (hn5)"]
 
-  U["Alice<br/>(writer)"] -.->|blocked| B2
+  U["Alice<br/>(admin)"] -.->|blocked| B2
 ```
 
 One call creates the dashed edge:
@@ -395,15 +400,18 @@ ancestor:
 
 | Target node              | Ancestors walked          | Result                                        |
 |--------------------------|---------------------------|-----------------------------------------------|
-| `Acme Co`                | —                         | `{"capability": "writer"}`                    |
-| `HQ`                     | Acme Co                   | `{"capability": "writer"}`                    |
-| `Building A`             | HQ, Acme Co               | `{"capability": "writer"}`                    |
+| `Acme Co`                | —                         | `{"capability": "admin"}`                     |
+| `HQ`                     | Acme Co                   | `{"capability": "admin"}`                     |
+| `Building A`             | HQ, Acme Co               | `{"capability": "admin"}`                     |
 | `Building B`             | HQ, Acme Co               | `{"capability": null, "reason": "blocked"}`   |
 | `Floor 1` (under B)      | Building B, HQ, Acme Co   | `{"capability": null, "reason": "blocked"}`   |
 
 The floor inherits the block from its ancestor — there is no need to
 rewrite the block on every descendant. One `unblock_user` call on
-Building B restores access to the whole subtree atomically.
+Building B restores access to the whole subtree atomically. The
+capability that comes back on an allowed node is still just Alice's
+global `cognito_group`; upstream decides what `admin` means as an
+actual action grant.
 
 ### `Access.effective_permission` — the delegation point
 
