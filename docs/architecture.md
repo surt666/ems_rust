@@ -367,6 +367,44 @@ A user may be blocked from a node. Blocks are stored as ordinary edges with
 **allow**: a user may touch everything that is not transitively blocked.
 Blocking an ancestor propagates down — every descendant is blocked too.
 
+#### Worked example — company access with a carve-out
+
+Alice is a `writer` at Acme Co, so by default she can touch every node in
+the company subtree. Building B houses a top-secret research lab that only
+a few people are cleared for; blocking Alice on **that one building** —
+and nothing else — carves its subtree out of her reach without disturbing
+anything else.
+
+```mermaid
+graph TD
+  C["Acme Co (hn2)"] -->|property| HQ["HQ (hn3)"]
+  HQ -->|building| B1["Building A (hn4)"]
+  HQ -->|building| B2["Building B (hn4)<br/>top-secret research lab"]
+  B1 -->|floor| F1["Floor 1 (hn5)"]
+  B2 -->|floor| F2["Floor 1 (hn5)"]
+
+  U["Alice<br/>(writer)"] -.->|blocked| B2
+```
+
+One call creates the dashed edge:
+`block_user { user_id = "U#alice@acme.test"; node_id = B2 }`.
+
+`Access.effective_permission` walks from the target node up through
+`parent` refs and looks for a `Blocked` edge from Alice on any
+ancestor:
+
+| Target node              | Ancestors walked          | Result                                        |
+|--------------------------|---------------------------|-----------------------------------------------|
+| `Acme Co`                | —                         | `{"capability": "writer"}`                    |
+| `HQ`                     | Acme Co                   | `{"capability": "writer"}`                    |
+| `Building A`             | HQ, Acme Co               | `{"capability": "writer"}`                    |
+| `Building B`             | HQ, Acme Co               | `{"capability": null, "reason": "blocked"}`   |
+| `Floor 1` (under B)      | Building B, HQ, Acme Co   | `{"capability": null, "reason": "blocked"}`   |
+
+The floor inherits the block from its ancestor — there is no need to
+rewrite the block on every descendant. One `unblock_user` call on
+Building B restores access to the whole subtree atomically.
+
 ### `Access.effective_permission` — the delegation point
 
 ```ocaml
