@@ -117,8 +117,12 @@ graph TD
   P -->|company| CP["ChargeCo (hn2)<br/>schema: parkinglot → chargingpool → charger → plug"]
 
   RE -->|property| HQ["HQ Property (hn3)"]
+  RE -->|property| WH["Warehouse Property (hn3)"]
   RE -->|group| RG["Region Group (hn3)"]
   HQ -->|building| HBA["HQ Building A (hn4)<br/>lat, lng"]
+  HQ -->|building| HBB["HQ Building B (hn4)"]
+  WH -->|building| WBA["Warehouse Building A (hn4)"]
+  WH -->|building| WBB["Warehouse Building B (hn4)"]
   HBA -->|area| AREA["HQ Parking A (hn5)"]
 
   HBA -->|has_sensor| S1["S1<br/>Electricity<br/>abs(Self - S2')"]
@@ -126,12 +130,18 @@ graph TD
 
   CP -->|parkinglot| LOT["Parking Lot North (hn3)"]
   LOT -->|chargingpool| POOL["Pool A (hn4)"]
-  POOL -->|charger| C1["CP-01 (hn5)"]
+  POOL -->|charger| C1["CP-01 (hn5)<br/>power_kw=150, ccs"]
+  POOL -->|charger| C2["CP-02 (hn5)<br/>power_kw=50, type2"]
   C1 -->|plug| P1A["Plug 01-A (hn6)"]
+  C1 -->|plug| P1B["Plug 01-B (hn6)"]
+  C2 -->|plug| P2A["Plug 02-A (hn6)"]
 ```
 
-RealEstateCo rejects `charger` and `plug`; ChargeCo rejects `property`. Both
-invariants are asserted in `itest/test_dynamo.ml`.
+Two invariants worth calling out — both asserted in `itest/test_dynamo.ml`:
+
+1. **RealEstateCo has no `charger` or `plug`.** Its schema does not declare
+   those labels, so `Hierarchy.add_node` rejects them with `Validation`.
+2. **ChargeCo has no `property`.** Same rule, opposite direction.
 
 ---
 
@@ -267,6 +277,95 @@ and expr =
   `Ref alias` resolves — via `refs` — to the *computed* value `S'` of another
   sensor. Evaluation is topological; leaves are evaluated before the sensors
   that reference them.
+
+Composite formulas typically subtract out sub-metered contributions so that
+summing every sensor's `S'` in a subtree gives total consumption with no
+double-counting.
+
+#### Worked example — nested sub-metering
+
+A building with two areas, where area 2 has its own sub-meters:
+
+```mermaid
+graph TD
+  B["Building"] --> A1["Area 1"]
+  B --> A2["Area 2"]
+
+  B -->|has_sensor| S1["S1<br/>abs(Self - S2' - S3')"]
+  A1 -->|has_sensor| S2["S2<br/>identity"]
+  A2 -->|has_sensor| S3["S3<br/>abs(Self - S4' - S5')"]
+  A2 -->|has_sensor| S4["S4<br/>identity"]
+  A2 -->|has_sensor| S5["S5<br/>identity"]
+
+  S1 -.-> S2
+  S1 -.-> S3
+  S3 -.-> S4
+  S3 -.-> S5
+```
+
+Solid edges are hierarchy. Dashed edges are formula references — `Ref`
+resolves to the referenced sensor's *computed* value `S'`, not its raw
+reading.
+
+Formulas and what they express:
+
+- `S2' = Self` — area 1 is fully captured by its own meter.
+- `S4' = Self`, `S5' = Self` — raw sub-meter readings in area 2.
+- `S3' = abs(Self - S4' - S5')` — area 2 *remainder* after its sub-meters.
+  Zero when `S4 + S5` accounts for everything; positive when there is
+  unmetered consumption inside area 2.
+- `S1' = abs(Self - S2' - S3')` — building remainder after the two areas.
+
+AST for S3:
+
+```ocaml
+Expr { ast  = Abs (Sub (Sub (Self, Ref "S4"), Ref "S5"));
+       refs = [("S4", uuid4); ("S5", uuid5)] }
+```
+
+Total building consumption = `S1' + S2' + S3' + S4' + S5'`. Each sensor
+contributes its net share; nothing is counted twice.
+
+#### Worked example — a meter that covers its siblings
+
+The one-meter-per-subtree assumption breaks when a shared feed is metered
+higher up than the scope it actually reads. Classic case: **Building 1's**
+electricity meter is physically wired to the feed that powers Building 1
+*and* Building 2, while Building 2 has a sub-meter of its own (with its
+own sub-meter below it).
+
+```mermaid
+graph TD
+  P["Property"] --> B1["Building 1"]
+  P --> B2["Building 2"]
+  B2 --> R["Roof Array"]
+
+  B1 -->|has_sensor| SB1["SB1<br/>abs(Self - SB2')"]
+  B2 -->|has_sensor| SB2["SB2<br/>abs(Self - SR')"]
+  R  -->|has_sensor| SR["SR<br/>identity"]
+
+  SB1 -.-> SB2
+  SB2 -.-> SR
+```
+
+Formulas:
+
+- `SR' = Self` — raw reading at the roof array.
+- `SB2' = abs(Self - SR')` — Building 2 net, after subtracting the roof.
+- `SB1' = abs(Self - SB2')` — Building 1 net, after subtracting
+  Building 2's *computed* value.
+
+The non-obvious part: `Ref "SB2"` in SB1's formula resolves to `SB2'` —
+the output of SB2's own non-identity formula — **not** SB2's raw Self.
+Evaluation runs topologically (`SR' → SB2' → SB1'`, leaves first). If
+SB1 subtracted SB2's raw Self, the roof array would get subtracted out
+of SB1 a second time, because SB2 has already carved it out of its own
+net.
+
+This is what keeps `Ref` compositional: every sensor's `S'` is a black
+box from the perspective of any referring formula, so coverage meters
+can stack without per-level knowledge of what the referenced sensor's
+own formula is doing.
 
 Cycles are rejected at attach time and on `set_formula` (`Sensors.has_cycle`).
 `Zero` carries no refs, so it is trivially cycle-free.
