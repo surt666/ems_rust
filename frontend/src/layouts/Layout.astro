@@ -1,0 +1,133 @@
+---
+interface Props {
+        title: string;
+}
+
+const { title } = Astro.props;
+
+import { ClientRouter } from "astro:transitions";
+import Navbar from "../components/Navbar.astro";
+import Hierarchy from "../components/Hierarchy.astro";
+import Breadcrumb from "../components/Breadcrumb.astro";
+
+import "../styles/global.css";
+
+---
+
+<!doctype html>
+<html lang="da">
+        <head>
+                <meta charset="UTF-8" />
+                <meta name="description" content="EMS - Energy Management System" />
+                <meta name="viewport" content="width=device-width" />
+                <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+                <meta name="generator" content={Astro.generator} />
+                <title>{title}</title>
+                <ClientRouter />
+        </head>
+        <body class="app-layout">
+
+          <svg style="display: none;">
+            <!-- Chevron arrow for expandable nodes -->
+            <symbol id="chevron-right" viewBox="0 0 320 512">
+              <path fill="currentColor" d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"></path>
+            </symbol>
+
+            <!-- Partner: globe with meridian lines -->
+            <symbol id="icon-partner" viewBox="0 0 512 512">
+              <path fill="currentColor" d="M352 256c0 22.2-1.2 43.6-3.3 64l-185.3 0c-2.2-20.4-3.3-41.8-3.3-64s1.2-43.6 3.3-64l185.3 0c2.2 20.4 3.3 41.8 3.3 64zm28.8-64l123.1 0c5.3 20.5 8.1 41.9 8.1 64s-2.8 43.5-8.1 64l-123.1 0c2.1-20.6 3.2-42 3.2-64s-1.1-43.4-3.2-64zm112.6-32l-116.7 0c-10-63.9-29.8-117.4-55.3-151.6c78.3 20.7 142 77.5 171.9 151.6zm-149.1 0l-176.6 0c6.1-36.4 15.5-68.6 27-94.7c10.5-23.6 22.2-40.7 33.5-51.5C239.4 3.2 248.7 0 256 0s16.6 3.2 27.8 13.8c11.3 10.8 23 27.9 33.5 51.5c11.5 26 20.9 58.2 27 94.7zm-209.3 0L18.6 160C48.6 85.9 112.2 29.1 190.6 8.4C165.1 42.6 145.3 96.1 135.3 160zM8.1 192l123.1 0c-2.1 20.6-3.2 42-3.2 64s1.1 43.4 3.2 64L8.1 320C2.8 299.5 0 278.1 0 256s2.8-43.5 8.1-64zM194.7 446.6c-11.5-26-20.9-58.2-27-94.6l176.6 0c-6.1 36.4-15.5 68.6-27 94.6c-10.5 23.6-22.2 40.7-33.5 51.5C272.6 508.8 263.3 512 256 512s-16.6-3.2-27.8-13.8c-11.3-10.8-23-27.9-33.5-51.5zM135.3 352c10 63.9 29.8 117.4 55.3 151.6C112.2 482.9 48.6 426.1 18.6 352l116.7 0zm358.1 0c-30 74.1-93.6 130.9-171.9 151.6c25.5-34.2 45.2-87.7 55.3-151.6l116.7 0z"/>
+            </symbol>
+
+            <!-- Company: briefcase -->
+            <symbol id="icon-company" viewBox="0 0 512 512">
+              <path fill="currentColor" d="M184 48l144 0c4.4 0 8 3.6 8 8l0 40L176 96l0-40c0-4.4 3.6-8 8-8zm-56 8l0 40L64 96C28.7 96 0 124.7 0 160l0 96 192 0 128 0 192 0 0-96c0-35.3-28.7-64-64-64l-64 0 0-40c0-30.9-25.1-56-56-56L184 0c-30.9 0-56 25.1-56 56zM512 288l-192 0 0 32c0 17.7-14.3 32-32 32l-64 0c-17.7 0-32-14.3-32-32l0-32L0 288 0 416c0 35.3 28.7 64 64 64l384 0c35.3 0 64-28.7 64-64l0-128z"/>
+            </symbol>
+
+            <!-- Property: map/land pin -->
+            <symbol id="icon-property" viewBox="0 0 576 512">
+              <path fill="currentColor" d="M384 476.1L192 421.2l0-385.3L384 90.8l0 385.3zm32-1.2l0-386.5L543.1 37.5c15.8-6.3 32.9 5.3 32.9 22.3l0 334.8c0 9.8-6 18.6-15.1 22.3L416 474.8zM15.1 95.1L160 37.2l0 386.5L32.9 474.5C17.1 480.8 0 469.2 0 452.2L0 117.4c0-9.8 6-18.6 15.1-22.3z"/>
+            </symbol>
+
+            <!-- Building: single building -->
+            <symbol id="icon-building" viewBox="0 0 384 512">
+              <path fill="currentColor" d="M48 0C21.5 0 0 21.5 0 48L0 464c0 26.5 21.5 48 48 48l96 0 0-80c0-26.5 21.5-48 48-48s48 21.5 48 48l0 80 96 0c26.5 0 48-21.5 48-48l0-416c0-26.5-21.5-48-48-48L48 0zM64 240c0-8.8 7.2-16 16-16l32 0c8.8 0 16 7.2 16 16l0 32c0 8.8-7.2 16-16 16l-32 0c-8.8 0-16-7.2-16-16l0-32zm112-16l32 0c8.8 0 16 7.2 16 16l0 32c0 8.8-7.2 16-16 16l-32 0c-8.8 0-16-7.2-16-16l0-32c0-8.8 7.2-16 16-16zm80 16c0-8.8 7.2-16 16-16l32 0c8.8 0 16 7.2 16 16l0 32c0 8.8-7.2 16-16 16l-32 0c-8.8 0-16-7.2-16-16l0-32zM64 112c0-8.8 7.2-16 16-16l32 0c8.8 0 16 7.2 16 16l0 32c0 8.8-7.2 16-16 16l-32 0c-8.8 0-16-7.2-16-16l0-32zM176 96l32 0c8.8 0 16 7.2 16 16l0 32c0 8.8-7.2 16-16 16l-32 0c-8.8 0-16-7.2-16-16l0-32c0-8.8 7.2-16 16-16zm80 16c0-8.8 7.2-16 16-16l32 0c8.8 0 16 7.2 16 16l0 32c0 8.8-7.2 16-16 16l-32 0c-8.8 0-16-7.2-16-16l0-32z"/>
+            </symbol>
+
+            <!-- Area: grid/sections -->
+            <symbol id="icon-area" viewBox="0 0 448 512">
+              <path fill="currentColor" d="M0 72C0 49.9 17.9 32 40 32l48 0c22.1 0 40 17.9 40 40l0 48c0 22.1-17.9 40-40 40l-48 0C17.9 200 0 182.1 0 160L0 72zM0 232c0-22.1 17.9-40 40-40l48 0c22.1 0 40 17.9 40 40l0 48c0 22.1-17.9 40-40 40l-48 0c-22.1 0-40-17.9-40-40l0-48zM128 392l0 48c0 22.1-17.9 40-40 40l-48 0c-22.1 0-40-17.9-40-40l0-48c0-22.1 17.9-40 40-40l48 0c22.1 0 40 17.9 40 40zM160 72c0-22.1 17.9-40 40-40l48 0c22.1 0 40 17.9 40 40l0 48c0 22.1-17.9 40-40 40l-48 0c-22.1 0-40-17.9-40-40l0-48zM288 232l0 48c0 22.1-17.9 40-40 40l-48 0c-22.1 0-40-17.9-40-40l0-48c0-22.1 17.9-40 40-40l48 0c22.1 0 40 17.9 40 40zM160 392c0-22.1 17.9-40 40-40l48 0c22.1 0 40 17.9 40 40l0 48c0 22.1-17.9 40-40 40l-48 0c-22.1 0-40-17.9-40-40l0-48zM448 72l0 48c0 22.1-17.9 40-40 40l-48 0c-22.1 0-40-17.9-40-40l0-48c0-22.1 17.9-40 40-40l48 0c22.1 0 40 17.9 40 40zM320 232c0-22.1 17.9-40 40-40l48 0c22.1 0 40 17.9 40 40l0 48c0 22.1-17.9 40-40 40l-48 0c-22.1 0-40-17.9-40-40l0-48zM448 392l0 48c0 22.1-17.9 40-40 40l-48 0c-22.1 0-40-17.9-40-40l0-48c0-22.1 17.9-40 40-40l48 0c22.1 0 40 17.9 40 40z"/>
+            </symbol>
+
+            <!-- Group: folder -->
+            <symbol id="icon-group" viewBox="0 0 512 512">
+              <path fill="currentColor" d="M64 480H448c35.3 0 64-28.7 64-64V160c0-35.3-28.7-64-64-64H288c-10.1 0-19.6-4.7-25.6-12.8L243.2 57.6C231.1 41.5 212.1 32 192 32H64C28.7 32 0 60.7 0 96V416c0 35.3 28.7 64 64 64z"/>
+            </symbol>
+          </svg>
+
+          <header class="top-nav">
+            <Navbar />
+          </header>
+
+          <nav class="breadcrumb-nav">
+            <Breadcrumb />
+          </nav>
+
+          <aside class="sidebar" transition:persist="side-menu">
+            <Hierarchy />
+          </aside>
+
+          <main class="main-content main-area">
+            <slot />
+          </main>
+        </body>
+</html>
+
+<script>
+	import 'invokers/compatible';
+	import { Amplify } from 'aws-amplify';
+	import { getCurrentUser, signOut } from 'aws-amplify/auth';
+
+	Amplify.configure({
+		Auth: {
+			Cognito: {
+				region: 'eu-central-1',
+				userPoolId: import.meta.env.PUBLIC_USER_POOL_ID,
+				userPoolClientId: import.meta.env.PUBLIC_USER_POOL_CLIENT_ID,
+			}
+		}
+	});
+
+	function initAuth() {
+		getCurrentUser()
+			.then(() => {
+				window.dispatchEvent(new CustomEvent('user-authenticated'));
+			})
+			.catch(() => {
+				window.dispatchEvent(new CustomEvent('user-logged-out'));
+			});
+	}
+
+	function setupLogout() {
+		document.getElementById('logout-btn')?.addEventListener('click', async () => {
+			try {
+				await signOut();
+			} catch (error) {
+				console.log('Logout error:', error.message);
+			}
+			window.dispatchEvent(new CustomEvent('user-logged-out'));
+			window.location.href = '/';
+		});
+	}
+
+	import { applyTranslations } from '../lib/i18n';
+
+	initAuth();
+	setupLogout();
+	applyTranslations();
+
+	document.addEventListener('astro:page-load', () => {
+		initAuth();
+		setupLogout();
+		applyTranslations();
+	});
+</script>

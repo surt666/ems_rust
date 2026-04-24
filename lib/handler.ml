@@ -3,9 +3,72 @@ open Lambda_runtime_api_gateway
 let v2_path req = req.Api_gateway.V2.raw_path
 let v2_method req = req.Api_gateway.V2.request_context.http.method_
 
-let prefix p s =
-  String.length s >= String.length p
-  && String.sub s 0 (String.length p) = p
+let strip_prefix p s =
+  let lp = String.length p and ls = String.length s in
+  if ls >= lp && String.sub s 0 lp = p
+  then Some (String.sub s lp (ls - lp))
+  else None
+
+(* Decode application/x-www-form-urlencoded body into params list. *)
+let url_decode s =
+  let n = String.length s in
+  let buf = Buffer.create n in
+  let i = ref 0 in
+  while !i < n do
+    match s.[!i] with
+    | '+' -> Buffer.add_char buf ' '; incr i
+    | '%' when !i + 2 < n ->
+        let h = String.sub s (!i + 1) 2 in
+        (match int_of_string_opt ("0x" ^ h) with
+         | Some code -> Buffer.add_char buf (Char.chr code); i := !i + 3
+         | None -> Buffer.add_char buf '%'; incr i)
+    | c -> Buffer.add_char buf c; incr i
+  done;
+  Buffer.contents buf
+
+let parse_form body =
+  String.split_on_char '&' body
+  |> List.filter_map (fun pair ->
+    match String.index_opt pair '=' with
+    | None -> if pair = "" then None else Some (url_decode pair, "")
+    | Some i ->
+        let k = String.sub pair 0 i in
+        let v = String.sub pair (i + 1) (String.length pair - i - 1) in
+        Some (url_decode k, url_decode v))
+
+(* Build JSON command body from flat form fields like "action=create_user&data.email=a@b.c". *)
+let form_to_command_json fields =
+  let action = try List.assoc "action" fields with Not_found -> "" in
+  let data_fields =
+    List.filter_map (fun (k, v) ->
+      match strip_prefix "data." k with
+      | Some name -> Some (name, `String v)
+      | None -> None) fields
+  in
+  let json = `Assoc [
+    ("action", `String action);
+    ("data", `Assoc data_fields);
+  ] in
+  Yojson.Safe.to_string json
+
+let content_type (req : Api_gateway.V2.request) =
+  match List.assoc_opt "content-type" req.headers with
+  | Some v -> v
+  | None ->
+      (match List.assoc_opt "Content-Type" req.headers with
+       | Some v -> v | None -> "")
+
+let handle_command (req : Api_gateway.V2.request) =
+  let raw = Option.value ~default:"" req.body in
+  let ct = content_type req in
+  let body =
+    if String.length ct >= String.length "application/x-www-form-urlencoded"
+       && String.sub ct 0 (String.length "application/x-www-form-urlencoded")
+          = "application/x-www-form-urlencoded"
+    then form_to_command_json (parse_form raw)
+    else raw
+  in
+  Api_command.dispatch ~body
 
 let handler _ctx body =
   match Yojson.Safe.from_string body with
@@ -15,21 +78,19 @@ let handler _ctx body =
       let req = Api_gateway.V2.request_of_json json in
       let path = v2_path req in
       let meth = v2_method req in
+      let params = req.query_string_parameters in
       let response =
         match meth, path with
-        | "GET", p when prefix "/query/" p ->
-            let action =
-              String.sub p (String.length "/query/") (String.length p - String.length "/query/")
-            in
-            Api_query.dispatch ~action ~params:req.query_string_parameters
-        | "POST", "/command" ->
-            let inner =
-              match req.body with
-              | Some s -> s
-              | None -> ""
-            in
-            Api_command.dispatch ~body:inner
-        | _ ->
-            Api_json.error_response (Errors.Bad_request "no matching route")
+        (* JSON query routes — original + /hierarchy/ prefixed alias. *)
+        | "GET", p ->
+            (match strip_prefix "/query/" p with
+             | Some action -> Api_query.dispatch ~action ~params
+             | None ->
+                 (match strip_prefix "/hierarchy/query/" p with
+                  | Some action -> Api_html.dispatch ~action ~params
+                  | None -> Api_json.error_response (Errors.Bad_request "no matching route")))
+        | "POST", "/command"
+        | "POST", "/hierarchy/command" -> handle_command req
+        | _ -> Api_json.error_response (Errors.Bad_request "no matching route")
       in
       Ok response

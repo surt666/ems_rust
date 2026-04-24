@@ -1,0 +1,65 @@
+---
+const { dashboardId } = Astro.props;
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Analyse">
+	<div class="page-container">
+		<h1 class="page-title">Analyse</h1>
+		<div id="dashboard-container"></div>
+		<script>
+		  import { createEmbeddingContext } from 'amazon-quicksight-embedding-sdk';
+
+		  const embedQuickSight = async () => {
+		    try {
+		      const response = await fetch('https://fmhc3ts55kkxovi2ilxqo2oueq0cewoi.lambda-url.eu-central-1.on.aws?dashboardId=2a2051fa-a4c5-410b-87e1-147f93c96e30', {
+		        method: 'GET',
+		        headers: {
+		          'Accept': 'application/json'
+		        },
+		      });
+
+		      const data = await response.json();
+
+		      const embeddingContext = await createEmbeddingContext();
+
+		      const dashboard = await embeddingContext.embedDashboard({
+		        url: data.EmbedUrl,
+		        container: '#dashboard-container',
+						width: '1200px',
+				    height: '800px'
+		      }, {
+		        parameters: [
+		          {
+		            Name: 'company',
+		            Values: ['88']
+		          },
+		          {
+		            Name: 'startdate',
+		            Values: ['2025/04/01']
+		          },
+		          {
+		            Name: 'enddate',
+		            Values: ['2025/08/01']
+		          }
+		        ]
+		      });
+
+		      console.log('Dashboard embedded successfully');
+		    } catch (error) {
+		      console.error('Error embedding dashboard:', error);
+		    }
+		  };
+
+		  embedQuickSight();
+		</script>
+
+		<style>
+  #dashboard-container {
+    width: 100%;
+    max-width: 1200px;
+    height: 800px;
+    margin: 0 auto;
+  }
+</style>
+	</div>
+</Layout>

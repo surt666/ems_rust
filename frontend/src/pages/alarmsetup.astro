@@ -1,0 +1,393 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="Alarm Opsætning">
+	<div class="page-container">
+		<!-- Header -->
+		<div class="alarm-header">
+			<div>
+				<h1 class="page-title">Alarmopsætninger</h1>
+				<p class="alarm-subtitle"><span id="setup-count">59</span> alarmopsætninger (heraf <span id="setup-selected">0</span> valgt)</p>
+			</div>
+			<div class="alarm-actions">
+				<input type="search" class="form-input alarm-search" placeholder="Hurtig søgning..." _="on input
+					set val to my value.toLowerCase()
+					for row in <.setup-row/>
+						if row.textContent.toLowerCase().includes(val)
+							remove @hidden from row
+						else
+							add @hidden to row
+						end
+					end
+				" />
+				<button type="button" class="btn-primary">+ Opret alarm</button>
+				<details class="dropdown">
+					<summary class="btn-icon" aria-label="Flere handlinger">
+						<svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+							<circle cx="3" cy="8" r="1.5"/>
+							<circle cx="8" cy="8" r="1.5"/>
+							<circle cx="13" cy="8" r="1.5"/>
+						</svg>
+					</summary>
+					<div class="dropdown-menu">
+						<button type="button" class="dropdown-item">Eksportér til CSV</button>
+						<button type="button" class="dropdown-item">Slet valgte</button>
+					</div>
+				</details>
+				<button type="button" class="btn-secondary" commandfor="filter-panel" command="--toggle">Filtre og visning</button>
+			</div>
+		</div>
+
+		<!-- Filter panel -->
+		<div id="filter-panel" hidden class="card alarm-filters">
+			<h3 class="section-title">Filtre</h3>
+			<div class="alarm-filter-grid">
+				<div class="form-field">
+					<label class="form-label">Energiform</label>
+					<select class="form-select">
+						<option value="">Alle</option>
+						<option>El</option>
+						<option>Fjernvarme</option>
+						<option>Vand</option>
+						<option>Gas</option>
+					</select>
+				</div>
+				<div class="form-field">
+					<label class="form-label">Type</label>
+					<select class="form-select">
+						<option value="">Alle</option>
+						<option>Forbrugsalarm (daglig)</option>
+						<option>Forbrugsalarm (time)</option>
+						<option>Budgetalarm (månedlig)</option>
+						<option>Afkølingsalarm (månedlig)</option>
+						<option>Nattealarm</option>
+					</select>
+				</div>
+				<div class="form-field">
+					<label class="form-label">Bygning</label>
+					<select class="form-select">
+						<option value="">Alle</option>
+						<option>Administrationsbygning</option>
+						<option>Byg. B</option>
+					</select>
+				</div>
+				<div class="form-field">
+					<label class="form-label">Alarmmodtager</label>
+					<select class="form-select">
+						<option value="">Alle</option>
+					</select>
+				</div>
+			</div>
+		</div>
+
+		<!-- Pagination -->
+		<div class="pagination">
+			<span class="pagination-info">Side 1 af 2</span>
+			<div class="pagination-controls">
+				<button type="button" class="btn-icon btn-icon--sm" disabled aria-label="Første side">&laquo;</button>
+				<button type="button" class="btn-icon btn-icon--sm" disabled aria-label="Forrige side">&lsaquo;</button>
+				<button type="button" class="btn-icon btn-icon--sm" aria-label="Næste side">&rsaquo;</button>
+				<button type="button" class="btn-icon btn-icon--sm" aria-label="Sidste side">&raquo;</button>
+			</div>
+		</div>
+
+		<!-- Setup table -->
+		<div class="table-panel">
+			<table class="data-table">
+				<thead>
+					<tr>
+						<th style="width: 36px;">
+							<input type="checkbox" class="form-checkbox" _="on change
+								for cb in <.setup-select/>
+									set cb.checked to my checked
+								end
+							" />
+						</th>
+						<th>Målertype</th>
+						<th>Måler</th>
+						<th>Navn</th>
+						<th>Type</th>
+						<th>Niveau</th>
+						<th>Alarmmodtagere</th>
+						<th style="width: 40px;"></th>
+					</tr>
+				</thead>
+				<tbody>
+					<!-- Building group: Administrationsbygning -->
+					<tr class="alarm-date-group" _="on click
+						set rows to my parentElement
+						set me.dataset.open to (me.dataset.open is 'true' then 'false' else 'true')
+						set sibling to my nextElementSibling
+						repeat while sibling is not null and sibling does not match .alarm-date-group
+							if me.dataset.open is 'false'
+								add @hidden to sibling
+							else
+								remove @hidden from sibling
+							end
+							set sibling to sibling.nextElementSibling
+						end
+						toggle .collapsed on me
+					">
+						<td colspan="8">
+							<svg class="alarm-chevron" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+								<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+							</svg>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color: var(--text-muted); vertical-align: middle; margin-right: 4px;">
+								<path d="M3 21V7c0-1.1.9-2 2-2h6l2 2h6c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2z"/>
+							</svg>
+							Administrationsbygning
+						</td>
+					</tr>
+
+					<tr class="setup-row">
+						<td><input type="checkbox" class="setup-select form-checkbox" /></td>
+						<td><span class="energy-badge energy-el">El</span></td>
+						<td>Afregning El Administration (593381)</td>
+						<td class="alarm-name">Elektricitet alarm døgnforbrug, Afregning El Administration</td>
+						<td>Forbrugsalarm (daglig)</td>
+						<td><span class="alarm-severity alarm-severity--medium"></span></td>
+						<td>Janus Hendrichsen</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Rediger</button>
+									<button type="button" class="dropdown-item">Slet</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="setup-row">
+						<td><input type="checkbox" class="setup-select form-checkbox" /></td>
+						<td><span class="energy-badge energy-el">El</span></td>
+						<td>Afregning El Administration (593381)</td>
+						<td class="alarm-name">Døgnalarm Elforbrug administration</td>
+						<td>Forbrugsalarm (daglig)</td>
+						<td><span class="alarm-severity alarm-severity--medium"></span></td>
+						<td>Janus Hendrichsen</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Rediger</button>
+									<button type="button" class="dropdown-item">Slet</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="setup-row">
+						<td><input type="checkbox" class="setup-select form-checkbox" /></td>
+						<td><span class="energy-badge energy-el">El</span></td>
+						<td>Afregning El Administration (593381)</td>
+						<td class="alarm-name">Budgetalarm, Afregning El Administration</td>
+						<td>Budgetalarm (månedlig)</td>
+						<td><span class="alarm-severity alarm-severity--high"></span></td>
+						<td>Janus Hendrichsen</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Rediger</button>
+									<button type="button" class="dropdown-item">Slet</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="setup-row">
+						<td><input type="checkbox" class="setup-select form-checkbox" /></td>
+						<td><span class="energy-badge energy-fjernvarme">Fjernvarme</span></td>
+						<td>Fjernvarme afregning - Administration (593380)</td>
+						<td class="alarm-name">Afkøling administration månedlig alarm</td>
+						<td>Afkølingsalarm (månedlig)</td>
+						<td><span class="alarm-severity alarm-severity--critical"></span></td>
+						<td>Janus Hendrichsen</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Rediger</button>
+									<button type="button" class="dropdown-item">Slet</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="setup-row">
+						<td><input type="checkbox" class="setup-select form-checkbox" /></td>
+						<td><span class="energy-badge energy-fjernvarme">Fjernvarme</span></td>
+						<td>Fjernvarme afregning - Administration (593380)</td>
+						<td class="alarm-name">Budgetalarm, Fjernvarme afregning - Administration</td>
+						<td>Budgetalarm (månedlig)</td>
+						<td><span class="alarm-severity alarm-severity--high"></span></td>
+						<td>Janus Hendrichsen</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Rediger</button>
+									<button type="button" class="dropdown-item">Slet</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="setup-row">
+						<td><input type="checkbox" class="setup-select form-checkbox" /></td>
+						<td><span class="energy-badge energy-vand">Vand</span></td>
+						<td>Afregningsmåler vand - Administration (593384)</td>
+						<td class="alarm-name">Budgetalarm, Afregningsmåler vand - Administration</td>
+						<td>Budgetalarm (månedlig)</td>
+						<td><span class="alarm-severity alarm-severity--medium"></span></td>
+						<td>Janus Hendrichsen</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Rediger</button>
+									<button type="button" class="dropdown-item">Slet</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+
+					<!-- Building group: Byg. B -->
+					<tr class="alarm-date-group" _="on click
+						set me.dataset.open to (me.dataset.open is 'true' then 'false' else 'true')
+						set sibling to my nextElementSibling
+						repeat while sibling is not null and sibling does not match .alarm-date-group
+							if me.dataset.open is 'false'
+								add @hidden to sibling
+							else
+								remove @hidden from sibling
+							end
+							set sibling to sibling.nextElementSibling
+						end
+						toggle .collapsed on me
+					">
+						<td colspan="8">
+							<svg class="alarm-chevron" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+								<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+							</svg>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color: var(--text-muted); vertical-align: middle; margin-right: 4px;">
+								<path d="M3 21V7c0-1.1.9-2 2-2h6l2 2h6c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2z"/>
+							</svg>
+							Byg. B
+						</td>
+					</tr>
+
+					<tr class="setup-row">
+						<td><input type="checkbox" class="setup-select form-checkbox" /></td>
+						<td><span class="energy-badge energy-el">El</span></td>
+						<td>Afregningsmåler El Byg. B (593386)</td>
+						<td class="alarm-name">Elektricitet alarm døgnforbrug, Afregningsmåler El Byg. B</td>
+						<td>Forbrugsalarm (daglig)</td>
+						<td><span class="alarm-severity alarm-severity--medium"></span></td>
+						<td>Janus Hendrichsen</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Rediger</button>
+									<button type="button" class="dropdown-item">Slet</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="setup-row">
+						<td><input type="checkbox" class="setup-select form-checkbox" /></td>
+						<td><span class="energy-badge energy-el">El</span></td>
+						<td>Afregningsmåler El Byg. B (593386)</td>
+						<td class="alarm-name">Budgetalarm, Afregningsmåler El Byg. B</td>
+						<td>Budgetalarm (månedlig)</td>
+						<td><span class="alarm-severity alarm-severity--medium"></span></td>
+						<td>Janus Hendrichsen</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Rediger</button>
+									<button type="button" class="dropdown-item">Slet</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="setup-row">
+						<td><input type="checkbox" class="setup-select form-checkbox" /></td>
+						<td><span class="energy-badge energy-fjernvarme">Fjernvarme</span></td>
+						<td>Fjernvarme afregning - Byg. B (593428)</td>
+						<td class="alarm-name">Afkøling Bygning B</td>
+						<td>Afkølingsalarm (månedlig)</td>
+						<td><span class="alarm-severity alarm-severity--critical"></span></td>
+						<td>Janus Hendrichsen</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Rediger</button>
+									<button type="button" class="dropdown-item">Slet</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="setup-row">
+						<td><input type="checkbox" class="setup-select form-checkbox" /></td>
+						<td><span class="energy-badge energy-fjernvarme">Fjernvarme</span></td>
+						<td>Fjernvarme afregning - Byg. B (593428)</td>
+						<td class="alarm-name">Budgetalarm, Fjernvarme afregning - Byg. B</td>
+						<td>Budgetalarm (månedlig)</td>
+						<td><span class="alarm-severity alarm-severity--high"></span></td>
+						<td>Janus Hendrichsen</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Rediger</button>
+									<button type="button" class="dropdown-item">Slet</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="setup-row">
+						<td><input type="checkbox" class="setup-select form-checkbox" /></td>
+						<td><span class="energy-badge energy-vand">Vand</span></td>
+						<td>Afregningsmåler vand - Byg. B (593387)</td>
+						<td class="alarm-name">Nattealarm vandforbrug, Afregningsmåler vand - Byg. B</td>
+						<td>Forbrugsalarm (time)</td>
+						<td><span class="alarm-severity alarm-severity--medium"></span></td>
+						<td>Janus Hendrichsen</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Rediger</button>
+									<button type="button" class="dropdown-item">Slet</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+</Layout>

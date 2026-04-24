@@ -1,0 +1,70 @@
+---
+interface Props {
+	title: string;
+}
+
+const { title } = Astro.props;
+
+import "../styles/global.css";
+---
+
+<!doctype html>
+<html lang="da">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="description" content="EMS Login" />
+		<meta name="viewport" content="width=device-width" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<meta name="generator" content={Astro.generator} />
+		<title>{title}</title>
+	</head>
+	<body>
+		<div class="login-page">
+			<div class="login-brand">
+				<div class="login-brand-bg"></div>
+				<div class="login-brand-content">
+					<div class="login-brand-logo">EMS</div>
+					<div class="login-brand-tagline" data-i18n="login.brand_tagline">Energy Management System</div>
+					<p class="login-brand-description" data-i18n="login.brand_description">
+						Overvåg og optimer dit energiforbrug på tværs af bygninger,
+						ejendomme og virksomheder med realtidsdata og intelligent analyse.
+					</p>
+					<div class="login-brand-stats">
+						<div>
+							<div class="login-stat-value">9,400+</div>
+							<div class="login-stat-label" data-i18n="login.stat_meters">Målere</div>
+						</div>
+						<div>
+							<div class="login-stat-value">1,300+</div>
+							<div class="login-stat-label" data-i18n="login.stat_buildings">Bygninger</div>
+						</div>
+						<div>
+							<div class="login-stat-value">600+</div>
+							<div class="login-stat-label" data-i18n="login.stat_users">Brugere</div>
+						</div>
+					</div>
+				</div>
+			</div>
+			<div class="login-form-panel">
+				<div class="login-form-container">
+					<slot />
+					<div class="login-footer">Energy Management System</div>
+				</div>
+			</div>
+		</div>
+	</body>
+</html>
+
+<script>
+	import { Amplify } from 'aws-amplify';
+
+	Amplify.configure({
+		Auth: {
+			Cognito: {
+				region: 'eu-central-1',
+				userPoolId: import.meta.env.PUBLIC_USER_POOL_ID,
+				userPoolClientId: import.meta.env.PUBLIC_USER_POOL_CLIENT_ID,
+			}
+		}
+	});
+</script>

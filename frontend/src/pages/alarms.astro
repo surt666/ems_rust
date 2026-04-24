@@ -1,0 +1,303 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="Alarmer">
+	<div class="page-container">
+		<!-- Header -->
+		<div class="alarm-header">
+			<div>
+				<h1 class="page-title">Ukvitterede alarmer</h1>
+				<p class="alarm-subtitle"><span id="alarm-count">0</span> alarmer (heraf <span id="alarm-selected">0</span> valgt)</p>
+			</div>
+			<div class="alarm-actions">
+				<input type="search" class="form-input alarm-search" placeholder="Hurtig søgning..." _="on input
+					set val to my value.toLowerCase()
+					for row in <.alarm-row/>
+						if row.textContent.toLowerCase().includes(val)
+							remove @hidden from row
+						else
+							add @hidden to row
+						end
+					end
+				" />
+				<button type="button" class="btn-secondary" disabled id="btn-acknowledge"
+					_="on click
+						set checked to <.alarm-select:checked/>
+						if checked.length > 0 then
+							for cb in checked
+								set row to closest .alarm-row to cb
+								remove row
+							end
+							send recalculate to #alarm-table
+						end
+					"
+				>Kvitter alarmer</button>
+				<details class="dropdown">
+					<summary class="btn-icon" aria-label="Flere handlinger">
+						<svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+							<circle cx="3" cy="8" r="1.5"/>
+							<circle cx="8" cy="8" r="1.5"/>
+							<circle cx="13" cy="8" r="1.5"/>
+						</svg>
+					</summary>
+					<div class="dropdown-menu">
+						<button type="button" class="dropdown-item">Eksportér til CSV</button>
+						<button type="button" class="dropdown-item">Kvitter alle</button>
+					</div>
+				</details>
+				<button type="button" class="btn-secondary" commandfor="filter-panel" command="--toggle">Filtre og visning</button>
+			</div>
+		</div>
+
+		<!-- Filter panel (hidden by default) -->
+		<div id="filter-panel" hidden class="card alarm-filters">
+			<h3 class="section-title">Filtre</h3>
+			<div class="alarm-filter-grid">
+				<div class="form-field">
+					<label class="form-label">Energiform</label>
+					<select class="form-select">
+						<option value="">Alle</option>
+						<option>Vand</option>
+						<option>El</option>
+						<option>Varme</option>
+						<option>Gas</option>
+					</select>
+				</div>
+				<div class="form-field">
+					<label class="form-label">Type</label>
+					<select class="form-select">
+						<option value="">Alle</option>
+						<option>Forbrugsalarm (time)</option>
+						<option>Forbrugsalarm (dag)</option>
+						<option>Nattealarm</option>
+						<option>Budgetalarm</option>
+					</select>
+				</div>
+				<div class="form-field">
+					<label class="form-label">Bygning</label>
+					<select class="form-select">
+						<option value="">Alle</option>
+					</select>
+				</div>
+				<div class="form-field">
+					<label class="form-label">Periode</label>
+					<select class="form-select">
+						<option>Seneste 7 dage</option>
+						<option>Seneste 30 dage</option>
+						<option>Seneste 90 dage</option>
+						<option>Brugerdefineret</option>
+					</select>
+				</div>
+			</div>
+		</div>
+
+		<!-- Alarms table -->
+		<div class="table-panel" id="alarm-table"
+			_="on recalculate
+				set count to <.alarm-row:not([hidden])/>
+				put count.length into #alarm-count
+				set selected to <.alarm-select:checked/>
+				put selected.length into #alarm-selected
+				if selected.length > 0
+					remove @disabled from #btn-acknowledge
+				else
+					add @disabled to #btn-acknowledge
+				end
+			"
+		>
+			<table class="data-table">
+				<thead>
+					<tr>
+						<th style="width: 36px;">
+							<input type="checkbox" class="form-checkbox" _="on change
+								for cb in <.alarm-select/>
+									set cb.checked to my checked
+								end
+								send recalculate to #alarm-table
+							" />
+						</th>
+						<th>Bygning</th>
+						<th>Energiform</th>
+						<th>Måler</th>
+						<th>Navn</th>
+						<th>Type</th>
+						<th>Niveau</th>
+						<th>Afvigelse</th>
+						<th>Meromkostning</th>
+						<th style="width: 100px;"></th>
+					</tr>
+				</thead>
+				<tbody>
+					<!-- Date group: 24-01-2025 -->
+					<tr class="alarm-date-group" _="on click toggle @hidden on next <tr.alarm-row/> from me then toggle .collapsed on me">
+						<td colspan="10">
+							<svg class="alarm-chevron" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+								<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+							</svg>
+							24-01-2025
+						</td>
+					</tr>
+					<tr class="alarm-row">
+						<td><input type="checkbox" class="alarm-select form-checkbox" _="on change send recalculate to #alarm-table" /></td>
+						<td>
+							<span class="alarm-building">
+								<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+								Horsens
+							</span>
+						</td>
+						<td><span class="energy-badge energy-vand">Vand</span></td>
+						<td>Vandmåler</td>
+						<td class="alarm-name">Nattealarm vandforbrug, Vandm...</td>
+						<td>Forbrugsalarm (time)</td>
+						<td><span class="alarm-severity alarm-severity--high"></span></td>
+						<td class="alarm-deviation">+ 0,167 m³</td>
+						<td class="alarm-cost">10,63 kr</td>
+						<td class="alarm-row-actions">
+							<button type="button" class="btn-icon btn-icon--sm" aria-label="Detaljer">
+								<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+							</button>
+							<button type="button" class="btn-acknowledge-row">Kvitter</button>
+						</td>
+					</tr>
+
+					<!-- Date group: 23-01-2025 -->
+					<tr class="alarm-date-group" _="on click toggle @hidden on next <tr.alarm-row/> from me then toggle .collapsed on me">
+						<td colspan="10">
+							<svg class="alarm-chevron" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+								<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+							</svg>
+							23-01-2025
+						</td>
+					</tr>
+					<tr class="alarm-row">
+						<td><input type="checkbox" class="alarm-select form-checkbox" _="on change send recalculate to #alarm-table" /></td>
+						<td>
+							<span class="alarm-building">
+								<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+								Horsens
+							</span>
+						</td>
+						<td><span class="energy-badge energy-vand">Vand</span></td>
+						<td>Vandmåler</td>
+						<td class="alarm-name">Nattealarm vandforbrug, Vandm...</td>
+						<td>Forbrugsalarm (time)</td>
+						<td><span class="alarm-severity alarm-severity--high"></span></td>
+						<td class="alarm-deviation">+ 0,018 m³</td>
+						<td class="alarm-cost">9,69 kr</td>
+						<td class="alarm-row-actions">
+							<button type="button" class="btn-icon btn-icon--sm" aria-label="Detaljer">
+								<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+							</button>
+							<button type="button" class="btn-acknowledge-row">Kvitter</button>
+						</td>
+					</tr>
+
+					<!-- Date group: 22-01-2025 -->
+					<tr class="alarm-date-group" _="on click toggle @hidden on next <tr.alarm-row/> from me then toggle .collapsed on me">
+						<td colspan="10">
+							<svg class="alarm-chevron" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+								<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+							</svg>
+							22-01-2025
+						</td>
+					</tr>
+					<tr class="alarm-row">
+						<td><input type="checkbox" class="alarm-select form-checkbox" _="on change send recalculate to #alarm-table" /></td>
+						<td>
+							<span class="alarm-building">
+								<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+								Horsens
+							</span>
+						</td>
+						<td><span class="energy-badge energy-vand">Vand</span></td>
+						<td>Vandmåler</td>
+						<td class="alarm-name">Nattealarm vandforbrug, Vandm...</td>
+						<td>Forbrugsalarm (time)</td>
+						<td><span class="alarm-severity alarm-severity--medium"></span></td>
+						<td class="alarm-deviation">+ 0,028 m³</td>
+						<td class="alarm-cost">12,00 kr</td>
+						<td class="alarm-row-actions">
+							<button type="button" class="btn-icon btn-icon--sm" aria-label="Detaljer">
+								<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+							</button>
+							<button type="button" class="btn-acknowledge-row">Kvitter</button>
+						</td>
+					</tr>
+
+					<!-- Date group: 21-01-2025 -->
+					<tr class="alarm-date-group" _="on click toggle @hidden on next <tr.alarm-row/> from me then toggle .collapsed on me">
+						<td colspan="10">
+							<svg class="alarm-chevron" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+								<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+							</svg>
+							21-01-2025
+						</td>
+					</tr>
+					<tr class="alarm-row">
+						<td><input type="checkbox" class="alarm-select form-checkbox" _="on change send recalculate to #alarm-table" /></td>
+						<td>
+							<span class="alarm-building">
+								<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+								Horsens
+							</span>
+						</td>
+						<td><span class="energy-badge energy-vand">Vand</span></td>
+						<td>Vandmåler</td>
+						<td class="alarm-name">Nattealarm vandforbrug, Vandm...</td>
+						<td>Forbrugsalarm (time)</td>
+						<td><span class="alarm-severity alarm-severity--high"></span></td>
+						<td class="alarm-deviation">+ 0,028 m³</td>
+						<td class="alarm-cost">10,59 kr</td>
+						<td class="alarm-row-actions">
+							<button type="button" class="btn-icon btn-icon--sm" aria-label="Detaljer">
+								<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+							</button>
+							<button type="button" class="btn-acknowledge-row">Kvitter</button>
+						</td>
+					</tr>
+
+					<!-- Date group: 20-01-2025 -->
+					<tr class="alarm-date-group" _="on click toggle @hidden on next <tr.alarm-row/> from me then toggle .collapsed on me">
+						<td colspan="10">
+							<svg class="alarm-chevron" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+								<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+							</svg>
+							20-01-2025
+						</td>
+					</tr>
+					<tr class="alarm-row">
+						<td><input type="checkbox" class="alarm-select form-checkbox" _="on change send recalculate to #alarm-table" /></td>
+						<td>
+							<span class="alarm-building">
+								<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+								Horsens
+							</span>
+						</td>
+						<td><span class="energy-badge energy-vand">Vand</span></td>
+						<td>Vandmåler</td>
+						<td class="alarm-name">Nattealarm vandforbrug, Vandm...</td>
+						<td>Forbrugsalarm (time)</td>
+						<td><span class="alarm-severity alarm-severity--low"></span></td>
+						<td class="alarm-deviation">+ 0,009 m³</td>
+						<td class="alarm-cost">10,59 kr</td>
+						<td class="alarm-row-actions">
+							<button type="button" class="btn-icon btn-icon--sm" aria-label="Detaljer">
+								<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+							</button>
+							<button type="button" class="btn-acknowledge-row">Kvitter</button>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+</Layout>
+
+<script>
+	document.addEventListener('astro:page-load', () => {
+		const count = document.querySelectorAll('.alarm-row:not([hidden])').length;
+		const el = document.getElementById('alarm-count');
+		if (el) el.textContent = String(count);
+	});
+</script>

@@ -1,0 +1,98 @@
+---
+import Layout from '../layouts/Layout.astro';
+import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
+---
+
+<Layout title="Resource Insights - Overblik">
+	<div class="page-container">
+		<h1 class="page-title">Resource Insights - Overblik</h1>
+		<p class="page-description">Overblik over ressourceindsigter og energiforbrug.</p>
+
+		<div class="card">
+			<div class="controls-grid">
+				<div class="form-field">
+					<label for="fromDate" class="form-label">Fra dato:</label>
+					<input
+						type="datetime-local"
+						id="fromDate"
+						class="form-input"
+						value="2025-09-24T00:00"
+					/>
+				</div>
+
+				<div class="form-field">
+					<label for="toDate" class="form-label">Til dato:</label>
+					<input
+						type="datetime-local"
+						id="toDate"
+						class="form-input"
+						value="2025-10-03T00:00"
+					/>
+				</div>
+
+				<div class="form-field">
+					<label for="resolution" class="form-label">Opløsning:</label>
+					<select id="resolution" class="form-select">
+						<option value="hourly" selected>Time</option>
+						<option value="daily">Dag</option>
+					</select>
+				</div>
+
+				<div class="form-field" style="justify-content: end;">
+					<button id="updateChart" class="btn-primary">
+						Opdater Graf
+					</button>
+				</div>
+			</div>
+
+			<div id="selectedNode" style="margin: 1rem 0; font-size: var(--text-sm); color: var(--text-muted);">
+				<span>Valgt node: </span>
+				<span id="nodeIdDisplay" style="font-family: monospace; font-weight: 600;">Ingen valgt</span>
+			</div>
+
+			<div id="chartContainer">
+				<AggregationChartWrapper client:only="react" />
+			</div>
+		</div>
+	</div>
+</Layout>
+
+<script>
+	function toUTC(dateTimeLocal: string): string {
+		const dt = new Date(dateTimeLocal);
+		return dt.toISOString();
+	}
+
+	function updateChart() {
+		const fromDate = (document.getElementById('fromDate') as HTMLInputElement).value;
+		const toDate = (document.getElementById('toDate') as HTMLInputElement).value;
+		const resolution = (document.getElementById('resolution') as HTMLSelectElement).value;
+		const levelId = sessionStorage.getItem('selectedNodeId') || '';
+
+		const event = new CustomEvent('updateChart', {
+			detail: {
+				startDate: toUTC(fromDate),
+				endDate: toUTC(toDate),
+				resolution: resolution,
+				levelId: levelId,
+			},
+		});
+		window.dispatchEvent(event);
+	}
+
+	document.addEventListener('DOMContentLoaded', () => {
+		const updateButton = document.getElementById('updateChart');
+		if (updateButton) {
+			updateButton.addEventListener('click', updateChart);
+		}
+	});
+</script>
+
+<style>
+	.controls-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+		gap: 1rem;
+		align-items: end;
+	}
+</style>

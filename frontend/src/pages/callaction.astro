@@ -1,0 +1,274 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="Call to Action">
+	<div class="page-container">
+		<!-- Summary cards -->
+		<div class="cta-summary">
+			<div class="cta-card">
+				<span class="cta-card-label">Total est. meromk. pr. år</span>
+				<span class="cta-card-value">794.509 kr</span>
+			</div>
+			<div class="cta-card">
+				<span class="cta-card-label">Total meromk. dd.</span>
+				<span class="cta-card-value">298.934 kr</span>
+			</div>
+			<div class="cta-card">
+				<span class="cta-card-label">Ukvitterede alarmer</span>
+				<div class="cta-alarm-counts">
+					<span class="cta-alarm-count cta-alarm-count--el">
+						<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="6"/></svg>
+						220
+					</span>
+					<span class="cta-alarm-count cta-alarm-count--vand">
+						<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="6"/></svg>
+						229
+					</span>
+					<span class="cta-alarm-count cta-alarm-count--varme">
+						<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="6"/></svg>
+						7
+					</span>
+				</div>
+			</div>
+		</div>
+
+		<!-- Actions table -->
+		<div class="table-panel">
+			<table class="data-table">
+				<thead>
+					<tr>
+						<th style="width: 30px;"></th>
+						<th>Bygning / Målertype / Måler / Alarmtype / Alarm</th>
+						<th>Ukvit. alarmer</th>
+						<th>Seneste alarm</th>
+						<th>Meromk. dd.</th>
+						<th>Est. meromk. pr. år</th>
+						<th style="width: 40px;"></th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr class="cta-row" _="on click
+						set sibling to my nextElementSibling
+						if sibling is not null and sibling matches .cta-detail
+							toggle @hidden on sibling
+							toggle .cta-row-expanded on me
+						end
+					">
+						<td>
+							<svg class="cta-chevron" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+								<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+							</svg>
+						</td>
+						<td>
+							<span class="cta-building">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color: var(--text-muted);">
+									<path d="M3 21V7c0-1.1.9-2 2-2h6l2 2h6c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2z"/>
+								</svg>
+								Århus C (målere: 2)
+							</span>
+						</td>
+						<td class="cta-number">105</td>
+						<td>22.11.2024</td>
+						<td class="cta-number">157.591,43 kr</td>
+						<td class="cta-number cta-number--bold">496.573,87 kr</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Vis detaljer</button>
+									<button type="button" class="dropdown-item">Kvitter alle</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="cta-detail" hidden>
+						<td colspan="7">
+							<div class="cta-detail-content">
+								<p style="color: var(--text-muted); font-size: var(--text-sm);">Detaljeret oversigt over alarmer for Århus C indlæses her...</p>
+							</div>
+						</td>
+					</tr>
+
+					<tr class="cta-row" _="on click
+						set sibling to my nextElementSibling
+						if sibling is not null and sibling matches .cta-detail
+							toggle @hidden on sibling
+							toggle .cta-row-expanded on me
+						end
+					">
+						<td>
+							<svg class="cta-chevron" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+								<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+							</svg>
+						</td>
+						<td>
+							<span class="cta-building">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color: var(--text-muted);">
+									<path d="M3 21V7c0-1.1.9-2 2-2h6l2 2h6c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2z"/>
+								</svg>
+								Frederiksberg (målere: 1)
+							</span>
+						</td>
+						<td class="cta-number">147</td>
+						<td>23.1.2025</td>
+						<td class="cta-number">101.321,12 kr</td>
+						<td class="cta-number cta-number--bold">248.392,12 kr</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Vis detaljer</button>
+									<button type="button" class="dropdown-item">Kvitter alle</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="cta-detail" hidden>
+						<td colspan="7">
+							<div class="cta-detail-content">
+								<p style="color: var(--text-muted); font-size: var(--text-sm);">Detaljeret oversigt over alarmer for Frederiksberg indlæses her...</p>
+							</div>
+						</td>
+					</tr>
+
+					<tr class="cta-row" _="on click
+						set sibling to my nextElementSibling
+						if sibling is not null and sibling matches .cta-detail
+							toggle @hidden on sibling
+							toggle .cta-row-expanded on me
+						end
+					">
+						<td>
+							<svg class="cta-chevron" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+								<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+							</svg>
+						</td>
+						<td>
+							<span class="cta-building">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color: var(--text-muted);">
+									<path d="M3 21V7c0-1.1.9-2 2-2h6l2 2h6c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2z"/>
+								</svg>
+								Odense afdeling (målere: 1)
+							</span>
+						</td>
+						<td class="cta-number">7</td>
+						<td>18.4.2024</td>
+						<td class="cta-number">27.737,49 kr</td>
+						<td class="cta-number cta-number--bold">32.038,55 kr</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Vis detaljer</button>
+									<button type="button" class="dropdown-item">Kvitter alle</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="cta-detail" hidden>
+						<td colspan="7">
+							<div class="cta-detail-content">
+								<p style="color: var(--text-muted); font-size: var(--text-sm);">Detaljeret oversigt over alarmer for Odense afdeling indlæses her...</p>
+							</div>
+						</td>
+					</tr>
+
+					<tr class="cta-row" _="on click
+						set sibling to my nextElementSibling
+						if sibling is not null and sibling matches .cta-detail
+							toggle @hidden on sibling
+							toggle .cta-row-expanded on me
+						end
+					">
+						<td>
+							<svg class="cta-chevron" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+								<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+							</svg>
+						</td>
+						<td>
+							<span class="cta-building">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color: var(--text-muted);">
+									<path d="M3 21V7c0-1.1.9-2 2-2h6l2 2h6c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2z"/>
+								</svg>
+								Byg. B (målere: 3)
+							</span>
+						</td>
+						<td class="cta-number">11</td>
+						<td>1.12.2024</td>
+						<td class="cta-number">6.380,72 kr</td>
+						<td class="cta-number cta-number--bold">7.337,70 kr</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Vis detaljer</button>
+									<button type="button" class="dropdown-item">Kvitter alle</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="cta-detail" hidden>
+						<td colspan="7">
+							<div class="cta-detail-content">
+								<p style="color: var(--text-muted); font-size: var(--text-sm);">Detaljeret oversigt over alarmer for Byg. B indlæses her...</p>
+							</div>
+						</td>
+					</tr>
+
+					<tr class="cta-row" _="on click
+						set sibling to my nextElementSibling
+						if sibling is not null and sibling matches .cta-detail
+							toggle @hidden on sibling
+							toggle .cta-row-expanded on me
+						end
+					">
+						<td>
+							<svg class="cta-chevron" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+								<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+							</svg>
+						</td>
+						<td>
+							<span class="cta-building">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color: var(--text-muted);">
+									<path d="M3 21V7c0-1.1.9-2 2-2h6l2 2h6c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2z"/>
+								</svg>
+								Horsens (målere: 1)
+							</span>
+						</td>
+						<td class="cta-number">132</td>
+						<td>24.1.2025</td>
+						<td class="cta-number">2.599,90 kr</td>
+						<td class="cta-number cta-number--bold">6.544,57 kr</td>
+						<td>
+							<details class="dropdown">
+								<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</summary>
+								<div class="dropdown-menu">
+									<button type="button" class="dropdown-item">Vis detaljer</button>
+									<button type="button" class="dropdown-item">Kvitter alle</button>
+								</div>
+							</details>
+						</td>
+					</tr>
+					<tr class="cta-detail" hidden>
+						<td colspan="7">
+							<div class="cta-detail-content">
+								<p style="color: var(--text-muted); font-size: var(--text-sm);">Detaljeret oversigt over alarmer for Horsens indlæses her...</p>
+							</div>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+</Layout>

@@ -1,0 +1,362 @@
+---
+import Layout from '../layouts/Layout.astro';
+import StandbyChartWrapper from '../components/StandbyChartWrapper.tsx';
+---
+
+<Layout title="Standbyanalyse">
+	<div class="page-container">
+
+		<!-- ===== LIST VIEW ===== -->
+		<div id="standby-list-view">
+			<div class="standby-header">
+				<h1 class="page-title" data-i18n="nav.standby_analysis">Standbyanalyse</h1>
+			</div>
+
+			<!-- Filters -->
+			<details class="standby-filters" open>
+				<summary class="standby-filters-toggle">
+					<svg class="standby-chevron-icon" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+						<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+					</svg>
+					<span data-i18n="common.filters">Filtre</span>
+				</summary>
+				<div class="standby-filter-content">
+					<div class="standby-filter-row">
+						<div class="form-field">
+							<label class="form-label" data-i18n="standby.period">Periode</label>
+							<div class="standby-date-range">
+								<input type="text" class="form-input" value="30-12-2024 - 26-01-2025" readonly />
+								<button type="button" class="btn-icon btn-icon--sm" aria-label="Vælg dato">
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+								</button>
+							</div>
+						</div>
+						<div class="standby-view-toggle">
+							<label class="form-label" data-i18n="standby.choose_view">Vælg visning</label>
+							<div class="toggle-group">
+								<button type="button" class="toggle-btn active" data-view="cost" _="on click add .active to me remove .active from .toggle-btn in my parentElement then add .active to me">Omkostning</button>
+								<button type="button" class="toggle-btn" data-view="energy" _="on click remove .active from .toggle-btn in my parentElement then add .active to me">Energi</button>
+								<button type="button" class="toggle-btn" data-view="co2" _="on click remove .active from .toggle-btn in my parentElement then add .active to me">CO₂</button>
+							</div>
+						</div>
+					</div>
+					<div class="standby-filter-row">
+						<div class="form-field">
+							<label class="form-label" data-i18n="standby.building_usage">Bygningsanvendelse</label>
+							<div class="standby-multiselect">
+								<span class="multiselect-text">Bygning til detailhandel (8), Stuehus til landbrugseje... </span>
+								<span class="multiselect-badge">+ 1 bygningsanvendelser</span>
+							</div>
+						</div>
+						<div class="standby-filter-actions-row">
+							<span class="standby-deselect-link" data-i18n="standby.deselect_all">Fravælg alle</span>
+							<div class="form-field">
+								<label class="form-label" data-i18n="standby.building_classes">Bygningsklasser</label>
+								<div class="standby-multiselect">
+									<span class="multiselect-text">0 (1), A2015 (1), A2010 (1),</span>
+									<span class="multiselect-badge">+ 4 bygningsklasser valgt</span>
+								</div>
+							</div>
+						</div>
+						<div class="standby-filter-actions-row">
+							<span class="standby-deselect-link" data-i18n="standby.deselect_all">Fravælg alle</span>
+							<div class="form-field">
+								<label class="form-label" data-i18n="common.building">Bygninger</label>
+								<div class="standby-multiselect">
+									<span class="multiselect-text">Esbjerg, Farum, Frederiksberg, Byg. B,</span>
+									<span class="multiselect-badge">+ 10 bygninger valgt</span>
+								</div>
+							</div>
+						</div>
+					</div>
+					<div class="standby-filter-row" style="justify-content: flex-end; gap: 8px;">
+						<button type="button" class="btn-secondary" data-i18n="standby.reset_filters">Nulstil filtre</button>
+					</div>
+				</div>
+			</details>
+
+			<!-- Energy type tabs -->
+			<div class="standby-energy-tabs">
+				<button type="button" class="energy-tab active" data-energy="el"
+					_="on click remove .active from .energy-tab then add .active to me">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+					EL
+				</button>
+				<button type="button" class="energy-tab" data-energy="varme"
+					_="on click remove .active from .energy-tab then add .active to me">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2c-5.33 4-8 7.33-8 10a8 8 0 0016 0c0-2.67-2.67-6-8-10z"/></svg>
+					Varme
+				</button>
+				<button type="button" class="energy-tab" data-energy="vand"
+					_="on click remove .active from .energy-tab then add .active to me">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2c-5.33 4-8 7.33-8 10a8 8 0 0016 0c0-2.67-2.67-6-8-10z"/></svg>
+					Vand
+				</button>
+			</div>
+
+			<!-- Export -->
+			<div class="standby-export-row">
+				<button type="button" class="btn-secondary">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+					<span data-i18n="standby.export">Eksporter</span>
+				</button>
+			</div>
+
+			<!-- Buildings table -->
+			<div class="table-panel">
+				<table class="data-table standby-table">
+					<thead>
+						<tr>
+							<th class="sortable" _="on click toggle .sort-desc on me" data-i18n="common.building">Bygning</th>
+							<th class="sortable sort-desc" _="on click toggle .sort-desc on me">
+								<span class="sort-icon">↕</span> Standby
+							</th>
+							<th class="sortable" _="on click toggle .sort-desc on me" data-i18n="standby.operation">Drift</th>
+							<th class="sortable" _="on click toggle .sort-desc on me">Total</th>
+							<th class="sortable" _="on click toggle .sort-desc on me" data-i18n="standby.standby_per_hour">Standby pr. time</th>
+							<th class="sortable" _="on click toggle .sort-desc on me" data-i18n="standby.operation_per_hour">Drift pr. time</th>
+							<th class="sortable" _="on click toggle .sort-desc on me" data-i18n="standby.standby_share">Standby andel</th>
+							<th class="sortable" _="on click toggle .sort-desc on me" data-i18n="standby.standby_share_weighted">Standby andel vægtet</th>
+							<th></th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td>Helsingør</td>
+							<td>50.225 kr</td>
+							<td>22.596 kr</td>
+							<td>72.822 kr</td>
+							<td>98 kr/time</td>
+							<td>141 kr/time</td>
+							<td>69 %</td>
+							<td>69 %</td>
+							<td>
+								<button type="button" class="btn-analyze" _="on click add .view-hidden to #standby-list-view remove .view-hidden from #standby-detail-view then js setTimeout(() => window.dispatchEvent(new Event('resize')), 100) end set #detail-building.textContent to 'Helsingør'">Analyser</button>
+								<button type="button" class="btn-icon btn-icon--sm" aria-label="Mere">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</button>
+							</td>
+						</tr>
+						<tr>
+							<td>Frederiksberg</td>
+							<td>47.539 kr</td>
+							<td>25.283 kr</td>
+							<td>72.822 kr</td>
+							<td>98 kr/time</td>
+							<td>136 kr/time</td>
+							<td>65 %</td>
+							<td>72 %</td>
+							<td>
+								<button type="button" class="btn-analyze" _="on click add .view-hidden to #standby-list-view remove .view-hidden from #standby-detail-view then js setTimeout(() => window.dispatchEvent(new Event('resize')), 100) end set #detail-building.textContent to 'Frederiksberg'">Analyser</button>
+								<button type="button" class="btn-icon btn-icon--sm" aria-label="Mere">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</button>
+							</td>
+						</tr>
+						<tr>
+							<td>Århus C</td>
+							<td>28.446 kr</td>
+							<td>44.345 kr</td>
+							<td>72.791 kr</td>
+							<td>58 kr/time</td>
+							<td>249 kr/time</td>
+							<td>39 %</td>
+							<td>23 %</td>
+							<td>
+								<button type="button" class="btn-analyze" _="on click add .view-hidden to #standby-list-view remove .view-hidden from #standby-detail-view then js setTimeout(() => window.dispatchEvent(new Event('resize')), 100) end set #detail-building.textContent to 'Århus C'">Analyser</button>
+								<button type="button" class="btn-icon btn-icon--sm" aria-label="Mere">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</button>
+							</td>
+						</tr>
+						<tr>
+							<td>Odense afdeling</td>
+							<td>11.002 kr</td>
+							<td>13.442 kr</td>
+							<td>24.443 kr</td>
+							<td>22 kr/time</td>
+							<td>74 kr/time</td>
+							<td>45 %</td>
+							<td>30 %</td>
+							<td>
+								<button type="button" class="btn-analyze" _="on click add .view-hidden to #standby-list-view remove .view-hidden from #standby-detail-view then js setTimeout(() => window.dispatchEvent(new Event('resize')), 100) end set #detail-building.textContent to 'Odense afdeling'">Analyser</button>
+								<button type="button" class="btn-icon btn-icon--sm" aria-label="Mere">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</button>
+							</td>
+						</tr>
+						<tr>
+							<td>Slagelse 2</td>
+							<td>4.521 kr</td>
+							<td>3.455 kr</td>
+							<td>7.975 kr</td>
+							<td>9 kr/time</td>
+							<td>20 kr/time</td>
+							<td>57 %</td>
+							<td>45 %</td>
+							<td>
+								<button type="button" class="btn-analyze" _="on click add .view-hidden to #standby-list-view remove .view-hidden from #standby-detail-view then js setTimeout(() => window.dispatchEvent(new Event('resize')), 100) end set #detail-building.textContent to 'Slagelse 2'">Analyser</button>
+								<button type="button" class="btn-icon btn-icon--sm" aria-label="Mere">
+									<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+								</button>
+							</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+		</div>
+
+		<!-- ===== DETAIL VIEW ===== -->
+		<div id="standby-detail-view" class="view-hidden">
+			<div class="standby-header">
+				<button type="button" class="btn-back" _="on click add .view-hidden to #standby-detail-view remove .view-hidden from #standby-list-view">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+					<span data-i18n="standby.back_to_list">Tilbage til liste</span>
+				</button>
+				<h1 class="page-title"><span data-i18n="nav.standby_analysis">Standbyanalyse</span> — <span id="detail-building">Århus C</span></h1>
+			</div>
+
+			<!-- Advanced controls -->
+			<details class="standby-filters" open>
+				<summary class="standby-filters-toggle">
+					<svg class="standby-chevron-icon" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+						<path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+					</svg>
+					<span data-i18n="standby.advanced">AVANCERET</span>
+				</summary>
+				<div class="standby-filter-content">
+					<div class="standby-detail-controls">
+						<div class="form-field">
+							<label class="form-label" data-i18n="standby.period">Periode</label>
+							<div class="standby-date-range">
+								<button type="button" class="btn-icon btn-icon--sm">&laquo;</button>
+								<input type="text" id="detail-period" class="form-input" value="30-12-2024 - 13-01-2025" readonly />
+								<button type="button" class="btn-icon btn-icon--sm">
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+								</button>
+								<button type="button" class="btn-icon btn-icon--sm">&raquo;</button>
+							</div>
+						</div>
+						<div class="form-field">
+							<label class="form-label" data-i18n="standby.resolution">Opløsning</label>
+							<div class="toggle-group">
+								<button type="button" class="toggle-btn resolution-btn" _="on click remove .active from .resolution-btn then add .active to me">30 min</button>
+								<button type="button" class="toggle-btn resolution-btn" _="on click remove .active from .resolution-btn then add .active to me">Time</button>
+								<button type="button" class="toggle-btn resolution-btn active" _="on click remove .active from .resolution-btn then add .active to me">Dag</button>
+								<button type="button" class="toggle-btn resolution-btn" _="on click remove .active from .resolution-btn then add .active to me">Uge</button>
+								<button type="button" class="toggle-btn resolution-btn" disabled>Måned</button>
+								<button type="button" class="toggle-btn resolution-btn" disabled>År</button>
+							</div>
+						</div>
+						<div class="form-field">
+							<label class="form-label" data-i18n="standby.choose_view">Vælg visning</label>
+							<div class="toggle-group">
+								<button type="button" class="toggle-btn detail-view-btn" _="on click remove .active from .detail-view-btn then add .active to me">Omkostning</button>
+								<button type="button" class="toggle-btn detail-view-btn active" _="on click remove .active from .detail-view-btn then add .active to me">Energi</button>
+								<button type="button" class="toggle-btn detail-view-btn" _="on click remove .active from .detail-view-btn then add .active to me">CO₂</button>
+							</div>
+						</div>
+						<div class="form-field">
+							<label class="form-label" data-i18n="standby.choose_view">Vælg visning</label>
+							<select class="form-select">
+								<option>Total,</option>
+								<option>Standby</option>
+								<option data-i18n="standby.operation">Drift</option>
+							</select>
+						</div>
+					</div>
+					<div class="standby-detail-controls">
+						<div class="form-field">
+							<label class="form-label" data-i18n="common.building">Bygning</label>
+							<select class="form-select" id="detail-building-select">
+								<option>Århus C</option>
+								<option>Helsingør</option>
+								<option>Frederiksberg</option>
+								<option>Odense afdeling</option>
+								<option>Slagelse 2</option>
+							</select>
+						</div>
+						<div class="form-field">
+							<label class="form-label" data-i18n="standby.main_meters">Hovedmålere &#9432;</label>
+							<select class="form-select">
+								<option>Elmåler hovedbygning,</option>
+							</select>
+						</div>
+					</div>
+					<div class="standby-detail-controls">
+						<div class="form-field">
+							<label class="form-label" data-i18n="standby.sub_meter_tags">Bimålertags</label>
+							<select class="form-select">
+								<option data-i18n="standby.select_tags">Vælg tags</option>
+							</select>
+						</div>
+						<div class="form-field">
+							<label class="form-label" data-i18n="standby.sub_meters">Bimålere</label>
+							<div class="standby-submeter-row">
+								<select class="form-select">
+									<option data-i18n="standby.select_meters">Vælg målere</option>
+								</select>
+								<span class="standby-select-all" data-i18n="standby.select_all">Vælg alle</span>
+							</div>
+						</div>
+					</div>
+				</div>
+			</details>
+
+			<!-- Summary stats + chart -->
+			<div id="standby-chart-section">
+			<div class="standby-summary">
+				<div class="standby-summary-item standby-summary-label">
+					<a href="#" class="standby-meter-link" data-i18n="standby.main_meters_arrow">Hovedmålere →</a>
+				</div>
+				<div class="standby-summary-item">
+					<span class="standby-summary-key">Standby</span>
+					<span class="standby-summary-value standby-color">8.613 kWh</span>
+				</div>
+				<div class="standby-summary-item">
+					<span class="standby-summary-key" data-i18n="standby.operation">Drift</span>
+					<span class="standby-summary-value drift-color">13.886 kWh</span>
+				</div>
+				<div class="standby-summary-item">
+					<span class="standby-summary-key">Total</span>
+					<span class="standby-summary-value total-color">22.498 kWh</span>
+				</div>
+				<div class="standby-summary-item">
+					<span class="standby-summary-key" data-i18n="standby.standby_per_hour">Standby pr. time</span>
+					<span class="standby-summary-value">33 kWh/time</span>
+				</div>
+				<div class="standby-summary-item">
+					<span class="standby-summary-key" data-i18n="standby.operation_per_hour">Drift pr. time</span>
+					<span class="standby-summary-value">142 kWh/time</span>
+				</div>
+				<div class="standby-summary-item">
+					<span class="standby-summary-key" data-i18n="standby.standby_share">Standby andel</span>
+					<span class="standby-summary-value standby-color">38 %</span>
+				</div>
+				<div class="standby-summary-item">
+					<span class="standby-summary-key" data-i18n="standby.standby_share_weighted">Standby andel vægtet</span>
+					<span class="standby-summary-value">23 %</span>
+				</div>
+			</div>
+
+			<!-- Chart -->
+			<div class="card standby-chart-card">
+				<div id="standbyChartContainer">
+					<StandbyChartWrapper client:only="react" />
+				</div>
+			</div>
+
+			<!-- Legend -->
+			<div class="standby-legend">
+				<span class="standby-legend-item"><span class="legend-swatch legend-standby"></span> Standby</span>
+				<span class="standby-legend-item"><span class="legend-swatch legend-drift"></span> <span data-i18n="standby.operation">Drift</span></span>
+				<span class="standby-legend-item"><span class="legend-swatch legend-total"></span> Total</span>
+				<span class="standby-legend-item"><span class="legend-swatch legend-standby-time"></span> <span data-i18n="standby.standby_per_hour">Standby pr. time</span></span>
+				<span class="standby-legend-item"><span class="legend-swatch legend-drift-time"></span> <span data-i18n="standby.operation_per_hour">Drift pr. time</span></span>
+				<span class="standby-legend-item"><span class="legend-swatch legend-share"></span> <span data-i18n="standby.standby_share">Standby andel</span></span>
+				<span class="standby-legend-item"><span class="legend-swatch legend-weighted"></span> <span data-i18n="standby.standby_share_weighted">Standby andel vægtet</span></span>
+			</div>
+			</div>
+		</div>
+	</div>
+</Layout>

@@ -1,0 +1,346 @@
+(* HTML fragment responses for HTMX endpoints — mirrors the Rust
+   hierarchy service's /hierarchy/query/* routes. Plain string formatting,
+   no jingoo/lwt. *)
+
+let v2_html ?(status = 200) body =
+  let open Lambda_runtime_api_gateway in
+  let headers = [ ("content-type", "text/html; charset=utf-8") ] in
+  let response = Api_gateway.V2.make_response ~status_code:status ~headers body in
+  Yojson.Safe.to_string (Api_gateway.V2.response_to_json response)
+
+let html_error ?(status = 400) msg =
+  let escaped = String.concat "" (List.map (function
+    | '<' -> "&lt;" | '>' -> "&gt;" | '&' -> "&amp;"
+    | '"' -> "&quot;" | c -> String.make 1 c) (List.init (String.length msg) (String.get msg))) in
+  v2_html ~status (Printf.sprintf "<div class=\"error\">%s</div>" escaped)
+
+let escape s =
+  let buf = Buffer.create (String.length s) in
+  String.iter (fun c -> match c with
+    | '<' -> Buffer.add_string buf "&lt;"
+    | '>' -> Buffer.add_string buf "&gt;"
+    | '&' -> Buffer.add_string buf "&amp;"
+    | '"' -> Buffer.add_string buf "&quot;"
+    | '\'' -> Buffer.add_string buf "&#39;"
+    | c -> Buffer.add_char buf c) s;
+  Buffer.contents buf
+
+let url_encode s =
+  let buf = Buffer.create (String.length s) in
+  String.iter (fun c ->
+    match c with
+    | 'A'..'Z' | 'a'..'z' | '0'..'9' | '-' | '_' | '.' | '~' ->
+        Buffer.add_char buf c
+    | c -> Buffer.add_string buf (Printf.sprintf "%%%02X" (Char.code c))) s;
+  Buffer.contents buf
+
+(* Level-based heuristic mapping — matches the EMS convention. *)
+let category_of_level lvl =
+  match Level.depth lvl with
+  | 0 -> "root"
+  | 1 -> "partner"
+  | 2 -> "company"
+  | 3 -> "property"
+  | 4 -> "building"
+  | _ -> "area"
+
+let icon_href_of_category = function
+  | "root" | "partner" -> "#icon-partner"
+  | "company" -> "#icon-company"
+  | "property" -> "#icon-property"
+  | "building" -> "#icon-building"
+  | "area" -> "#icon-area"
+  | "group" -> "#icon-group"
+  | _ -> ""
+
+let bar_class_of_category = function
+  | "root" | "partner" -> "partner"
+  | c -> c
+
+let options_block values =
+  String.concat "" (List.map (fun v ->
+    Printf.sprintf "<option value=\"%s\">%s</option>" (escape v) (escape v)) values)
+
+let render_nodetypes () =
+  v2_html (options_block ["partner"; "company"; "property"; "building"; "area"])
+
+let render_profiles () =
+  v2_html (options_block ["Developer"; "Standard"; "Technician"; "Reader"; "SysAdm"])
+
+let render_languages () =
+  v2_html (options_block ["danish"; "swedish"; "norwegian"; "english"; "german"])
+
+let render_currencies () =
+  v2_html (options_block ["DKK"; "SEK"; "NOK"; "USD"; "EUR"])
+
+let render_permissions () =
+  v2_html (options_block ["view"; "edit"; "admin"])
+
+let render_timezones () =
+  let tzs = [
+    "Europe/Copenhagen"; "Europe/Stockholm"; "Europe/Oslo"; "Europe/Berlin";
+    "Europe/London"; "Europe/Paris"; "Europe/Madrid"; "Europe/Rome";
+    "Europe/Amsterdam"; "UTC"
+  ] in
+  v2_html (options_block tzs)
+
+(* Build one <li> tree node. `id_str` is "HN{n}#{uuid}"; `parent_path` is
+   the ancestor path joined with '#' (or "H#root" for top-level children).
+   `is_leaf` controls whether we emit a toggle arrow. *)
+let list_item ~id_str ~category ~user ~name ~parent_path ~is_leaf ~with_permissions =
+  let current_path =
+    match parent_path with
+    | Some p -> Printf.sprintf "%s#%s" p id_str
+    | None -> Printf.sprintf "H#%s" id_str
+  in
+  let display_name = if name = "root" then "" else name in
+  let encoded_id   = url_encode id_str in
+  let encoded_path = url_encode current_path in
+  let encoded_user = url_encode user in
+  let bar_class = bar_class_of_category category in
+  let icon_href = icon_href_of_category category in
+  let toggle =
+    if is_leaf then
+      {|<span class="tree-toggle-spacer"></span>|}
+    else
+      Printf.sprintf
+        {|<svg class="tree-toggle tree-toggle-%s" width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M3 1l12 7-12 7z"/></svg>|}
+        bar_class
+  in
+  let icon =
+    if icon_href = "" then ""
+    else
+      Printf.sprintf
+        {|<svg aria-hidden="true" focusable="false" class="tree-icon" width="16" height="16"><use href="%s"></use></svg>|}
+        icon_href
+  in
+  let node_path = Option.value parent_path ~default:"" in
+  if with_permissions then
+    (* Permission-grid view: <div class="permission-row"> rather than <li>. *)
+    Printf.sprintf
+      {|<div class="permission-row" data-id="%s" data-path="%s" style="display: grid; grid-template-columns: auto auto auto auto auto auto 1fr; gap: 0.5rem; align-items: center;">%s%s<input type="checkbox" name="data.allowed" value="%s" class="allowed-checkbox" /><svg width="16" height="16" style="color: var(--success);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg><input type="checkbox" name="data.blocked" value="%s" class="blocked-checkbox" /><svg width="16" height="16" style="color: var(--danger);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg><span style="font-weight: 600;">%s</span></div><div class="child-rows" style="display:none;" hx-get="/hierarchy/query/nodes?id=%s&user=%s&path=%s&permissions=true" hx-request='{"noHeaders": true}' hx-target="this" hx-swap="innerHTML" hx-trigger="loadChildren once"></div>|}
+      (escape id_str) (escape current_path) toggle icon
+      (escape id_str) (escape id_str) (escape display_name)
+      encoded_id encoded_user encoded_path
+  else
+    Printf.sprintf
+      {|<li data-id="%s" data-path="%s"><div class="icon-wrapper" hx-get="/hierarchy/query/nodes?id=%s&user=%s&path=%s" hx-request='{"noHeaders": true}' hx-target="next .nested-list" hx-trigger="loadChildren" _="on click toggle .tree-toggle-expanded on first .tree-toggle in me then get the next .nested-list then if its @style is 'display:none;' then set its @style to '' else if its innerHTML is '' then send loadChildren to me else set its @style to 'display:none;' end end">%s</div>%s<a href="#" class="node-name-link" data-node-id="%s" data-node-path="%s" hx-get="/hierarchy/query/node?id=%s&user=%s" hx-request='{"noHeaders": true}' hx-target=".main-area" hx-swap="innerHTML" _="on click remove .selected from .node-name-link in body then add .selected to me then set sessionStorage.selectedNodeId to my @data-node-id then set sessionStorage.selectedNodePath to my @data-node-path" style="cursor: pointer; text-decoration: none; color: inherit;">%s</a><ul class="nested-list"></ul></li>|}
+      (escape id_str) (escape current_path)
+      encoded_id encoded_user encoded_path
+      toggle icon
+      (escape id_str) (escape node_path)
+      encoded_id encoded_user
+      (escape display_name)
+
+(* /hierarchy/query/nodes — list children of id (or top-level for user) *)
+let render_nodes ~params =
+  let user = Option.value ~default:"unknown" (List.assoc_opt "user" params) in
+  let id_opt = List.assoc_opt "id" params in
+  let path_opt = List.assoc_opt "path" params in
+  let with_perms =
+    match List.assoc_opt "permissions" params with
+    | Some "true" -> true | _ -> false
+  in
+  let parent =
+    match id_opt with
+    | Some s when s <> "" ->
+        (match Node_id.of_string s with
+         | Ok p -> Ok p
+         | Error e -> Error e)
+    | _ -> Ok Node_id.root
+  in
+  match parent with
+  | Error e -> html_error e
+  | Ok parent_id ->
+      (match Hierarchy.list_child_refs parent_id with
+       | Error err ->
+           html_error ~status:(Errors.http_status err) (Errors.message err)
+       | Ok refs ->
+           let parent_path_for_children =
+             match id_opt with
+             | Some s when s <> "" -> path_opt
+             | _ -> Some "H#root"
+           in
+           let html =
+             String.concat "" (List.map (fun (id, name) ->
+               let lvl = Node_id.level id in
+               let cat = category_of_level lvl in
+               let is_leaf = cat = "building" in
+               list_item
+                 ~id_str:(Node_id.to_string id)
+                 ~category:cat ~user ~name
+                 ~parent_path:parent_path_for_children
+                 ~is_leaf ~with_permissions:with_perms) refs)
+           in
+           v2_html html)
+
+(* Format a metadata JSON blob as a simple key/value form. *)
+let rec metadata_rows (json : Yojson.Safe.t) : string =
+  match json with
+  | `Assoc kvs ->
+      String.concat "" (List.map (fun (k, v) ->
+        match v with
+        | `Assoc _ | `List _ ->
+            Printf.sprintf
+              {|<div style="margin-top: 1rem;"><h3 class="table-title">%s</h3>%s</div>|}
+              (escape k) (metadata_rows v)
+        | _ ->
+            let s =
+              match v with
+              | `String s -> s
+              | `Int i -> string_of_int i
+              | `Intlit s -> s
+              | `Float f -> string_of_float f
+              | `Bool b -> string_of_bool b
+              | `Null -> ""
+              | _ -> Yojson.Safe.to_string v
+            in
+            Printf.sprintf
+              {|<div class="form-row-2col"><label class="form-label">%s:</label><input type="text" value="%s" readonly class="form-input"></div>|}
+              (escape k) (escape s)) kvs)
+  | `List xs ->
+      String.concat "" (List.mapi (fun i v ->
+        Printf.sprintf
+          {|<div style="margin-top: 0.5rem;"><h4>[%d]</h4>%s</div>|}
+          i (metadata_rows v)) xs)
+  | _ ->
+      Printf.sprintf
+        {|<div class="form-row-2col"><input type="text" value="%s" readonly class="form-input"></div>|}
+        (escape (Yojson.Safe.to_string json))
+
+(* /hierarchy/query/node — node detail page *)
+let render_node ~params =
+  match List.assoc_opt "id" params with
+  | None -> html_error "missing id"
+  | Some id_s ->
+      (match Node_id.of_string id_s with
+       | Error e -> html_error e
+       | Ok nid ->
+           (match Hierarchy.get_node nid with
+            | Error err -> html_error ~status:(Errors.http_status err) (Errors.message err)
+            | Ok n ->
+                let parent_str =
+                  match n.Node.parent with
+                  | None -> Node_id.to_string n.Node.id
+                  | Some p -> Printf.sprintf "%s#%s" (Node_id.to_string p) (Node_id.to_string n.Node.id)
+                in
+                let metadata_html =
+                  match n.Node.metadata with
+                  | `Assoc [] | `Null -> {|<p style="color: var(--text-muted);">No metadata available</p>|}
+                  | j -> Printf.sprintf {|<div class="form">%s</div>|} (metadata_rows j)
+                in
+                let category = category_of_level (Node_id.level n.Node.id) in
+                let show_sensors =
+                  List.mem category ["building"; "property"; "company"; "area"]
+                in
+                let sensor_block =
+                  if not show_sensors then ""
+                  else
+                    Printf.sprintf
+                      {|<div style="margin-top: 2rem;">
+  <div style="display: grid; grid-template-columns: 1fr auto; align-items: center; margin-bottom: 1rem;">
+    <h2 class="section-title" style="margin-bottom: 0;">Sensors <span id="loading-indicator" class="htmx-indicator" style="display: none; font-size: var(--text-sm); color: var(--accent); margin-left: 8px;">Loading...</span></h2>
+  </div>
+  <ul id="sensor-list" style="display: grid; gap: 8px;" hx-get="/hierarchy/query/sensors" hx-vals='{"nodepath": "%s"}' hx-trigger="load" hx-target="#sensor-list" hx-swap="innerHTML" hx-request='{"noHeaders": true}' hx-indicator="#loading-indicator"><li style="color: var(--text-muted);">Loading sensors...</li></ul>
+</div>|}
+                      (escape parent_str)
+                in
+                let html =
+                  Printf.sprintf
+                    {|<div class="page-container">
+  <div class="card">
+    <div class="form">
+      <div class="form-row-2col"><label class="form-label">ID:</label><input type="text" id="id" value="%s" readonly class="form-input"></div>
+      <div class="form-row-2col"><label class="form-label">Name:</label><input type="text" id="name" value="%s" readonly class="form-input"></div>
+    </div>
+    <div style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-medium);">
+      <h2 class="section-title">Metadata</h2>
+      %s
+      %s
+    </div>
+  </div>
+</div>|}
+                    (escape (Node_id.to_string n.Node.id))
+                    (escape n.Node.name)
+                    metadata_html
+                    sensor_block
+                in
+                v2_html html))
+
+(* /hierarchy/query/sensors?nodepath=<path> *)
+let render_sensors ~params =
+  match List.assoc_opt "nodepath" params with
+  | None -> html_error "missing nodepath"
+  | Some nodepath ->
+      (* nodepath is the concatenated hierarchy path; the leaf id is the last segment. *)
+      let last =
+        match String.rindex_opt nodepath '#' with
+        | Some _ ->
+            (* strip trailing '#'s then find the HN{n}#... at the end *)
+            let rec last_node_id i =
+              if i < 0 then nodepath
+              else
+                match nodepath.[i] with
+                | 'H' when i + 1 < String.length nodepath && nodepath.[i + 1] = 'N' ->
+                    String.sub nodepath i (String.length nodepath - i)
+                | _ -> last_node_id (i - 1)
+            in
+            last_node_id (String.length nodepath - 1)
+        | None -> nodepath
+      in
+      (match Node_id.of_string last with
+       | Error e -> html_error e
+       | Ok nid ->
+           (match Sensors.list_active ~parent:nid with
+            | Error err -> html_error ~status:(Errors.http_status err) (Errors.message err)
+            | Ok [] -> v2_html {|<li style="color: var(--text-muted);">No sensors found</li>|}
+            | Ok ss ->
+                let html =
+                  String.concat "" (List.map (fun (s : Sensor.t) ->
+                    Printf.sprintf {|<li class="sensor-item">%s (%s)</li>|}
+                      (escape s.Sensor.daq_id)
+                      (escape s.Sensor.purpose)) ss)
+                in
+                v2_html html))
+
+(* /hierarchy/query/users — <tr> rows *)
+let render_users () =
+  match Users.list () with
+  | Error err -> html_error ~status:(Errors.http_status err) (Errors.message err)
+  | Ok [] ->
+      v2_html {|<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1rem;">No users found</td></tr>|}
+  | Ok us ->
+      let html =
+        String.concat "" (List.map (fun (u : User.t) ->
+          let email = User_id.email u.User.id in
+          Printf.sprintf
+            {|<tr>
+  <td>%s</td>
+  <td>%s</td>
+  <td>%s</td>
+  <td>%s</td>
+  <td>%s</td>
+  <td><button class="btn-danger btn-sm" onclick="window.dispatchEvent(new CustomEvent('delete-user', { detail: { email: '%s' } }))">Slet</button></td>
+</tr>|}
+            (escape u.User.name)
+            (escape email)
+            (escape (Cognito_group.to_string u.User.cognito_group))
+            (escape (Language.to_string u.User.language))
+            (escape (Currency.to_string u.User.currency))
+            (escape email)) us)
+      in
+      v2_html html
+
+let dispatch ~action ~params =
+  match action with
+  | "nodetypes" -> render_nodetypes ()
+  | "profiles"  -> render_profiles ()
+  | "languages" -> render_languages ()
+  | "currencies" -> render_currencies ()
+  | "timezones" -> render_timezones ()
+  | "permissions" -> render_permissions ()
+  | "nodes"     -> render_nodes ~params
+  | "node"      -> render_node  ~params
+  | "sensors"   -> render_sensors ~params
+  | "users"     -> render_users ()
+  | other       -> html_error ~status:400 (Printf.sprintf "unknown hierarchy action %s" other)

@@ -1,0 +1,47 @@
+---
+const currentPath = Astro.url.pathname;
+
+const breadcrumbMap: Record<string, { parent?: string; label: string }> = {
+  '/main': { label: 'Oversigt' },
+  '/rimain': { parent: 'Resource Insights', label: 'Overblik' },
+  '/rianalysis': { parent: 'Resource Insights', label: 'Analyse' },
+  '/rienergymodel': { parent: 'Resource Insights', label: 'Energimodel' },
+  '/callaction': { label: 'Call to action' },
+  '/bbenchmark': { parent: 'Analyse', label: 'Bygningsbenchmark' },
+  '/abenchmark': { parent: 'Analyse', label: 'Asset benchmark' },
+  '/standbyanalysis': { parent: 'Analyse', label: 'Standbyanalyse' },
+  '/alarms': { parent: 'Overvågning', label: 'Alarmer' },
+  '/alarmsetup': { parent: 'Overvågning', label: 'Alarm opsætning' },
+  '/meters': { label: 'Målere' },
+  '/climate': { label: 'Klimaregnskab' },
+  '/control': { label: 'Aktiv styring' },
+  '/customreports': { parent: 'Rapportering', label: 'Brugertilpassede rapporter' },
+  '/buildingreport': { parent: 'Rapportering', label: 'Bygningsrapporten' },
+  '/exportdata': { parent: 'Rapportering', label: 'Eksporter forbrugsdata' },
+  '/masterdata': { parent: 'Opsætning', label: 'Stamdata' },
+  '/userlist': { parent: 'Opsætning', label: 'Brugerliste' },
+  '/areas': { parent: 'Opsætning', label: 'Områder' },
+};
+
+const currentPage = breadcrumbMap[currentPath];
+---
+
+{currentPage && (
+  <ol class="breadcrumb-list">
+    <li class="breadcrumb-item">
+      <a href="/">Hjem</a>
+    </li>
+    {currentPage.parent && (
+      <>
+        <li class="breadcrumb-separator">/</li>
+        <li class="breadcrumb-item">
+          <span>{currentPage.parent}</span>
+        </li>
+      </>
+    )}
+    <li class="breadcrumb-separator">/</li>
+    <li class="breadcrumb-item">
+      <span>{currentPage.label}</span>
+    </li>
+  </ol>
+)}

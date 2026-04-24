@@ -1,0 +1,255 @@
+---
+import Layout from '../layouts/Layout.astro';
+
+const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
+---
+
+<Layout title="Brugerliste for: Enity">
+	<div class="page-container" x-data="{
+		deleteDialogOpen: false,
+		emailToDelete: null,
+		openDeleteDialog(email) {
+			this.emailToDelete = email;
+			this.deleteDialogOpen = true;
+			this.$refs.deleteDialog.showModal();
+		},
+		closeDeleteDialog() {
+			this.deleteDialogOpen = false;
+			this.$refs.deleteDialog.close();
+			this.emailToDelete = null;
+		},
+		async deleteUser() {
+			if (!this.emailToDelete) return;
+
+			try {
+				const response = await fetch('/hierarchy/command', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify({
+						action: 'delete_user',
+						data: {
+							email: this.emailToDelete
+						}
+					})
+				});
+
+				if (!response.ok) {
+					const errorText = await response.text();
+					alert('Fejl ved sletning: ' + errorText);
+					return;
+				}
+
+				this.closeDeleteDialog();
+				location.reload();
+			} catch (error) {
+				alert('Fejl ved sletning: ' + error.message);
+			}
+		}
+	}"
+	@delete-user.window="openDeleteDialog($event.detail.email)">
+		<div style="display: grid; grid-template-columns: 1fr auto auto; gap: 1.5rem; font-size: var(--text-sm); margin-bottom: 1rem;">
+			<div></div>
+			<a href="#" _="on click halt the event then call #create-user-dialog.showModal()">Opret bruger</a>
+			<a href="#">Genindlæs</a>
+		</div>
+
+		<!-- Create User Dialog -->
+		<dialog id="create-user-dialog" _="on click if event.target == me then call me.close()" style="max-width: 800px;">
+			<div class="dialog-header">
+				<h2>OPRET BRUGER - ENITY</h2>
+				<button _="on click call #create-user-dialog.close()" class="btn-close">&times;</button>
+			</div>
+
+			<div class="dialog-body">
+				<!-- Tab Navigation -->
+				<div class="tab-bar" style="margin-bottom: 1.5rem;">
+					<button id="tab-btn-bruger" class="tab-btn active"
+						_="on click
+							add @style='display:none' to #tab-dataadgang
+							remove @style from #tab-bruger-detaljer
+							add .active to me
+							remove .active from #tab-btn-dataadgang">
+						Bruger detaljer
+					</button>
+					<button id="tab-btn-dataadgang" class="tab-btn"
+						_="on click
+							add @style='display:none' to #tab-bruger-detaljer
+							remove @style from #tab-dataadgang
+							add .active to me
+							remove .active from #tab-btn-bruger
+							then send dataadgangShown to body">
+						Dataadgang
+					</button>
+				</div>
+
+				<!-- Tab Content -->
+				<div id="form-error" class="login-error" style="display:none; margin-bottom: 1rem;"></div>
+
+				<form id="create-user-form" class="form"
+					hx-post={`${API_BASE_URL}/hierarchy/command`}
+					hx-swap="none"
+					hx-on::after-request="if(event.detail.elt.id === 'create-user-form' && event.detail.successful) { document.querySelector('dialog').close(); location.reload(); } else if(event.detail.elt.id === 'create-user-form') { document.getElementById('form-error').textContent = event.detail.xhr.responseText; document.getElementById('form-error').style.display = 'block'; }">
+					<input type="hidden" name="action" value="create_user" />
+
+				<!-- Tab 1: Bruger detaljer -->
+				<div id="tab-bruger-detaljer">
+					<div class="form-row">
+						<label class="form-label">Fuldt navn</label>
+						<input type="text" name="data.name" required class="form-input" />
+						<span class="required">*</span>
+					</div>
+
+					<div style="display: grid; grid-template-columns: 200px 1fr auto auto auto; gap: 1rem; align-items: center;">
+						<label class="form-label">Email</label>
+						<input type="email" name="data.email" required class="form-input" />
+						<span class="required">*</span>
+						<button type="button" class="btn-danger btn-sm">
+							<span style="font-weight: 700;">&bull;&bull;&bull;</span>
+						</button>
+						<span></span>
+					</div>
+
+					<div class="form-row-2col">
+						<label class="form-label">Brugerprofil</label>
+						<select name="data.profile" class="form-select" hx-get={`${API_BASE_URL}/hierarchy/query/profiles`} hx-request='{"noHeaders": true}' hx-trigger="intersect once" hx-params="none" hx-swap="innerHTML">
+							<option value="Developer">Udvikler</option>
+							<option value="Standard" selected>Standardbruger</option>
+							<option value="Technician">Tekniker</option>
+							<option value="Reader">Læser</option>
+							<option value="SysAdm">System Administrator</option>
+						</select>
+					</div>
+
+					<div class="form-row-2col">
+						<label class="form-label">Sprog</label>
+						<select name="data.language" class="form-select" hx-get={`${API_BASE_URL}/hierarchy/query/languages`} hx-request='{"noHeaders": true}' hx-trigger="intersect once" hx-params="none" hx-swap="innerHTML">
+							<option value="Danish" selected>Dansk (Dansk)</option>
+							<option value="English">English (English)</option>
+						</select>
+					</div>
+
+					<div class="form-row-2col">
+						<label class="form-label">Valuta</label>
+						<select name="data.currency" class="form-select" hx-get={`${API_BASE_URL}/hierarchy/query/currencies`} hx-request='{"noHeaders": true}' hx-trigger="intersect once" hx-params="none" hx-swap="innerHTML">
+							<option value="DKK" selected>DKK - danske kroner</option>
+							<option value="EUR">EUR - Euro</option>
+						</select>
+					</div>
+				</div>
+
+				<!-- Tab 2: Dataadgang -->
+				<div id="tab-dataadgang" style="display:none;">
+					<div style="margin-bottom: 1rem;">
+						<input type="text" placeholder="Søg efter afdeling, firma, ejendomme, gruppering eller bygninger" class="form-input" />
+					</div>
+
+					<!-- Hierarchy table -->
+					<div class="card" style="padding: 0;" id="permission-grid">
+						<div class="table-section-header" style="display: grid; grid-template-columns: auto auto auto auto auto 1fr; gap: 0.5rem; align-items: center;">
+							<div style="width: 20px;"></div>
+							<div style="width: 16px;"></div>
+							<svg width="16" height="16" style="color: var(--success);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+							<div style="width: 16px;"></div>
+							<svg width="16" height="16" style="color: var(--danger);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+							<div style="font-weight: 600; font-size: var(--text-sm);">Navn</div>
+						</div>
+
+						<div
+							hx-get={`${API_BASE_URL}/hierarchy/query/nodes?permissions=true`}
+							hx-vals="js:{user: localStorage.getItem('loginId')}"
+							hx-request='{"noHeaders": true}'
+							hx-trigger="dataadgangShown from:body once"
+							hx-swap="beforeend"
+							hx-target="#permission-grid">
+						</div>
+					</div>
+				</div>
+				</form>
+			</div>
+
+			<!-- Dialog Footer -->
+			<div class="dialog-footer" style="grid-template-columns: auto auto 1fr auto auto;">
+				<button type="submit" form="create-user-form" class="btn-warning">Gem</button>
+				<button _="on click call #create-user-dialog.close()" class="btn-warning">Luk</button>
+				<div></div>
+				<button _="on click send click to #tab-btn-bruger" class="btn-secondary">Forrige</button>
+				<button _="on click send click to #tab-btn-dataadgang" class="btn-warning">Næste</button>
+			</div>
+		</dialog>
+
+		<!-- Delete User Confirmation Dialog -->
+		<dialog x-ref="deleteDialog" @click.self="closeDeleteDialog()">
+			<div class="dialog-header danger">
+				<h2>SLET BRUGER</h2>
+				<button @click="closeDeleteDialog()" class="btn-close danger">&times;</button>
+			</div>
+
+			<div class="dialog-body">
+				<p style="margin-bottom: 1rem;">Er du sikker på, at du vil slette denne bruger?</p>
+				<p style="font-size: var(--text-sm); color: var(--text-muted); margin-bottom: 1rem;">
+					Bruger ID: <span style="font-family: monospace; font-weight: 600;" x-text="emailToDelete"></span>
+				</p>
+				<p style="font-size: var(--text-sm); color: var(--danger); font-weight: 600;">
+					Dette kan ikke fortrydes!
+				</p>
+			</div>
+
+			<div class="dialog-footer">
+				<button @click="closeDeleteDialog()" class="btn-secondary">
+					Annuller
+				</button>
+				<div></div>
+				<button @click="deleteUser()" class="btn-danger">
+					Slet
+				</button>
+			</div>
+		</dialog>
+
+		<h1 class="page-title" style="font-size: var(--text-base); font-weight: 400; margin-bottom: 1rem;">Brugerliste for: Enity</h1>
+
+		<div class="card" style="padding: 0;">
+			<div class="table-section-header">
+				ALLE BRUGERE MED DATAADGANG
+			</div>
+
+			<table class="data-table">
+				<thead>
+					<tr>
+						<th>NAVN</th>
+						<th>EMAIL</th>
+						<th>BRUGERPROFIL</th>
+						<th>SPROG</th>
+						<th>VALUTA</th>
+						<th>HANDLINGER</th>
+					</tr>
+				</thead>
+				<tbody
+					hx-get={`${API_BASE_URL}/hierarchy/query/users`}
+					hx-request='{"noHeaders": true}'
+					hx-trigger="load"
+					hx-swap="innerHTML">
+					<tr>
+						<td colspan="6" style="text-align: center; color: var(--text-muted);">Loading users...</td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+	</div>
+</Layout>
+
+<style>
+	th {
+		cursor: pointer;
+		user-select: none;
+	}
+
+	th:hover {
+		background: var(--bg-elevated);
+	}
+
+	.rotate-90 {
+		transform: rotate(90deg);
+	}
+</style>

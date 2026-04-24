@@ -1,0 +1,36 @@
+{
+  "version": "48.0.0",
+  "files": {
+    "393030bd5722d7493a23f3cb235e28e9d5990743fa0ccb036901234f18b7d7ad": {
+      "displayName": "OcamlHierarchyFunction/Code",
+      "source": {
+        "path": "asset.393030bd5722d7493a23f3cb235e28e9d5990743fa0ccb036901234f18b7d7ad.zip",
+        "packaging": "file"
+      },
+      "destinations": {
+        "339712745226-eu-central-1-5f6968e7": {
+          "bucketName": "cdk-hnb659fds-assets-339712745226-eu-central-1",
+          "objectKey": "393030bd5722d7493a23f3cb235e28e9d5990743fa0ccb036901234f18b7d7ad.zip",
+          "region": "eu-central-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::339712745226:role/cdk-hnb659fds-file-publishing-role-339712745226-eu-central-1"
+        }
+      }
+    },
+    "626414ba1cabdfca2fb804d83fdb61e9e0e86ed6d38c8de44eecf2dc5431c92a": {
+      "displayName": "OcamlHierarchyStack Template",
+      "source": {
+        "path": "OcamlHierarchyStack.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "339712745226-eu-central-1-1035d8f8": {
+          "bucketName": "cdk-hnb659fds-assets-339712745226-eu-central-1",
+          "objectKey": "626414ba1cabdfca2fb804d83fdb61e9e0e86ed6d38c8de44eecf2dc5431c92a.json",
+          "region": "eu-central-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::339712745226:role/cdk-hnb659fds-file-publishing-role-339712745226-eu-central-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

@@ -1,0 +1,204 @@
+---
+import {
+  Astronav,
+  MenuItems,
+  Dropdown,
+  DropdownItems,
+} from "astro-navbar";
+
+const currentPath = Astro.url.pathname;
+
+const isParentActive = (paths: string[]) => paths.includes(currentPath);
+---
+<Astronav>
+  <MenuItems class="block w-full">
+    <div class="nav-grid">
+      <ul class="nav-menu">
+      <li><a href="/main" class={`nav-link ${currentPath === '/main' ? 'active' : ''}`} data-i18n="nav.overview">Oversigt</a></li>
+      <li class="relative">
+        <Dropdown class="group">
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/rimain', '/rianalysis', '/rienergymodel']) ? 'active' : ''}`} data-i18n="nav.resource_insights">
+            Resource Insights
+          </button>
+          <DropdownItems class="dropdown-items hidden group-open:block">
+            <ul class="dropdown-menu">
+              <li><a href="/rimain" class={`nav-link ${currentPath === '/rimain' ? 'active' : ''}`} data-i18n="nav.ri_overview">Overblik</a></li>
+              <li><a href="/rianalysis" class={`nav-link ${currentPath === '/rianalysis' ? 'active' : ''}`} data-i18n="nav.ri_analysis">Analyse</a></li>
+              <li><a href="/rienergymodel" class={`nav-link ${currentPath === '/rienergymodel' ? 'active' : ''}`} data-i18n="nav.ri_energy_model">Energimodel</a></li>
+            </ul>
+          </DropdownItems>
+        </Dropdown>
+      </li>
+      <li><a href="/callaction" class={`nav-link ${currentPath === '/callaction' ? 'active' : ''}`} data-i18n="nav.call_to_action">Call to action</a></li>
+      <li class="relative">
+        <Dropdown class="group">
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/bbenchmark', '/abenchmark', '/standbyanalysis']) ? 'active' : ''}`} data-i18n="nav.analysis">
+            Analyse
+          </button>
+          <DropdownItems class="dropdown-items hidden group-open:block">
+            <ul class="dropdown-menu">
+              <li><a href="/bbenchmark" class={`nav-link ${currentPath === '/bbenchmark' ? 'active' : ''}`} data-i18n="nav.building_benchmark">Bygningsbenchmark</a></li>
+              <li><a href="/abenchmark" class={`nav-link ${currentPath === '/abenchmark' ? 'active' : ''}`} data-i18n="nav.asset_benchmark">Asset benchmark</a></li>
+              <li><a href="/standbyanalysis" class={`nav-link ${currentPath === '/standbyanalysis' ? 'active' : ''}`} data-i18n="nav.standby_analysis">Standbyanalyse</a></li>
+            </ul>
+          </DropdownItems>
+        </Dropdown>
+      </li>
+      <li class="relative">
+        <Dropdown class="group">
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/alarms', '/alarmsetup']) ? 'active' : ''}`} data-i18n="nav.monitoring">
+            Overvågning
+          </button>
+          <DropdownItems class="dropdown-items hidden group-open:block">
+            <ul class="dropdown-menu">
+              <li><a href="/alarms" class={`nav-link ${currentPath === '/alarms' ? 'active' : ''}`} data-i18n="nav.alarms">Alarmer</a></li>
+              <li><a href="/alarmsetup" class={`nav-link ${currentPath === '/alarmsetup' ? 'active' : ''}`} data-i18n="nav.alarm_setup">Alarm opsætning</a></li>
+            </ul>
+          </DropdownItems>
+        </Dropdown>
+      </li>
+      <li><a href="/meters" class={`nav-link ${currentPath === '/meters' ? 'active' : ''}`} data-i18n="nav.meters">Målere</a></li>
+      <li><a href="/climate" class={`nav-link ${currentPath === '/climate' ? 'active' : ''}`} data-i18n="nav.climate">Klimaregnskab</a></li>
+      <li><a href="/control" class={`nav-link ${currentPath === '/control' ? 'active' : ''}`} data-i18n="nav.active_control">Aktiv styring</a></li>
+      <li class="relative">
+        <Dropdown class="group">
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/customreports', '/buildingreport', '/exportdata']) ? 'active' : ''}`} data-i18n="nav.reporting">
+            Rapportering
+          </button>
+          <DropdownItems class="dropdown-items hidden group-open:block">
+            <ul class="dropdown-menu">
+              <li><a href="/customreports" class={`nav-link ${currentPath === '/customreports' ? 'active' : ''}`} data-i18n="nav.custom_reports">Brugertilpassede rapporter</a></li>
+              <li><a href="/buildingreport" class={`nav-link ${currentPath === '/buildingreport' ? 'active' : ''}`} data-i18n="nav.building_report">Bygningsrapporten</a></li>
+              <li><a href="/exportdata" class={`nav-link ${currentPath === '/exportdata' ? 'active' : ''}`} data-i18n="nav.export_data">Eksporter forbrugsdata</a></li>
+            </ul>
+          </DropdownItems>
+        </Dropdown>
+      </li>
+      <li class="relative">
+        <Dropdown class="group">
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/masterdata', '/userlist', '/areas']) ? 'active' : ''}`} data-i18n="nav.setup">
+            Opsætning
+          </button>
+          <DropdownItems class="dropdown-items hidden group-open:block">
+            <ul class="dropdown-menu">
+              <li><a href="/masterdata" class={`nav-link ${currentPath === '/masterdata' ? 'active' : ''}`} data-i18n="nav.master_data">Stamdata</a></li>
+              <li><a href="/userlist" class={`nav-link ${currentPath === '/userlist' ? 'active' : ''}`} data-i18n="nav.user_list">Brugerliste</a></li>
+              <li><a href="/areas" class={`nav-link ${currentPath === '/areas' ? 'active' : ''}`} data-i18n="nav.areas">Områder</a></li>
+            </ul>
+          </DropdownItems>
+        </Dropdown>
+      </li>
+      </ul>
+      <button id="logout-btn" class="btn-logout" data-i18n="common.logout">
+        Logout
+      </button>
+    </div>
+  </MenuItems>
+</Astronav>
+
+<style>
+  :global(.astronav-items) {
+    width: 100% !important;
+    margin: 0 !important;
+  }
+
+  .nav-grid {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    width: 100%;
+    gap: 1rem;
+  }
+
+  :global(.group-open\:block) {
+    display: none;
+  }
+
+  :global(.group.open .group-open\:block) {
+    display: block !important;
+  }
+
+  :global(.group:focus-within .group-open\:block) {
+    display: block !important;
+  }
+
+  :global(.group) {
+    position: relative;
+  }
+
+  :global(.dropdown-items) {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 100;
+    margin-top: 2px;
+  }
+
+  .dropdown-menu {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-medium);
+    border-radius: var(--radius-md);
+    padding: 4px;
+    min-width: 180px;
+    display: grid;
+    gap: 1px;
+  }
+
+  .dropdown-menu .nav-link {
+    border-bottom: none;
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+  }
+
+  .dropdown-menu .nav-link:hover {
+    background: var(--bg-elevated);
+  }
+
+  .dropdown-menu .nav-link.active {
+    border-bottom: none;
+    background: var(--accent-bg);
+  }
+</style>
+
+<script>
+  function updateActiveMenuItems() {
+    const currentPath = window.location.pathname;
+
+    document.querySelectorAll('.nav-link.active').forEach(el => {
+      el.classList.remove('active');
+    });
+
+    document.querySelectorAll('.nav-link').forEach(link => {
+      const href = link.getAttribute('href');
+      if (href === currentPath) {
+        link.classList.add('active');
+      }
+    });
+
+    const parentMenuPaths = {
+      'Resource Insights': ['/rimain', '/rianalysis', '/rienergymodel'],
+      'Analyse': ['/bbenchmark', '/abenchmark', '/standbyanalysis'],
+      'Overvågning': ['/alarms', '/alarmsetup'],
+      'Rapportering': ['/customreports', '/buildingreport', '/exportdata'],
+      'Opsætning': ['/masterdata', '/userlist', '/areas']
+    };
+
+    Object.values(parentMenuPaths).forEach(paths => {
+      if (paths.includes(currentPath)) {
+        document.querySelectorAll('.nav-link').forEach(button => {
+          if (button.tagName === 'BUTTON') {
+            const dropdownLinks = button.parentElement?.querySelectorAll('a.nav-link');
+            dropdownLinks?.forEach(link => {
+              if (paths.includes(link.getAttribute('href') || '')) {
+                button.classList.add('active');
+              }
+            });
+          }
+        });
+      }
+    });
+  }
+
+  updateActiveMenuItems();
+  document.addEventListener('astro:page-load', updateActiveMenuItems);
+</script>

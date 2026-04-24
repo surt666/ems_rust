@@ -1,0 +1,239 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - navigation [ref=e3]:
+      - generic [ref=e4]:
+        - list [ref=e5]:
+          - listitem [ref=e6]:
+            - link "Oversigt" [ref=e7] [cursor=pointer]:
+              - /url: /main
+          - listitem [ref=e8]:
+            - list [ref=e9]:
+              - button "Resource Insights ▾" [ref=e10] [cursor=pointer]
+          - listitem [ref=e11]:
+            - link "Call to action" [ref=e12] [cursor=pointer]:
+              - /url: /callaction
+          - listitem [ref=e13]:
+            - list [ref=e14]:
+              - button "Analyse ▾" [ref=e15] [cursor=pointer]
+          - listitem [ref=e16]:
+            - list [ref=e17]:
+              - button "Overvågning ▾" [ref=e18] [cursor=pointer]
+          - listitem [ref=e19]:
+            - link "Målere" [ref=e20] [cursor=pointer]:
+              - /url: /meters
+          - listitem [ref=e21]:
+            - link "Klimaregnskab" [ref=e22] [cursor=pointer]:
+              - /url: /climate
+          - listitem [ref=e23]:
+            - link "Aktiv styring" [ref=e24] [cursor=pointer]:
+              - /url: /control
+          - listitem [ref=e25]:
+            - list [ref=e26]:
+              - button "Rapportering ▾" [ref=e27] [cursor=pointer]
+          - listitem [ref=e28]:
+            - list [ref=e29]:
+              - button "Opsætning ▾" [ref=e30] [cursor=pointer]
+        - button "Logout" [ref=e31] [cursor=pointer]
+  - navigation [ref=e32]:
+    - list [ref=e33]:
+      - listitem [ref=e34]:
+        - link "Hjem" [ref=e35] [cursor=pointer]:
+          - /url: /
+      - listitem [ref=e36]: /
+      - listitem [ref=e37]: Klimaregnskab
+  - complementary [ref=e38]:
+    - generic [ref=e39]: Hierarki
+    - list [ref=e41]:
+      - listitem [ref=e42] [cursor=pointer]:
+        - list
+  - main [ref=e43]:
+    - generic [ref=e44]:
+      - generic [ref=e45]:
+        - heading "Klimaregnskab" [level=1] [ref=e46]
+        - generic [ref=e47]:
+          - combobox [ref=e48]:
+            - option "Lokationsbaseret" [selected]
+            - option "Markedsbaseret"
+          - generic [ref=e49]:
+            - textbox [ref=e50]: 01-01-2024 - 31-12-2024
+            - button [ref=e51] [cursor=pointer]:
+              - img [ref=e52]
+          - button "Rapporter" [ref=e54] [cursor=pointer]
+      - generic [ref=e55]:
+        - generic [ref=e56]:
+          - heading "Udledning fordelt på scopes" [level=3] [ref=e57]
+          - generic [ref=e58]:
+            - img [ref=e59]:
+              - generic [ref=e63]: "1.247"
+              - generic [ref=e64]: t CO₂e
+            - generic [ref=e65]:
+              - generic [ref=e66]:
+                - generic [ref=e68]: Scope 1
+                - generic [ref=e69]: 125 t CO₂e
+              - generic [ref=e70]:
+                - generic [ref=e72]: Scope 2
+                - generic [ref=e73]: 747 t CO₂e
+              - generic [ref=e74]:
+                - generic [ref=e76]: Scope 3
+                - generic [ref=e77]: 375 t CO₂e
+        - generic [ref=e78]:
+          - generic [ref=e79]:
+            - heading "Udledning pr. forbrugstype" [level=3] [ref=e80]
+            - generic [ref=e81]:
+              - button "Scope 1" [ref=e82] [cursor=pointer]
+              - button "Scope 2" [ref=e83] [cursor=pointer]
+              - button "Scope 3" [ref=e84] [cursor=pointer]
+          - generic [ref=e85]:
+            - generic [ref=e86]:
+              - generic [ref=e87]: El
+              - generic [ref=e88]:
+                - 'generic "Scope 2: 312 t CO₂e" [ref=e89]'
+                - 'generic "Scope 3: 23 t CO₂e" [ref=e90]'
+              - generic [ref=e91]: 335 t CO₂e
+            - generic [ref=e92]:
+              - generic [ref=e93]: Fjernvarme
+              - generic [ref=e94]:
+                - 'generic "Scope 2: 435 t CO₂e" [ref=e95]'
+                - 'generic "Scope 3: 155 t CO₂e" [ref=e96]'
+              - generic [ref=e97]: 590 t CO₂e
+            - generic [ref=e98]:
+              - generic [ref=e99]: Naturgas
+              - generic [ref=e100]:
+                - 'generic "Scope 1: 125 t CO₂e" [ref=e101]'
+                - 'generic "Scope 3: 68 t CO₂e" [ref=e102]'
+              - generic [ref=e103]: 193 t CO₂e
+            - generic [ref=e104]:
+              - generic [ref=e105]: Vand
+              - 'generic "Scope 3: 45 t CO₂e" [ref=e107]'
+              - generic [ref=e108]: 45 t CO₂e
+            - generic [ref=e109]:
+              - generic [ref=e110]: Transport
+              - 'generic "Scope 3: 84 t CO₂e" [ref=e112]'
+              - generic [ref=e113]: 84 t CO₂e
+      - generic [ref=e114]:
+        - generic [ref=e115]:
+          - generic [ref=e116]:
+            - generic [ref=e117]: Scope 1
+            - generic [ref=e118]: 125 t CO₂e
+          - paragraph [ref=e119]: Direkte udledning fra egne kilder
+          - generic [ref=e121]:
+            - img [ref=e122]:
+              - generic [ref=e125]: 100%
+            - generic [ref=e126]: Naturgas
+            - generic [ref=e127]: 125 t
+        - generic [ref=e128]:
+          - generic [ref=e129]:
+            - generic [ref=e130]: Scope 2
+            - generic [ref=e131]: 747 t CO₂e
+          - paragraph [ref=e132]: Indirekte udledning fra energiforbrug
+          - generic [ref=e133]:
+            - generic [ref=e134]:
+              - img [ref=e135]:
+                - generic [ref=e138]: 42%
+              - generic [ref=e139]: El
+              - generic [ref=e140]: 312 t
+            - generic [ref=e141]:
+              - img [ref=e142]:
+                - generic [ref=e145]: 58%
+              - generic [ref=e146]: Fjernvarme
+              - generic [ref=e147]: 435 t
+        - generic [ref=e148]:
+          - generic [ref=e149]:
+            - generic [ref=e150]: Scope 3
+            - generic [ref=e151]: 375 t CO₂e
+          - paragraph [ref=e152]: Andre indirekte udledninger
+          - generic [ref=e153]:
+            - generic [ref=e154]:
+              - img [ref=e155]:
+                - generic [ref=e158]: 41%
+              - generic [ref=e159]: Fjernvarme
+              - generic [ref=e160]: 155 t
+            - generic [ref=e161]:
+              - img [ref=e162]:
+                - generic [ref=e165]: 22%
+              - generic [ref=e166]: Transport
+              - generic [ref=e167]: 84 t
+            - generic [ref=e168]:
+              - img [ref=e169]:
+                - generic [ref=e172]: 18%
+              - generic [ref=e173]: Naturgas
+              - generic [ref=e174]: 68 t
+            - generic [ref=e175]:
+              - img [ref=e176]:
+                - generic [ref=e179]: 12%
+              - generic [ref=e180]: Vand
+              - generic [ref=e181]: 45 t
+            - generic [ref=e182]:
+              - img [ref=e183]:
+                - generic [ref=e186]: 6%
+              - generic [ref=e187]: El
+              - generic [ref=e188]: 23 t
+      - generic [ref=e189]:
+        - generic [ref=e190]:
+          - heading "Udledning pr. bygning" [level=3] [ref=e191]
+          - generic [ref=e192]:
+            - button "Scopes" [ref=e193] [cursor=pointer]
+            - button "Bygninger" [ref=e194] [cursor=pointer]
+        - table [ref=e196]:
+          - rowgroup [ref=e197]:
+            - row "Bygning Scope 1 Scope 2 Scope 3 Total" [ref=e198]:
+              - columnheader "Bygning" [ref=e199]
+              - columnheader "Scope 1" [ref=e200]
+              - columnheader "Scope 2" [ref=e201]
+              - columnheader "Scope 3" [ref=e202]
+              - columnheader "Total" [ref=e203]
+              - columnheader [ref=e204]
+          - rowgroup [ref=e205]:
+            - row "Administrationsbygning 42 t CO₂e 285 t CO₂e 134 t CO₂e 461 t CO₂e" [ref=e206]:
+              - cell "Administrationsbygning" [ref=e207]
+              - cell "42 t CO₂e" [ref=e208]
+              - cell "285 t CO₂e" [ref=e209]
+              - cell "134 t CO₂e" [ref=e210]
+              - cell "461 t CO₂e" [ref=e211]
+              - cell [ref=e212]:
+                - group [ref=e213]:
+                  - generic "Handlinger" [ref=e214] [cursor=pointer]:
+                    - img [ref=e215]
+            - row "Byg. B 28 t CO₂e 198 t CO₂e 95 t CO₂e 321 t CO₂e" [ref=e219]:
+              - cell "Byg. B" [ref=e220]
+              - cell "28 t CO₂e" [ref=e221]
+              - cell "198 t CO₂e" [ref=e222]
+              - cell "95 t CO₂e" [ref=e223]
+              - cell "321 t CO₂e" [ref=e224]
+              - cell [ref=e225]:
+                - group [ref=e226]:
+                  - generic "Handlinger" [ref=e227] [cursor=pointer]:
+                    - img [ref=e228]
+            - row "Horsens 31 t CO₂e 152 t CO₂e 87 t CO₂e 270 t CO₂e" [ref=e232]:
+              - cell "Horsens" [ref=e233]
+              - cell "31 t CO₂e" [ref=e234]
+              - cell "152 t CO₂e" [ref=e235]
+              - cell "87 t CO₂e" [ref=e236]
+              - cell "270 t CO₂e" [ref=e237]
+              - cell [ref=e238]:
+                - group [ref=e239]:
+                  - generic "Handlinger" [ref=e240] [cursor=pointer]:
+                    - img [ref=e241]
+            - row "Esbjerg 24 t CO₂e 112 t CO₂e 59 t CO₂e 195 t CO₂e" [ref=e245]:
+              - cell "Esbjerg" [ref=e246]
+              - cell "24 t CO₂e" [ref=e247]
+              - cell "112 t CO₂e" [ref=e248]
+              - cell "59 t CO₂e" [ref=e249]
+              - cell "195 t CO₂e" [ref=e250]
+              - cell [ref=e251]:
+                - group [ref=e252]:
+                  - generic "Handlinger" [ref=e253] [cursor=pointer]:
+                    - img [ref=e254]
+          - rowgroup [ref=e258]:
+            - row "Total 125 t CO₂e 747 t CO₂e 375 t CO₂e 1.247 t CO₂e" [ref=e259]:
+              - cell "Total" [ref=e260]:
+                - strong [ref=e261]: Total
+              - cell "125 t CO₂e" [ref=e262]:
+                - strong [ref=e263]: 125 t CO₂e
+              - cell "747 t CO₂e" [ref=e264]:
+                - strong [ref=e265]: 747 t CO₂e
+              - cell "375 t CO₂e" [ref=e266]:
+                - strong [ref=e267]: 375 t CO₂e
+              - cell "1.247 t CO₂e" [ref=e268]:
+                - strong [ref=e269]: 1.247 t CO₂e
+              - cell [ref=e270]

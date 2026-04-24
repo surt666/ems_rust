@@ -1,0 +1,216 @@
+---
+import Layout from '../layouts/Layout.astro';
+
+const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
+---
+
+<Layout title="Målere">
+	<div class="page-container">
+		<h1 class="page-title">Målere</h1>
+		<p class="page-description">Administrér og overvåg energimålere.</p>
+
+
+		<div class="page-content">
+			<div class="protocol-tabs">
+			<!-- Protocol Selection -->
+			<div class="card">
+				<label class="form-label">Protokol:</label>
+				<div role="tablist" aria-label="Protocol Selection" class="grid-2-col">
+					<button
+						type="button"
+						role="tab"
+						class="btn-tab"
+						command="--show"
+						commandfor="mqtt-section"
+						aria-expanded="true"
+						data-controls="mqtt-section"
+					>
+						MQTT
+					</button>
+					<button
+						type="button"
+						role="tab"
+						class="btn-tab"
+						command="--show"
+						commandfor="lorawan-section"
+						aria-expanded="false"
+						data-controls="lorawan-section"
+					>
+						LoRaWAN
+					</button>
+				</div>
+			</div>
+
+			<div style="padding-top: 1rem;">
+			<!-- MQTT Section -->
+			<div id="mqtt-section" role="tabpanel">
+				<div class="card">
+					<h2 class="section-title">Tilføj Gateway</h2>
+
+					<form id="gatewayForm"
+						method="POST"
+						action={`${API_BASE_URL}/api/provision`}
+						command-on="submit.prevent"
+						command="--fetch:post">
+						<div class="form">
+						<div class="form-field">
+							<label for="gateway-mqtt-name" class="form-label">Gateway Navn (Device CN):</label>
+							<input type="text" id="gateway-mqtt-name" name="device_cn" class="form-input" required />
+						</div>
+
+						<div class="form-field">
+							<label for="thing-group" class="form-label">Thing Group / Organisation:</label>
+							<input type="text" id="thing-group" name="thing_group" class="form-input" required />
+						</div>
+
+						<div class="form-field">
+							<label for="country" class="form-label">Land:</label>
+							<select id="country" name="country" class="form-select">
+								<option value="DK" selected>Danmark (DK)</option>
+								<option value="DE">Tyskland (DE)</option>
+								<option value="S">Sverige (S)</option>
+								<option value="N">Norge (N)</option>
+								<option value="US">USA (US)</option>
+								<option value="CA">Canada (CA)</option>
+							</select>
+						</div>
+
+						<div class="checkbox-group">
+							<input type="checkbox" id="add-extensions" name="add_extensions" class="form-checkbox" command="--toggle" commandfor="san-field" />
+							<label for="add-extensions" class="checkbox-label">Tilføj X509v3 extensions (Extended Key Usage, SAN)</label>
+						</div>
+
+						<div id="san-field" hidden>
+							<label for="san-dns" class="form-label">Subject Alternative Name (DNS):</label>
+							<input type="text" id="san-dns" name="san_dns" class="form-input" placeholder="device.example.com" required />
+						</div>
+
+							<div class="form-actions">
+								<button type="submit" class="btn-primary">
+									Tilføj Gateway
+								</button>
+							</div>
+						</div>
+					</form>
+				</div>
+			</div>
+
+			<!-- LoRaWAN Section -->
+			<div id="lorawan-section" role="tabpanel" hidden>
+				<div class="card">
+					<h2 class="section-title">Tilføj Gateway</h2>
+
+					<form id="gatewayForm"
+						method="POST"
+						action={`${API_BASE_URL}/api/gateways`}
+						command-on="submit.prevent"
+						command="--fetch:post">
+						<div class="form">
+						<div class="form-field">
+							<label for="gateway-lorawan-name" class="form-label">Gateway Navn:</label>
+							<input type="text" id="gateway-lorawan-name" name="name" class="form-input" />
+						</div>
+
+							<div class="form-field">
+								<label for="gateway-eui" class="form-label">Gateway EUI:</label>
+								<input type="text" id="gateway-eui" name="gatewayEui" class="form-input" placeholder="0000000000000000" />
+							</div>
+
+							<div class="form-actions">
+								<button type="submit" class="btn-primary">
+									Tilføj Gateway
+								</button>
+							</div>
+						</div>
+					</form>
+				</div>
+
+				<!-- Meter Section -->
+				<div class="card">
+				<h2 class="section-title">Tilføj Måler</h2>
+
+				<form class="form" id="meterForm"
+					method="POST"
+					action={`${API_BASE_URL}/api/meters`}
+					command-on="submit.prevent"
+					command="--fetch:post">
+						<div class="form-field">
+							<label for="meter-lorawan-name" class="form-label">Måler Navn:</label>
+							<input type="text" id="meter-lorawan-name" name="name" class="form-input" />
+						</div>
+
+						<div class="form-field">
+							<label for="dev-eui" class="form-label">DevEUI:</label>
+							<input type="text" id="dev-eui" name="devEui" class="form-input" placeholder="0000000000000000" />
+						</div>
+
+						<div class="otaa-version-tabs">
+						<div class="form-field">
+							<label class="form-label">OTAA Version:</label>
+							<div role="tablist" aria-label="OTAA Version" class="grid-3-col">
+								<button type="button" role="tab" class="btn-tab" command="--show" commandfor="otaa-v103-fields" aria-expanded="true" data-controls="otaa-v103-fields">1.0.3</button>
+								<button type="button" role="tab" class="btn-tab" command="--show" commandfor="otaa-v104-fields" aria-expanded="false" data-controls="otaa-v104-fields">1.0.4</button>
+								<button type="button" role="tab" class="btn-tab" command="--show" commandfor="otaa-v11-fields" aria-expanded="false" data-controls="otaa-v11-fields">1.1</button>
+							</div>
+						</div>
+
+						<div>
+						<!-- OTAA 1.0.3 Fields -->
+						<div id="otaa-v103-fields" role="tabpanel" class="bordered-section">
+							<div class="form-field">
+								<label for="app-key-v103" class="form-label">AppKey:</label>
+								<input type="text" id="app-key-v103" name="appKey" class="form-input" placeholder="00000000000000000000000000000000" />
+							</div>
+
+							<div class="form-field">
+								<label for="join-eui-v103" class="form-label">AppEUI:</label>
+								<input type="text" id="app-eui-v103" name="appEui" class="form-input" placeholder="0000000000000000" />
+							</div>
+						</div>
+
+						<!-- OTAA 1.0.4 Fields -->
+						<div id="otaa-v104-fields" role="tabpanel" class="bordered-section" hidden>
+							<div class="form-field">
+								<label for="app-key-v104" class="form-label">AppKey:</label>
+								<input type="text" id="app-key-v104" name="appKey" class="form-input" placeholder="00000000000000000000000000000000" />
+							</div>
+
+							<div class="form-field">
+								<label for="join-eui-v104" class="form-label">JoinEUI:</label>
+								<input type="text" id="join-eui-v104" name="joinEui" class="form-input" placeholder="0000000000000000" />
+							</div>
+						</div>
+
+						<!-- OTAA 1.1 Fields -->
+						<div id="otaa-v11-fields" role="tabpanel" class="bordered-section" hidden>
+							<div class="form-field">
+								<label for="app-key-v11" class="form-label">AppKey:</label>
+								<input type="text" id="app-key-v11" name="appKey" class="form-input" placeholder="00000000000000000000000000000000" />
+							</div>
+
+							<div class="form-field">
+								<label for="nwk-key" class="form-label">NwkKey:</label>
+								<input type="text" id="nwk-key" name="nwkKey" class="form-input" placeholder="00000000000000000000000000000000" />
+							</div>
+
+							<div class="form-field">
+								<label for="join-eui-v11" class="form-label">JoinEUI:</label>
+								<input type="text" id="join-eui-v11" name="joinEui" class="form-input" placeholder="0000000000000000" />
+							</div>
+						</div>
+						</div>
+						</div>
+
+						<div class="form-actions">
+							<button type="submit" class="btn-primary">
+								Tilføj Måler
+							</button>
+						</div>
+					</form>
+				</div>
+			</div>
+			</div>
+			</div>
+		</div>
+	</div>
+</Layout>

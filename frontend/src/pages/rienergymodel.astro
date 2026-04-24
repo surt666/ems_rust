@@ -1,0 +1,625 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="Resource Insights - Energimodel">
+	<div class="page-container">
+
+		<!-- === VIEW 1: Overview table === -->
+		<div id="view-overview">
+			<div class="alarm-header">
+				<div>
+					<h1 class="page-title">Energimodel</h1>
+					<p class="alarm-subtitle">Oversigt over bygningers energimodeller</p>
+				</div>
+				<div class="alarm-actions">
+					<button type="button" class="btn-icon" aria-label="Information om energimodel"
+						_="on click remove @hidden from #info-dialog then call #info-dialog.showModal()">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<circle cx="12" cy="12" r="10"/><path d="M12 16v-4m0-4h.01"/>
+						</svg>
+					</button>
+				</div>
+			</div>
+
+			<div class="table-panel">
+				<div style="overflow-x: auto;">
+					<table class="data-table em-table" id="em-overview-table">
+						<thead>
+							<tr>
+								<th style="width: 36px;">
+									<input type="checkbox" class="form-checkbox" />
+								</th>
+								<th class="em-sortable" _="on click send sort(column:'area') to #em-overview-table">Opvarmet areal</th>
+								<th class="em-sortable" _="on click send sort(column:'type') to #em-overview-table">Energimodel type</th>
+								<th class="em-sortable" _="on click send sort(column:'valid') to #em-overview-table">Gyldig fra</th>
+								<th class="em-sortable" _="on click send sort(column:'quality') to #em-overview-table">Kvalitet</th>
+								<th class="em-sortable" _="on click send sort(column:'baseload') to #em-overview-table">Baseload daglig</th>
+								<th class="em-sortable">Baseload pr. m²</th>
+								<th class="em-sortable">Basistemp. varme</th>
+								<th class="em-sortable">Energi pr. VGD</th>
+								<th class="em-sortable">Energi pr. VGD pr. m²</th>
+								<th class="em-sortable">Basistemp. køling</th>
+								<th class="em-sortable">Energi pr. KGD</th>
+								<th class="em-sortable">Energi pr. KGD pr. m²</th>
+								<th style="width: 40px;"></th>
+							</tr>
+						</thead>
+						<tbody>
+							<tr>
+								<td><input type="checkbox" class="form-checkbox" /></td>
+								<td>17500 m²</td>
+								<td>Hybrid</td>
+								<td>01-01-2025</td>
+								<td><span class="em-quality em-quality--hoj">Høj</span></td>
+								<td class="em-num">6.467,51 kWh</td>
+								<td class="em-num">3,80 kWh</td>
+								<td class="em-temp em-temp--warm">6,0 °C</td>
+								<td class="em-num">424,37 kWh</td>
+								<td class="em-num">0,02 kWh</td>
+								<td class="em-temp em-temp--cool">6,5 °C</td>
+								<td class="em-num">52,42 kWh</td>
+								<td class="em-num">0,00 kWh</td>
+								<td>
+									<details class="dropdown">
+										<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+											<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+										</summary>
+										<div class="dropdown-menu">
+											<button type="button" class="dropdown-item">Gå til forbrug</button>
+											<button type="button" class="dropdown-item" _="on click add @hidden to #view-overview then remove @hidden from #view-building">Gå til energimodel</button>
+										</div>
+									</details>
+								</td>
+							</tr>
+							<tr>
+								<td><input type="checkbox" class="form-checkbox" /></td>
+								<td>101 m²</td>
+								<td>Simpel</td>
+								<td>01-01-2025</td>
+								<td><span class="em-quality em-quality--lav">Lav</span></td>
+								<td class="em-num">0,00 kWh</td>
+								<td class="em-num">-</td>
+								<td class="em-num">-</td>
+								<td class="em-num">-</td>
+								<td class="em-num">-</td>
+								<td class="em-num">-</td>
+								<td class="em-num">-</td>
+								<td class="em-num">-</td>
+								<td>
+									<details class="dropdown">
+										<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+											<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+										</summary>
+										<div class="dropdown-menu">
+											<button type="button" class="dropdown-item">Gå til forbrug</button>
+											<button type="button" class="dropdown-item" _="on click add @hidden to #view-overview then remove @hidden from #view-building">Gå til energimodel</button>
+										</div>
+									</details>
+								</td>
+							</tr>
+							<tr>
+								<td><input type="checkbox" class="form-checkbox" /></td>
+								<td>1678 m²</td>
+								<td>Hybrid</td>
+								<td>01-01-2025</td>
+								<td><span class="em-quality em-quality--hoj">Høj</span></td>
+								<td class="em-num">118,23 kWh</td>
+								<td class="em-num">0,07 kWh</td>
+								<td class="em-temp em-temp--warm">14,0 °C</td>
+								<td class="em-num">46,68 kWh</td>
+								<td class="em-num">0,03 kWh</td>
+								<td class="em-num">-</td>
+								<td class="em-num">-</td>
+								<td class="em-num">-</td>
+								<td>
+									<details class="dropdown">
+										<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+											<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+										</summary>
+										<div class="dropdown-menu">
+											<button type="button" class="dropdown-item">Gå til forbrug</button>
+											<button type="button" class="dropdown-item" _="on click add @hidden to #view-overview then remove @hidden from #view-building">Gå til energimodel</button>
+										</div>
+									</details>
+								</td>
+							</tr>
+							<tr>
+								<td><input type="checkbox" class="form-checkbox" /></td>
+								<td>600 m²</td>
+								<td>Hybrid</td>
+								<td>01-01-2025</td>
+								<td><span class="em-quality em-quality--lav">Lav</span></td>
+								<td class="em-num">34,79 kWh</td>
+								<td class="em-num">0,02 kWh</td>
+								<td class="em-temp em-temp--warm">20,0 °C</td>
+								<td class="em-num">1,77 kWh</td>
+								<td class="em-num">0,00 kWh</td>
+								<td class="em-temp em-temp--cool">20,0 °C</td>
+								<td class="em-num">42,71 kWh</td>
+								<td class="em-num">0,07 kWh</td>
+								<td>
+									<details class="dropdown">
+										<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+											<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+										</summary>
+										<div class="dropdown-menu">
+											<button type="button" class="dropdown-item">Gå til forbrug</button>
+											<button type="button" class="dropdown-item" _="on click add @hidden to #view-overview then remove @hidden from #view-building">Gå til energimodel</button>
+										</div>
+									</details>
+								</td>
+							</tr>
+							<tr>
+								<td><input type="checkbox" class="form-checkbox" /></td>
+								<td>1800 m²</td>
+								<td>Hybrid</td>
+								<td>01-01-2025</td>
+								<td><span class="em-quality em-quality--mellem">Mellem</span></td>
+								<td class="em-num">121,45 kWh</td>
+								<td class="em-num">0,07 kWh</td>
+								<td class="em-temp em-temp--warm">15,5 °C</td>
+								<td class="em-num">45,18 kWh</td>
+								<td class="em-num">0,03 kWh</td>
+								<td class="em-num">-</td>
+								<td class="em-num">-</td>
+								<td class="em-num">-</td>
+								<td>
+									<details class="dropdown">
+										<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+											<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+										</summary>
+										<div class="dropdown-menu">
+											<button type="button" class="dropdown-item">Gå til forbrug</button>
+											<button type="button" class="dropdown-item" _="on click add @hidden to #view-overview then remove @hidden from #view-building">Gå til energimodel</button>
+										</div>
+									</details>
+								</td>
+							</tr>
+							<tr>
+								<td><input type="checkbox" class="form-checkbox" /></td>
+								<td>800 m²</td>
+								<td>Hybrid</td>
+								<td>01-01-2025</td>
+								<td><span class="em-quality em-quality--mellem">Mellem</span></td>
+								<td class="em-num">46,09 kWh</td>
+								<td class="em-num">0,03 kWh</td>
+								<td class="em-temp em-temp--warm">20,0 °C</td>
+								<td class="em-num">4,80 kWh</td>
+								<td class="em-num">0,01 kWh</td>
+								<td class="em-temp em-temp--cool">11,5 °C</td>
+								<td class="em-num">1,05 kWh</td>
+								<td class="em-num">0,00 kWh</td>
+								<td>
+									<details class="dropdown">
+										<summary class="btn-icon btn-icon--sm" aria-label="Handlinger">
+											<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+										</summary>
+										<div class="dropdown-menu">
+											<button type="button" class="dropdown-item">Gå til forbrug</button>
+											<button type="button" class="dropdown-item" _="on click add @hidden to #view-overview then remove @hidden from #view-building">Gå til energimodel</button>
+										</div>
+									</details>
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+
+		<!-- === VIEW 3: Building year-by-year cards === -->
+		<div id="view-building" hidden>
+			<div class="alarm-header">
+				<div>
+					<h1 class="page-title">Energimodel — Administrationsbygning</h1>
+					<p class="alarm-subtitle">Årlige energimodeller for bygningen</p>
+				</div>
+				<div class="alarm-actions">
+					<button type="button" class="btn-secondary"
+						_="on click add @hidden to #view-building then remove @hidden from #view-overview">Tilbage til oversigt</button>
+					<button type="button" class="btn-icon" aria-label="Information om energimodel"
+						_="on click remove @hidden from #info-dialog then call #info-dialog.showModal()">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<circle cx="12" cy="12" r="10"/><path d="M12 16v-4m0-4h.01"/>
+						</svg>
+					</button>
+				</div>
+			</div>
+
+			<div class="em-cards">
+				<!-- EM_2024 -->
+				<div class="em-card" _="on click add @hidden to #view-building then remove @hidden from #view-meter">
+					<div class="em-card-header">
+						<div>
+							<span class="em-card-title">EM_2024</span>
+							<span class="em-quality em-quality--hoj">Høj</span>
+						</div>
+						<span class="em-card-type">Hybrid</span>
+					</div>
+
+					<div class="em-card-meta">
+						<div>
+							<span class="em-card-label">Gyldig fra</span>
+							<span class="em-card-meta-value">1.1.2025</span>
+						</div>
+						<div>
+							<span class="em-card-label">Datasæt periode</span>
+							<span class="em-card-meta-value">1.1.2024 - 30.12.2024</span>
+						</div>
+					</div>
+
+					<div class="em-card-figures">
+						<div>
+							<span class="em-card-big">1.877.148 kWh</span>
+							<span class="em-card-label">Årligt forbrug (klimakorrigeret)</span>
+						</div>
+						<div>
+							<span class="em-card-big">6.468 kWh</span>
+							<span class="em-card-label">Baseload daglig</span>
+						</div>
+					</div>
+
+					<div class="em-card-temps">
+						<span class="em-card-label">Basistemperaturer</span>
+						<div class="em-temp-bar">
+							<div class="em-temp-bar-label">
+								<span class="em-temp em-temp--warm">Opvarmning 6.0°</span>
+							</div>
+							<div class="em-temp-track">
+								<div class="em-temp-fill em-temp-fill--heat" style="width: 35%;"></div>
+							</div>
+						</div>
+						<div class="em-temp-bar">
+							<div class="em-temp-bar-endpoints">
+								<span>6.5°</span>
+								<span>Køling</span>
+							</div>
+							<div class="em-temp-track">
+								<div class="em-temp-fill em-temp-fill--cool" style="width: 65%;"></div>
+							</div>
+						</div>
+					</div>
+
+					<div class="em-card-factors">
+						<span class="em-card-label">Afhængighedsfaktor</span>
+						<div class="em-factor-values">
+							<span>424,37 kWh pr VGD</span>
+							<span>52,42 kWh pr KGD</span>
+						</div>
+					</div>
+				</div>
+
+				<!-- EM_2023 -->
+				<div class="em-card" _="on click add @hidden to #view-building then remove @hidden from #view-meter">
+					<div class="em-card-header">
+						<div>
+							<span class="em-card-title">EM_2023</span>
+							<span class="em-quality em-quality--mellem">Mellem</span>
+						</div>
+						<span class="em-card-type">Hybrid</span>
+					</div>
+
+					<div class="em-card-meta">
+						<div>
+							<span class="em-card-label">Gyldig fra</span>
+							<span class="em-card-meta-value">1.1.2024</span>
+						</div>
+						<div>
+							<span class="em-card-label">Datasæt periode</span>
+							<span class="em-card-meta-value">2.1.2023 - 1.1.2024</span>
+						</div>
+					</div>
+
+					<div class="em-card-figures">
+						<div>
+							<span class="em-card-big">1.807.633 kWh</span>
+							<span class="em-card-label">Årligt forbrug (klimakorrigeret)</span>
+						</div>
+						<div>
+							<span class="em-card-big">6.235 kWh</span>
+							<span class="em-card-label">Baseload daglig</span>
+						</div>
+					</div>
+
+					<div class="em-card-temps">
+						<span class="em-card-label">Basistemperaturer</span>
+						<div class="em-temp-bar">
+							<div class="em-temp-bar-label">
+								<span class="em-temp em-temp--warm">Opvarmning 6.0°</span>
+							</div>
+							<div class="em-temp-track">
+								<div class="em-temp-fill em-temp-fill--heat" style="width: 30%;"></div>
+							</div>
+						</div>
+						<div class="em-temp-bar">
+							<div class="em-temp-bar-endpoints">
+								<span>6.0°</span>
+								<span>Køling</span>
+							</div>
+							<div class="em-temp-track">
+								<div class="em-temp-fill em-temp-fill--cool" style="width: 70%;"></div>
+							</div>
+						</div>
+					</div>
+
+					<div class="em-card-factors">
+						<span class="em-card-label">Afhængighedsfaktor</span>
+						<div class="em-factor-values">
+							<span>415,99 kWh pr VGD</span>
+							<span>70,93 kWh pr KGD</span>
+						</div>
+					</div>
+				</div>
+
+				<!-- EM_2022 -->
+				<div class="em-card" _="on click add @hidden to #view-building then remove @hidden from #view-meter">
+					<div class="em-card-header">
+						<div>
+							<span class="em-card-title">EM_2022</span>
+							<span class="em-quality em-quality--mellem">Mellem</span>
+						</div>
+						<span class="em-card-type">Hybrid</span>
+					</div>
+
+					<div class="em-card-meta">
+						<div>
+							<span class="em-card-label">Gyldig fra</span>
+							<span class="em-card-meta-value">1.1.2023</span>
+						</div>
+						<div>
+							<span class="em-card-label">Datasæt periode</span>
+							<span class="em-card-meta-value">3.1.2022 - 2.1.2023</span>
+						</div>
+					</div>
+
+					<div class="em-card-figures">
+						<div>
+							<span class="em-card-big">1.809.991 kWh</span>
+							<span class="em-card-label">Årligt forbrug (klimakorrigeret)</span>
+						</div>
+						<div>
+							<span class="em-card-big">6.720 kWh</span>
+							<span class="em-card-label">Baseload daglig</span>
+						</div>
+					</div>
+
+					<div class="em-card-temps">
+						<span class="em-card-label">Basistemperaturer</span>
+						<div class="em-temp-bar">
+							<div class="em-temp-bar-endpoints">
+								<span>11.5°</span>
+								<span>Køling</span>
+							</div>
+							<div class="em-temp-track">
+								<div class="em-temp-fill em-temp-fill--cool" style="width: 80%;"></div>
+							</div>
+						</div>
+					</div>
+
+					<div class="em-card-factors">
+						<span class="em-card-label">Afhængighedsfaktor</span>
+						<div class="em-factor-values">
+							<span>94,30 kWh pr KGD</span>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- === VIEW 4: Meter detail === -->
+		<div id="view-meter" hidden>
+			<div class="alarm-header">
+				<div>
+					<h1 class="page-title">Måler detaljer for energimodel EM_2024</h1>
+				</div>
+				<div class="alarm-actions">
+					<div role="tablist" class="em-meter-tabs">
+						<button type="button" role="tab" class="btn-tab" command="--show" commandfor="meter-summeringsmalere" aria-expanded="true">Summeringsmålere (5)</button>
+						<button type="button" role="tab" class="btn-tab" command="--show" commandfor="meter-bimalere" aria-expanded="false">Bimålere (16)</button>
+					</div>
+					<button type="button" class="btn-secondary"
+						_="on click add @hidden to #view-meter then remove @hidden from #view-building">Tilbage</button>
+					<button type="button" class="btn-icon" aria-label="Information om energimodel"
+						_="on click remove @hidden from #info-dialog then call #info-dialog.showModal()">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<circle cx="12" cy="12" r="10"/><path d="M12 16v-4m0-4h.01"/>
+						</svg>
+					</button>
+				</div>
+			</div>
+
+			<!-- Summeringsmålere -->
+			<div id="meter-summeringsmalere" role="tabpanel">
+				<!-- Meter sub-tabs -->
+				<div class="em-meter-subtabs" role="tablist">
+					<button type="button" role="tab" class="em-meter-subtab em-meter-subtab--active" command="--show" commandfor="meter-gas" aria-expanded="true">
+						<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="color: var(--warning);"><circle cx="8" cy="8" r="6"/></svg>
+						Gasmåler afregning
+						<span class="em-meter-subtab-type">Regression</span>
+					</button>
+					<button type="button" role="tab" class="em-meter-subtab" command="--show" commandfor="meter-fjernvarme" aria-expanded="false">
+						Fjernvarme afregning
+						<span class="em-meter-subtab-type">Regression</span>
+					</button>
+					<button type="button" role="tab" class="em-meter-subtab" command="--show" commandfor="meter-el" aria-expanded="false">
+						Elmåler afregning
+						<span class="em-meter-subtab-type">Simpel</span>
+					</button>
+					<button type="button" role="tab" class="em-meter-subtab" command="--show" commandfor="meter-el-hoved" aria-expanded="false">
+						Elmåler afregning Hovedtavle E1
+						<span class="em-meter-subtab-type">Regression</span>
+					</button>
+					<button type="button" role="tab" class="em-meter-subtab" command="--show" commandfor="meter-el-admin" aria-expanded="false">
+						Elmåler afregning Administration
+						<span class="em-meter-subtab-type">Simpel</span>
+					</button>
+				</div>
+
+				<!-- Gasmåler detail -->
+				<div id="meter-gas" role="tabpanel">
+					<div class="em-meter-results">
+						<!-- Meter info card -->
+						<div class="em-meter-info-card">
+							<div class="em-meter-info-header">
+								<span class="em-meter-id">540246</span>
+								<span class="energy-badge energy-fjernvarme">
+									<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle;"><circle cx="8" cy="8" r="6"/></svg>
+									Varme
+								</span>
+							</div>
+							<span class="em-card-label">Gasmåler afregning</span>
+
+							<div class="em-meter-info-details">
+								<div>
+									<span class="em-card-label">Datasæt periode</span>
+									<span>1.1.2024 - 30.12.2024</span>
+								</div>
+								<div>
+									<span class="em-card-label">Datasæt oplæsning</span>
+									<span>Ugevisning</span>
+								</div>
+								<div>
+									<span class="em-card-label">Energimodel type</span>
+									<span>Regression</span>
+								</div>
+							</div>
+						</div>
+
+						<!-- Result cards -->
+						<div class="em-result-card em-result-card--best">
+							<div class="em-result-header">
+								<span class="em-result-rank">Bedste resultat</span>
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="#22c55e"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14l-5-4.87 6.91-1.01z"/></svg>
+							</div>
+							<div class="em-result-figures">
+								<div>
+									<span class="em-card-big">45,74 kWh</span>
+									<span class="em-card-label">Baseload daglig</span>
+								</div>
+								<span class="em-result-r2">R² = 0,908</span>
+							</div>
+							<div class="em-result-factor">
+								<span>111,23 kWh pr VGD</span>
+							</div>
+							<div class="em-result-temp">
+								<span class="em-temp em-temp--warm">Opvarmning 6.0°</span>
+								<div class="em-temp-track">
+									<div class="em-temp-fill em-temp-fill--heat" style="width: 30%;"></div>
+								</div>
+							</div>
+						</div>
+
+						<div class="em-result-card">
+							<div class="em-result-header">
+								<span class="em-result-rank">2. bedst</span>
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="#f97316"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14l-5-4.87 6.91-1.01z"/></svg>
+							</div>
+							<div class="em-result-figures">
+								<div>
+									<span class="em-card-big">37,34 kWh</span>
+									<span class="em-card-label">Baseload daglig</span>
+								</div>
+								<span class="em-result-r2">R² = 0,908</span>
+							</div>
+							<div class="em-result-factor">
+								<span>102,83 kWh pr VGD</span>
+							</div>
+							<div class="em-result-temp">
+								<span class="em-temp em-temp--warm">Opvarmning 6.5°</span>
+								<div class="em-temp-track">
+									<div class="em-temp-fill em-temp-fill--heat" style="width: 32%;"></div>
+								</div>
+							</div>
+						</div>
+
+						<div class="em-result-card">
+							<div class="em-result-header">
+								<span class="em-result-rank">3. bedst</span>
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="#38bdf8"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14l-5-4.87 6.91-1.01z"/></svg>
+							</div>
+							<div class="em-result-figures">
+								<div>
+									<span class="em-card-big">54,72 kWh</span>
+									<span class="em-card-label">Baseload daglig</span>
+								</div>
+								<span class="em-result-r2">R² = 0,903</span>
+							</div>
+							<div class="em-result-factor">
+								<span>120,33 kWh pr VGD</span>
+							</div>
+							<div class="em-result-temp">
+								<span class="em-temp em-temp--warm">Opvarmning 5.5°</span>
+								<div class="em-temp-track">
+									<div class="em-temp-fill em-temp-fill--heat" style="width: 28%;"></div>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Other meter panels (hidden placeholders) -->
+				<div id="meter-fjernvarme" role="tabpanel" hidden>
+					<div class="em-meter-results">
+						<div class="em-meter-info-card">
+							<span class="em-card-label" style="color: var(--text-muted);">Fjernvarme afregning — Regression model data</span>
+						</div>
+					</div>
+				</div>
+				<div id="meter-el" role="tabpanel" hidden>
+					<div class="em-meter-results">
+						<div class="em-meter-info-card">
+							<span class="em-card-label" style="color: var(--text-muted);">Elmåler afregning — Simpel model data</span>
+						</div>
+					</div>
+				</div>
+				<div id="meter-el-hoved" role="tabpanel" hidden>
+					<div class="em-meter-results">
+						<div class="em-meter-info-card">
+							<span class="em-card-label" style="color: var(--text-muted);">Elmåler afregning Hovedtavle E1 — Regression model data</span>
+						</div>
+					</div>
+				</div>
+				<div id="meter-el-admin" role="tabpanel" hidden>
+					<div class="em-meter-results">
+						<div class="em-meter-info-card">
+							<span class="em-card-label" style="color: var(--text-muted);">Elmåler afregning Administration — Simpel model data</span>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Bimålere -->
+			<div id="meter-bimalere" role="tabpanel" hidden>
+				<p style="color: var(--text-muted); padding: 20px;">16 bimålere tilgængelige. Vælg en bimåler for at se energimodel detaljer.</p>
+			</div>
+		</div>
+
+		<!-- === VIEW 5: Info dialog === -->
+		<dialog id="info-dialog" hidden class="em-info-dialog" _="on click if event.target is me then call me.close() then add @hidden to me">
+			<div class="em-info-content">
+				<div class="em-info-header">
+					<h2>Energimodel</h2>
+					<button type="button" class="btn-icon btn-icon--sm" _="on click call #info-dialog.close() then add @hidden to #info-dialog" aria-label="Luk">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+					</button>
+				</div>
+
+				<div class="em-info-body">
+					<p>En energimodel for en bygning udtrykker bygningens <em>energieffektivitet</em> for opvarmning og køling. Jo mindre energi den bruger til opvarmning, når det er koldt udenfor, og jo mindre den bruger på køling, når det er varmt udenfor, jo mere energieffektiv er bygningen.</p>
+
+					<p>En bygnings energimodel opbygges af energimodeller fra bygningens summeringsmålere for hhv. varme og køling, hvilket kan være både varme-, køle- og elmålere. Historiske forbrugsdata fra summeringsmålere og data om lokale vejrforhold anvendes i avancerede regressionsanalyser til beregning af en ny energimodel for alle målere efter hvert kalenderår. Både målere og bygninger vil have en energimodel for hvert <em>hele</em> kalenderår, hvor de har været aktive i systemet. Der beregnes også energimodeller for alle bi-målere af typen varme-, køle- og elmålere i systemet.</p>
+
+					<h3>Oversigt og detaljevisning</h3>
+
+					<p>Bygningers energimodeller kan vises i <em>tabelform</em> ved at vælge hele firmaet eller en bygningsgruppe i hierarkiet. Tabellen viser de vigtigste egenskaber for en energimodel og kan derfor bruges til at identificere de bygninger i gruppen, der ligger højest eller lavest i forhold til en given egenskab. Disse bygninger er kandidater til at få deres energieffektivitet analyseret nærmere.</p>
+
+					<h3>Detaljevisning</h3>
+
+					<p>For at hjælpe med den dybere analyse, kan den enkelte bygnings energimodel vises i detaljer. I <em>detaljevisningen</em> kan man vurdere udviklingen i bygningens energieffektivitet ved at sammenligne med forrige års energimodeller. Derudover kan man undersøge energimodeller for hver af de varme-, køle- og el-summeringsmålere, der danner grundlag for en bygnings energimodel. Energimodeller for alle øvrige varme-, køle- og elmålere tilknyttet bygningen kan også undersøges.</p>
+				</div>
+			</div>
+		</dialog>
+
+	</div>
+</Layout>

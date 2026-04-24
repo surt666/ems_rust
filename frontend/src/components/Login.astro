@@ -1,0 +1,137 @@
+---
+---
+
+<div>
+	<div class="lang-switcher">
+		<label class="lang-label" data-i18n="login.language">Sprog</label>
+		<select id="langSelect" class="lang-select">
+			<option value="da">Dansk</option>
+			<option value="en">English</option>
+		</select>
+	</div>
+
+	<h1 class="login-form-title" data-i18n="login.title">Log ind</h1>
+	<p class="login-form-subtitle" data-i18n="login.subtitle">Indtast dine oplysninger for at fortsætte</p>
+
+	<form id="loginForm" class="form">
+		<div class="form-field">
+			<label for="username" class="form-label" data-i18n="login.username">Brugernavn</label>
+			<input
+				type="text"
+				id="username"
+				name="username"
+				required
+				class="form-input"
+				placeholder="Indtast brugernavn"
+				data-i18n-placeholder="login.username_placeholder"
+			/>
+		</div>
+
+		<div class="form-field">
+			<label for="password" class="form-label" data-i18n="login.password">Adgangskode</label>
+			<input
+				type="password"
+				id="password"
+				name="password"
+				required
+				class="form-input"
+				placeholder="Indtast adgangskode"
+				data-i18n-placeholder="login.password_placeholder"
+			/>
+		</div>
+
+		<button type="submit" id="loginButton" class="btn-login" data-i18n="login.submit">
+			Log ind
+		</button>
+	</form>
+
+	<div id="errorMessage" class="login-error"></div>
+	<div id="loadingMessage" class="login-loading" data-i18n="login.logging_in">Logger ind...</div>
+</div>
+
+<script>
+	import { signIn } from 'aws-amplify/auth';
+	import { getLocale, setLocale, applyTranslations } from '../lib/i18n';
+
+	function initLangSwitcher() {
+		const select = document.getElementById('langSelect') as HTMLSelectElement | null;
+		if (!select) return;
+
+		select.value = getLocale();
+
+		select.addEventListener('change', () => {
+			setLocale(select.value as 'da' | 'en');
+			applyTranslations();
+		});
+	}
+
+	function showError(message: string) {
+		const errorDiv = document.getElementById('errorMessage');
+		if (errorDiv) {
+			errorDiv.textContent = message;
+			errorDiv.style.display = 'block';
+		}
+	}
+
+	function hideError() {
+		const errorDiv = document.getElementById('errorMessage');
+		if (errorDiv) {
+			errorDiv.style.display = 'none';
+		}
+	}
+
+	function showLoading() {
+		const loadingDiv = document.getElementById('loadingMessage');
+		const button = document.getElementById('loginButton');
+		if (loadingDiv) loadingDiv.style.display = 'block';
+		if (button) button.disabled = true;
+	}
+
+	function hideLoading() {
+		const loadingDiv = document.getElementById('loadingMessage');
+		const button = document.getElementById('loginButton');
+		if (loadingDiv) loadingDiv.style.display = 'none';
+		if (button) button.disabled = false;
+	}
+
+	async function authenticateUser(username: string, password: string) {
+		try {
+			console.log('Starting authentication for:', username);
+			showLoading();
+			hideError();
+
+			const result = await signIn({ username, password });
+			console.log('SignIn result:', result);
+
+			if (result.isSignedIn) {
+				console.log('User signed in successfully');
+				localStorage.setItem('loginId', username);
+				hideLoading();
+				window.dispatchEvent(new CustomEvent('user-authenticated'));
+				window.location.href = '/main';
+			} else {
+				console.log('Sign in not completed, result:', result);
+				hideLoading();
+				showError('Authentication incomplete');
+			}
+		} catch (error) {
+			console.error('Authentication error:', error);
+			hideLoading();
+			showError(error.message || 'Authentication failed');
+		}
+	}
+
+	initLangSwitcher();
+	applyTranslations();
+
+	document.getElementById('loginForm')?.addEventListener('submit', (e) => {
+		e.preventDefault();
+
+		const username = (document.getElementById('username') as HTMLInputElement).value;
+		const password = (document.getElementById('password') as HTMLInputElement).value;
+
+		if (username && password) {
+			authenticateUser(username, password);
+		}
+	});
+</script>

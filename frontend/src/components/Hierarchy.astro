@@ -1,0 +1,16 @@
+---
+const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
+---
+<div id="container" class="sidebar-label">Hierarki</div>
+<div>
+    <ul class="nested-list">
+        <li hx-get={`${API_BASE_URL}/hierarchy/query/nodes`}
+            hx-vals="js:{user: localStorage.getItem('loginId')}"
+            hx-request='{"noHeaders": true}'
+            hx-target=".nested-list"
+            hx-trigger="load delay:100ms once"
+            style="cursor: pointer;">
+        <ul class="nested-list"></ul>
+        </li>
+    </ul>
+</div>
