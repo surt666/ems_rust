@@ -187,14 +187,40 @@ let query_sensor_ids cfg parent =
   | Error _ -> []
   | Ok { items = None; _ } -> []
   | Ok { items = Some rows; _ } ->
+      (* Prefer the dedicated `sensor_id` attribute; fall back to `gsi1pk` for
+         older edges, then parse the sk suffix (has_sensor#S#<uuid>). *)
       List.filter_map
         (fun kvs ->
-          match (List.assoc_opt "gsi1pk" kvs : Dyn.attribute_value option) with
-          | Some (Dyn.S sid_s) ->
-              (match Sensor_id.of_string sid_s with
+          let from_attr k =
+            match (List.assoc_opt k kvs : Dyn.attribute_value option) with
+            | Some (Dyn.S s) -> Some s
+            | _ -> None
+          in
+          let from_sk () =
+            match from_attr "sk" with
+            | Some sk when
+                String.length sk > String.length has_sensor_sk_prefix
+                && String.sub sk 0 (String.length has_sensor_sk_prefix)
+                   = has_sensor_sk_prefix ->
+                Some
+                  (String.sub sk (String.length has_sensor_sk_prefix)
+                     (String.length sk - String.length has_sensor_sk_prefix))
+            | _ -> None
+          in
+          let sid_s =
+            match from_attr "sensor_id" with
+            | Some s -> Some s
+            | None ->
+                (match from_attr "gsi1pk" with
+                 | Some s -> Some s
+                 | None -> from_sk ())
+          in
+          match sid_s with
+          | Some s ->
+              (match Sensor_id.of_string s with
                | Ok id -> Some id
                | Error _ -> None)
-          | _ -> None)
+          | None -> None)
         rows
 
 let transact_replace cfg ~old_created ~new_sensor =
@@ -348,6 +374,49 @@ let query_blocked_nodes cfg (user_id : User_id.t) =
           | _ -> None)
         rows
 
+let query_administrated_nodes cfg (user_id : User_id.t) =
+  let pk_val = s (User_id.to_string user_id) in
+  let prefix = Edge_kind.sk_verb Edge_kind.Administrates ^ "#" in
+  let input =
+    Dyn.make_query_input
+      ~key_condition_expression:"#pk = :pk AND begins_with(#sk, :sk)"
+      ~expression_attribute_names:[ ("#pk", "pk"); ("#sk", "sk") ]
+      ~expression_attribute_values:[ (":pk", pk_val); (":sk", s prefix) ]
+      ~table_name:cfg.table ()
+  in
+  match Dyn.Query.request cfg.ctx input with
+  | Error _ -> []
+  | Ok { items = None; _ } -> []
+  | Ok { items = Some rows; _ } ->
+      List.filter_map
+        (fun kvs ->
+          let from_gsi =
+            match (List.assoc_opt "gsi1pk" kvs : Dyn.attribute_value option) with
+            | Some (Dyn.S v) -> Some v
+            | _ -> None
+          in
+          let from_sk () =
+            match (List.assoc_opt "sk" kvs : Dyn.attribute_value option) with
+            | Some (Dyn.S sk) when
+                String.length sk > String.length prefix
+                && String.sub sk 0 (String.length prefix) = prefix ->
+                Some (String.sub sk (String.length prefix)
+                        (String.length sk - String.length prefix))
+            | _ -> None
+          in
+          let nid_s =
+            match from_gsi with
+            | Some v -> Some v
+            | None -> from_sk ()
+          in
+          match nid_s with
+          | Some s ->
+              (match Node_id.of_string s with
+               | Ok id -> Some id
+               | Error _ -> None)
+          | None -> None)
+        rows
+
 let query_blocked_users cfg (node_id : Node_id.t) =
   let pk_val = s (Node_id.to_string node_id) in
   let prefix = Edge_kind.gsi_verb Edge_kind.Blocked ^ "#" in
@@ -450,6 +519,8 @@ let run (cfg : cfg) (f : unit -> 'a) : 'a =
               Some (fun k -> continue k (query_blocked_nodes cfg id))
           | Effects.List_blocked_users id ->
               Some (fun k -> continue k (query_blocked_users cfg id))
+          | Effects.List_administrated_nodes id ->
+              Some (fun k -> continue k (query_administrated_nodes cfg id))
           | Effects.Delete_edge { from_; to_; kind } ->
               delete_edge cfg ~from_ ~to_ ~kind;
               Some (fun k -> continue k ())

@@ -132,9 +132,12 @@ let list_item ~id_str ~category ~user ~name ~parent_path ~is_leaf ~with_permissi
       encoded_id encoded_user
       (escape display_name)
 
-(* /hierarchy/query/nodes — list children of id (or top-level for user) *)
+(* /hierarchy/query/nodes — list children of id (or top-level for user).
+   Gated by administrates grants: a user only sees children of a node if they
+   have an Administrates edge on the node or any of its ancestors. No user or
+   no grants → empty list (not an error — HTMX treats it as "nothing to show"). *)
 let render_nodes ~params =
-  let user = Option.value ~default:"unknown" (List.assoc_opt "user" params) in
+  let user_s = Option.value ~default:"" (List.assoc_opt "user" params) in
   let id_opt = List.assoc_opt "id" params in
   let path_opt = List.assoc_opt "path" params in
   let with_perms =
@@ -152,27 +155,40 @@ let render_nodes ~params =
   match parent with
   | Error e -> html_error e
   | Ok parent_id ->
-      (match Hierarchy.list_child_refs parent_id with
-       | Error err ->
-           html_error ~status:(Errors.http_status err) (Errors.message err)
-       | Ok refs ->
-           let parent_path_for_children =
-             match id_opt with
-             | Some s when s <> "" -> path_opt
-             | _ -> Some "H#root"
-           in
-           let html =
-             String.concat "" (List.map (fun (id, name) ->
-               let lvl = Node_id.level id in
-               let cat = category_of_level lvl in
-               let is_leaf = cat = "building" in
-               list_item
-                 ~id_str:(Node_id.to_string id)
-                 ~category:cat ~user ~name
-                 ~parent_path:parent_path_for_children
-                 ~is_leaf ~with_permissions:with_perms) refs)
-           in
-           v2_html html)
+      (* The frontend passes either "U#<email>" or a bare email from login. *)
+      let normalized =
+        if String.length user_s >= 2 && String.sub user_s 0 2 = "U#" then user_s
+        else if user_s = "" then ""
+        else "U#" ^ user_s
+      in
+      let allowed =
+        match User_id.of_string normalized with
+        | Error _ -> false
+        | Ok uid -> Access.has_admin_access ~user_id:uid ~node_id:parent_id
+      in
+      if not allowed then v2_html ""
+      else
+        (match Hierarchy.list_child_refs parent_id with
+         | Error err ->
+             html_error ~status:(Errors.http_status err) (Errors.message err)
+         | Ok refs ->
+             let parent_path_for_children =
+               match id_opt with
+               | Some s when s <> "" -> path_opt
+               | _ -> Some "H#root"
+             in
+             let html =
+               String.concat "" (List.map (fun (id, name) ->
+                 let lvl = Node_id.level id in
+                 let cat = category_of_level lvl in
+                 let is_leaf = cat = "building" in
+                 list_item
+                   ~id_str:(Node_id.to_string id)
+                   ~category:cat ~user:user_s ~name
+                   ~parent_path:parent_path_for_children
+                   ~is_leaf ~with_permissions:with_perms) refs)
+             in
+             v2_html html)
 
 (* Format a metadata JSON blob as a simple key/value form. *)
 let rec metadata_rows (json : Yojson.Safe.t) : string =
@@ -229,10 +245,13 @@ let render_node ~params =
                   | `Assoc [] | `Null -> {|<p style="color: var(--text-muted);">No metadata available</p>|}
                   | j -> Printf.sprintf {|<div class="form">%s</div>|} (metadata_rows j)
                 in
-                let category = category_of_level (Node_id.level n.Node.id) in
+                let level = Node_id.level n.Node.id in
                 let show_sensors =
-                  List.mem category ["building"; "property"; "company"; "area"]
+                  match Schema_check.find_for n.Node.id with
+                  | Ok (_, schema) -> Schema.allows_sensors schema level
+                  | Error _ -> false
                 in
+                let nid_str = Node_id.to_string n.Node.id in
                 let sensor_block =
                   if not show_sensors then ""
                   else
@@ -240,10 +259,44 @@ let render_node ~params =
                       {|<div style="margin-top: 2rem;">
   <div style="display: grid; grid-template-columns: 1fr auto; align-items: center; margin-bottom: 1rem;">
     <h2 class="section-title" style="margin-bottom: 0;">Sensors <span id="loading-indicator" class="htmx-indicator" style="display: none; font-size: var(--text-sm); color: var(--accent); margin-left: 8px;">Loading...</span></h2>
+    <button type="button" _="on click call #add-sensor-dialog.showModal()" class="btn-primary">Tilføj sensor</button>
   </div>
+
+  <dialog id="add-sensor-dialog" _="on click if event.target == me then call me.close()">
+    <div class="dialog-header">
+      <h2>TILFØJ SENSOR</h2>
+      <button type="button" _="on click call #add-sensor-dialog.close()" class="btn-close">&times;</button>
+    </div>
+    <div class="dialog-body">
+      <div id="sensor-form-error" class="login-error" style="display:none; margin-bottom: 1rem;"></div>
+      <form id="add-sensor-form" class="form"
+            hx-post="/hierarchy/command"
+            hx-swap="none"
+            hx-on::after-request="if(event.detail.elt.id === 'add-sensor-form' && event.detail.successful) { document.querySelector('#add-sensor-dialog').close(); htmx.trigger('#sensor-list', 'load'); } else if(event.detail.elt.id === 'add-sensor-form') { document.getElementById('sensor-form-error').textContent = event.detail.xhr.responseText; document.getElementById('sensor-form-error').style.display = 'block'; }">
+        <input type="hidden" name="action" value="attach_sensor" />
+        <input type="hidden" name="data.parent_id" value="%s" />
+        <div class="form-row"><label class="form-label">DAQ Id</label><input type="text" name="data.daq_id" required class="form-input" /><span class="required">*</span></div>
+        <div class="form-row"><label class="form-label">Purpose</label><input type="text" name="data.purpose" required class="form-input" /><span class="required">*</span></div>
+        <div class="form-row"><label class="form-label">Meter type</label>
+          <select name="data.meter_type" required class="form-select">
+            <option value="counter">counter</option>
+            <option value="gauge">gauge</option>
+          </select>
+          <span class="required">*</span>
+        </div>
+        <div class="form-row"><label class="form-label">Unit</label><input type="text" name="data.unit" class="form-input" /></div>
+      </form>
+    </div>
+    <div class="dialog-footer">
+      <button type="submit" form="add-sensor-form" class="btn-warning">Gem</button>
+      <div></div>
+      <button type="button" _="on click call #add-sensor-dialog.close()" class="btn-warning">Luk</button>
+    </div>
+  </dialog>
+
   <ul id="sensor-list" style="display: grid; gap: 8px;" hx-get="/hierarchy/query/sensors" hx-vals='{"nodepath": "%s"}' hx-trigger="load" hx-target="#sensor-list" hx-swap="innerHTML" hx-request='{"noHeaders": true}' hx-indicator="#loading-indicator"><li style="color: var(--text-muted);">Loading sensors...</li></ul>
 </div>|}
-                      (escape parent_str)
+                      (escape nid_str) (escape parent_str)
                 in
                 let html =
                   Printf.sprintf

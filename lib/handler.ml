@@ -36,20 +36,22 @@ let parse_form body =
         let v = String.sub pair (i + 1) (String.length pair - i - 1) in
         Some (url_decode k, url_decode v))
 
-(* Build JSON command body from flat form fields like "action=create_user&data.email=a@b.c". *)
+(* Build JSON command body from flat form fields like "action=attach_sensor&data.daq_id=foo".
+   The OCaml command dispatcher expects a flat JSON object (action + fields side by side),
+   so strip any "data." prefix rather than nesting. *)
 let form_to_command_json fields =
-  let action = try List.assoc "action" fields with Not_found -> "" in
-  let data_fields =
+  let flat =
     List.filter_map (fun (k, v) ->
-      match strip_prefix "data." k with
-      | Some name -> Some (name, `String v)
-      | None -> None) fields
+      if k = "" then None
+      else
+        let key =
+          match strip_prefix "data." k with
+          | Some name -> name
+          | None -> k
+        in
+        Some (key, `String v)) fields
   in
-  let json = `Assoc [
-    ("action", `String action);
-    ("data", `Assoc data_fields);
-  ] in
-  Yojson.Safe.to_string json
+  Yojson.Safe.to_string (`Assoc flat)
 
 let content_type (req : Api_gateway.V2.request) =
   match List.assoc_opt "content-type" req.headers with
@@ -58,15 +60,24 @@ let content_type (req : Api_gateway.V2.request) =
       (match List.assoc_opt "Content-Type" req.headers with
        | Some v -> v | None -> "")
 
+let lower s = String.lowercase_ascii s
+
+let b64_decode s =
+  match Base64.decode s with
+  | Ok v -> v
+  | Error _ -> s
+
 let handle_command (req : Api_gateway.V2.request) =
-  let raw = Option.value ~default:"" req.body in
-  let ct = content_type req in
+  let raw0 = Option.value ~default:"" req.body in
+  let raw = if req.is_base64_encoded then b64_decode raw0 else raw0 in
+  let ct = lower (content_type req) in
+  let is_form =
+    let needle = "application/x-www-form-urlencoded" in
+    String.length ct >= String.length needle
+    && String.sub ct 0 (String.length needle) = needle
+  in
   let body =
-    if String.length ct >= String.length "application/x-www-form-urlencoded"
-       && String.sub ct 0 (String.length "application/x-www-form-urlencoded")
-          = "application/x-www-form-urlencoded"
-    then form_to_command_json (parse_form raw)
-    else raw
+    if is_form then form_to_command_json (parse_form raw) else raw
   in
   Api_command.dispatch ~body
 

@@ -73,10 +73,13 @@ let delete_user id = Effect.perform (Delete_user id)
 type _ Effect.t +=
   | List_blocked_nodes : User_id.t -> Node_id.t list Effect.t
   | List_blocked_users : Node_id.t -> User_id.t list Effect.t
+  | List_administrated_nodes : User_id.t -> Node_id.t list Effect.t
   | Delete_edge        : { from_ : string; to_ : string; kind : Edge_kind.t }
                           -> unit Effect.t
 
 let list_blocked_nodes id = Effect.perform (List_blocked_nodes id)
 let list_blocked_users id = Effect.perform (List_blocked_users id)
+let list_administrated_nodes id =
+  Effect.perform (List_administrated_nodes id)
 let delete_edge ~from_ ~to_ ~kind =
   Effect.perform (Delete_edge { from_; to_; kind })

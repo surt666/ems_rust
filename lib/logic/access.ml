@@ -52,3 +52,38 @@ let effective_permission ~user_id ~node_id =
 
 let list_blocked_nodes ~user_id = Ok (Effects.list_blocked_nodes user_id)
 let list_blocked_users ~node_id = Ok (Effects.list_blocked_users node_id)
+
+(* ---- grant edges (Administrates) ---- *)
+
+let grant_administrates ~user_id ~node_id () =
+  let* _ =
+    match Effects.get_user user_id with
+    | Some u -> Ok u
+    | None -> Error (Errors.Not_found_user user_id)
+  in
+  let* _ =
+    if Node_id.is_root node_id then Ok ()
+    else
+      match Effects.get_node node_id with
+      | Some _ -> Ok ()
+      | None -> Error (Errors.Not_found node_id)
+  in
+  let created = Effects.now () in
+  Effects.put_edge
+    ~from_:(User_id.to_string user_id)
+    ~to_:(Node_id.to_string node_id)
+    ~kind:Edge_kind.Administrates ~name:"" ~created;
+  Ok ()
+
+let list_administrated_nodes ~user_id =
+  Ok (Effects.list_administrated_nodes user_id)
+
+(* True if the user has an administrates edge to `node_id` or any ancestor
+   (including root). *)
+let has_admin_access ~user_id ~node_id =
+  let grants = Effects.list_administrated_nodes user_id in
+  if List.exists (fun g -> Node_id.equal g node_id) grants then true
+  else
+    List.exists
+      (fun a -> List.exists (fun g -> Node_id.equal g a) grants)
+      (ancestors_of node_id)

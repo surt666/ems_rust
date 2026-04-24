@@ -207,6 +207,20 @@ let run (st : state) (f : unit -> 'a) : 'a =
                   !(st.edges)
               in
               Some (fun k -> continue k ids)
+          | Effects.List_administrated_nodes user_id ->
+              let user_s = User_id.to_string user_id in
+              let ids =
+                List.filter_map
+                  (fun e ->
+                    match e.kind with
+                    | Edge_kind.Administrates when e.from_ = user_s ->
+                        (match Node_id.of_string e.to_ with
+                         | Ok id -> Some id
+                         | Error _ -> None)
+                    | _ -> None)
+                  !(st.edges)
+              in
+              Some (fun k -> continue k ids)
           | Effects.Delete_edge { from_; to_; kind } ->
               st.edges :=
                 List.filter

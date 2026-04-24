@@ -70,7 +70,7 @@
     ],
     "Code": {
      "S3Bucket": "cdk-hnb659fds-assets-339712745226-eu-central-1",
-     "S3Key": "393030bd5722d7493a23f3cb235e28e9d5990743fa0ccb036901234f18b7d7ad.zip"
+     "S3Key": "345979858734bea49e6d368b665a46723ed58eaa54283162ef070b91daf6c9e4.zip"
     },
     "Description": "EMS OCaml Hierarchy Service Lambda Function",
     "Environment": {
@@ -95,7 +95,7 @@
    ],
    "Metadata": {
     "aws:cdk:path": "OcamlHierarchyStack/OcamlHierarchyFunction/Resource",
-    "aws:asset:path": "asset.393030bd5722d7493a23f3cb235e28e9d5990743fa0ccb036901234f18b7d7ad.zip",
+    "aws:asset:path": "asset.345979858734bea49e6d368b665a46723ed58eaa54283162ef070b91daf6c9e4.zip",
     "aws:asset:is-bundled": false,
     "aws:asset:property": "Code"
    }

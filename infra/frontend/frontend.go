@@ -50,8 +50,8 @@ func NewFrontendStack(scope constructs.Construct, id string, props *FrontendStac
 	apiDomainClean := awscdk.Fn_Select(jsii.Number(0), awscdk.Fn_Split(jsii.String("/"), apiDomain, nil))
 
 	// One cache policy reused for every API path — pass-through, no caching.
-	apiCachePolicy := awscloudfront.NewCachePolicy(stack, jsii.String("OcamlHierarchyApiCachePolicy"), &awscloudfront.CachePolicyProps{
-		CachePolicyName:            jsii.String("OcamlHierarchyApiCachePolicy"),
+	apiCachePolicy := awscloudfront.NewCachePolicy(stack, jsii.String("OcamlFrontendApiCachePolicy"), &awscloudfront.CachePolicyProps{
+		CachePolicyName:            jsii.String("OcamlFrontendApiCachePolicy"),
 		Comment:                    jsii.String("Pass-through cache policy for OCaml hierarchy API"),
 		DefaultTtl:                 awscdk.Duration_Seconds(jsii.Number(0)),
 		MinTtl:                     awscdk.Duration_Seconds(jsii.Number(0)),
@@ -104,10 +104,10 @@ func NewFrontendStack(scope constructs.Construct, id string, props *FrontendStac
 		DistributionPaths: &[]*string{jsii.String("/*")},
 	})
 
-	awsssm.NewStringParameter(stack, jsii.String("CloudFrontUrlParameter"), &awsssm.StringParameterProps{
-		ParameterName: jsii.String("/frontend/cloudfront-url"),
+	awsssm.NewStringParameter(stack, jsii.String("OcamlCloudFrontUrlParameter"), &awsssm.StringParameterProps{
+		ParameterName: jsii.String("/frontend/ocaml-cloudfront-url"),
 		StringValue:   jsii.String("https://" + *distribution.DistributionDomainName()),
-		Description:   jsii.String("CloudFront Distribution URL for frontend"),
+		Description:   jsii.String("CloudFront Distribution URL for OCaml frontend"),
 	})
 
 	awscdk.NewCfnOutput(stack, jsii.String("DistributionDomainName"), &awscdk.CfnOutputProps{
@@ -122,10 +122,10 @@ func main() {
 
 	app := awscdk.NewApp(nil)
 
-	NewFrontendStack(app, "EmsFrontendStack", &FrontendStackProps{
+	NewFrontendStack(app, "OcamlFrontendStack", &FrontendStackProps{
 		awscdk.StackProps{
 			Env:         env(),
-			Description: jsii.String("EMS Frontend - S3 + CloudFront fronting the OCaml hierarchy API"),
+			Description: jsii.String("OCaml EMS Frontend - S3 + CloudFront fronting the OCaml hierarchy API"),
 		},
 	})
 

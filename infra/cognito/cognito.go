@@ -25,8 +25,8 @@ func NewCognitoStack(scope constructs.Construct, id string, props *CognitoStackP
 	// https://repost.aws/questions/QUI37vTJrbQr2ZdFaF9gX9pw/is-there-a-way-to-create-backups-of-cognito-user-pools
 
 	// Create Cognito User Pool
-	userPool := awscognito.NewUserPool(stack, jsii.String("EmsUserPool"), &awscognito.UserPoolProps{
-		UserPoolName:      jsii.String("EmsUserPool"),
+	userPool := awscognito.NewUserPool(stack, jsii.String("OcamlUserPool"), &awscognito.UserPoolProps{
+		UserPoolName:      jsii.String("OcamlUserPool"),
 		SelfSignUpEnabled: jsii.Bool(false), // Disable self sign-up, admin creates users
 		SignInAliases: &awscognito.SignInAliases{
 			Email: jsii.Bool(true),
@@ -64,9 +64,9 @@ func NewCognitoStack(scope constructs.Construct, id string, props *CognitoStackP
 	})
 
 	// Create Cognito User Pool Client for user authentication
-	userPoolClient := awscognito.NewUserPoolClient(stack, jsii.String("EmsUserPoolClient"), &awscognito.UserPoolClientProps{
+	userPoolClient := awscognito.NewUserPoolClient(stack, jsii.String("OcamlUserPoolClient"), &awscognito.UserPoolClientProps{
 		UserPool:           userPool,
-		UserPoolClientName: jsii.String("EmsUserPoolClient"),
+		UserPoolClientName: jsii.String("OcamlUserPoolClient"),
 		AuthFlows: &awscognito.AuthFlow{
 			UserPassword:      jsii.Bool(true),
 			UserSrp:           jsii.Bool(true),
@@ -91,30 +91,36 @@ func NewCognitoStack(scope constructs.Construct, id string, props *CognitoStackP
 				awscognito.OAuthScope_COGNITO_ADMIN(),
 				awscognito.OAuthScope_PHONE(),
 			},
-			// Frontend application callback URLs
-			// TODO: Update these URLs for production deployment
 			CallbackUrls: &[]*string{
 				jsii.String("http://localhost:4321/"),
 				jsii.String("http://localhost:4321/main"),
+				jsii.String("https://d24beiqs2cj89y.cloudfront.net/"),
+				jsii.String("https://d24beiqs2cj89y.cloudfront.net/main"),
 			},
 			LogoutUrls: &[]*string{
 				jsii.String("http://localhost:4321/"),
+				jsii.String("https://d24beiqs2cj89y.cloudfront.net/"),
 			},
 		},
 	})
 
-	// Store Cognito User Pool ID in SSM Parameter Store
-	awsssm.NewStringParameter(stack, jsii.String("CognitoUserPoolIdParameter"), &awsssm.StringParameterProps{
-		ParameterName: jsii.String("/cognito/user-pool-id"),
+	awsssm.NewStringParameter(stack, jsii.String("OcamlCognitoUserPoolIdParameter"), &awsssm.StringParameterProps{
+		ParameterName: jsii.String("/cognito/ocaml-user-pool-id"),
 		StringValue:   userPool.UserPoolId(),
-		Description:   jsii.String("Cognito User Pool ID"),
+		Description:   jsii.String("OCaml Cognito User Pool ID"),
 	})
 
-	// Store User Pool Client ID in SSM Parameter Store
-	awsssm.NewStringParameter(stack, jsii.String("EmsUserPoolClientIdParameter"), &awsssm.StringParameterProps{
-		ParameterName: jsii.String("/cognito/ems-user-pool-client-id"),
+	awsssm.NewStringParameter(stack, jsii.String("OcamlUserPoolClientIdParameter"), &awsssm.StringParameterProps{
+		ParameterName: jsii.String("/cognito/ocaml-user-pool-client-id"),
 		StringValue:   userPoolClient.UserPoolClientId(),
-		Description:   jsii.String("EMS User Pool Client ID"),
+		Description:   jsii.String("OCaml User Pool Client ID"),
+	})
+
+	awscdk.NewCfnOutput(stack, jsii.String("UserPoolId"), &awscdk.CfnOutputProps{
+		Value: userPool.UserPoolId(),
+	})
+	awscdk.NewCfnOutput(stack, jsii.String("UserPoolClientId"), &awscdk.CfnOutputProps{
+		Value: userPoolClient.UserPoolClientId(),
 	})
 
 	return stack
@@ -125,9 +131,10 @@ func main() {
 
 	app := awscdk.NewApp(nil)
 
-	NewCognitoStack(app, "CognitoUserPoolInfraStack", &CognitoStackProps{
+	NewCognitoStack(app, "OcamlCognitoStack", &CognitoStackProps{
 		awscdk.StackProps{
 			Env: env(),
+			Description: jsii.String("OCaml EMS Cognito User Pool"),
 		},
 	})
 
