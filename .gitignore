@@ -1,4 +1,20 @@
+# OCaml build
 _build
 .worktrees
+
+# Lambda artifact
 *.zip
 bootstrap
+
+# CDK output (any infra/*/cdk.out, plus root if anyone runs cdk from here)
+cdk.out/
+.cdk.staging/
+
+# Playwright MCP screenshots / traces
+.playwright-mcp/
+
+# Local agent state
+.claude/
+
+# Stray screenshots dropped at the project root by Playwright
+/*.png

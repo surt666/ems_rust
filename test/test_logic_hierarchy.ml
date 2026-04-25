@@ -21,7 +21,7 @@ let seed_company st =
   let c2 = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-00000000aaaa") in
   let n2 =
     Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"Acme"
-      ~parent:Node_id.root ~created:Ptime.epoch
+      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some sample_schema)
   in
   Memory.run st (fun () -> Effects.put_node n2);
@@ -203,7 +203,7 @@ let infers_level_from_cross_level_label () =
   let c2 = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-0000000000bb") in
   let n2 =
     Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"X"
-      ~parent:Node_id.root ~created:Ptime.epoch
+      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some cross_level_label_schema)
   in
   Memory.run st (fun () -> Effects.put_node n2);

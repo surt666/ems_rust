@@ -17,7 +17,7 @@ let seed_with_one_child () =
   in
   let n2 =
     Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"Acme"
-      ~parent:Node_id.root ~created:Ptime.epoch
+      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some schema)
   in
   Memory.run st (fun () ->

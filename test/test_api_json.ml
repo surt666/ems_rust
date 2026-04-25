@@ -16,6 +16,7 @@ let node_to_json_has_expected_keys () =
   let n =
     Node.make ~uuid:(Node_id.uuid id) ~level:Level.Hn4 ~name:"X"
       ~parent:(Node_id.make Level.Hn3 (uuid "4b6a6f20-0000-0000-0000-000000000002"))
+      ~parent_path:(Node_id.to_string Node_id.root)
       ~created:Ptime.epoch
       ~metadata:(`Assoc [ ("lat", `Float 55.0) ]) ~schema:None
   in

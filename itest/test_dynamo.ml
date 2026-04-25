@@ -33,7 +33,7 @@ let fresh_root cfg =
     in
     let n2 =
       Node.make ~uuid:u ~level:Level.Hn2 ~name:"IntegrationCo"
-        ~parent:Node_id.root ~created:(Ptime_clock.now ())
+        ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:(Ptime_clock.now ())
         ~metadata:(`Assoc []) ~schema:(Some sch)
     in
     Effects.put_node n2;
@@ -115,7 +115,7 @@ let seed_root_partner_companies cfg =
     let partner_id = Node_id.make Level.Hn1 p_u in
     let partner =
       Node.make ~uuid:p_u ~level:Level.Hn1 ~name:"Acme Partner"
-        ~parent:Node_id.root ~created:now
+        ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:now
         ~metadata:(`Assoc []) ~schema:None
     in
     Effects.put_node partner;
@@ -129,7 +129,7 @@ let seed_root_partner_companies cfg =
       let u = Effects.gen_uuid () in
       let n =
         Node.make ~uuid:u ~level:Level.Hn2 ~name
-          ~parent:partner_id ~created:now
+          ~parent:partner_id ~parent_path:(Node_id.to_string Node_id.root) ~created:now
           ~metadata:(`Assoc []) ~schema:(Some schema)
       in
       Effects.put_node n;
@@ -235,7 +235,7 @@ let fresh_with_sensor_schema cfg =
     let c2 = Node_id.make Level.Hn2 u in
     let n2 =
       Node.make ~uuid:u ~level:Level.Hn2 ~name:"SensorCo"
-        ~parent:Node_id.root ~created:(Ptime_clock.now ())
+        ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:(Ptime_clock.now ())
         ~metadata:(`Assoc []) ~schema:(Some (sensor_schema ()))
     in
     Effects.put_node n2;

@@ -127,7 +127,9 @@ let add_node ?label ?schema ?level ~parent ~name ~metadata () =
   let uuid = Effects.gen_uuid () in
   let created = Effects.now () in
   let child =
-    Node.make ~uuid ~level ~name ~parent ~created ~metadata ~schema:node_schema
+    Node.make ~uuid ~level ~name ~parent
+      ~parent_path:parent_node.Node.path
+      ~created ~metadata ~schema:node_schema
   in
   Effects.put_node child;
   Effects.put_edge

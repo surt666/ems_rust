@@ -25,16 +25,25 @@ let unblock ~user_id ~node_id () =
     ~kind:Edge_kind.Blocked;
   Ok ()
 
+(* Return all ancestor ids of [node_id], root first, self excluded. Reads the
+   path from DynamoDB once (1 query) rather than walking parent by parent. *)
 let ancestors_of node_id =
-  let rec go acc id =
-    match Effects.get_node id with
-    | None -> List.rev acc
+  if Node_id.is_root node_id then []
+  else
+    match Effects.get_node node_id with
+    | None -> []
     | Some n ->
-        (match n.Node.parent with
-         | Some p -> go (p :: acc) p
-         | None -> List.rev acc)
-  in
-  go [] node_id
+        let parts =
+          String.split_on_char '|' n.Node.path
+          |> List.filter (fun s -> s <> "")
+        in
+        let own = Node_id.to_string node_id in
+        parts
+        |> List.filter (fun s -> s <> own)
+        |> List.filter_map (fun s ->
+             match Node_id.of_string s with
+             | Ok id -> Some id
+             | Error _ -> None)
 
 let effective_permission ~user_id ~node_id =
   match Effects.get_user user_id with

@@ -26,7 +26,7 @@ let put_then_get () =
   let created = Ptime.epoch in
   let n =
     Node.make ~uuid:(Node_id.uuid id) ~level:Level.Hn1 ~name:"Acme"
-      ~parent:Node_id.root ~created ~metadata:(`Assoc []) ~schema:None
+      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created ~metadata:(`Assoc []) ~schema:None
   in
   Memory.run st (fun () -> Effects.put_node n);
   let got = Memory.run st (fun () -> Effects.get_node id) in
@@ -39,7 +39,7 @@ let list_children_filters_by_label () =
   let c_b = Node_id.make Level.Hn4 (uuid "4b6a6f20-0000-0000-0000-000000000004") in
   let mk id name =
     Node.make ~uuid:(Node_id.uuid id) ~level:Level.Hn4 ~name
-      ~parent:p ~created:Ptime.epoch ~metadata:(`Assoc []) ~schema:None
+      ~parent:p ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch ~metadata:(`Assoc []) ~schema:None
   in
   Memory.run st (fun () ->
     Effects.put_node (mk c_a "A");
@@ -68,7 +68,7 @@ let delete_node_removes_edges () =
   let c = Node_id.make Level.Hn4 (uuid "4b6a6f20-0000-0000-0000-000000000006") in
   let node =
     Node.make ~uuid:(Node_id.uuid c) ~level:Level.Hn4 ~name:"X"
-      ~parent:p ~created:Ptime.epoch ~metadata:(`Assoc []) ~schema:None
+      ~parent:p ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch ~metadata:(`Assoc []) ~schema:None
   in
   Memory.run st (fun () ->
     Effects.put_node node;

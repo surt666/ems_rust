@@ -18,7 +18,7 @@ let find_schema_from_self () =
   let c2 = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-000000000010") in
   let n =
     Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"Acme"
-      ~parent:Node_id.root ~created:Ptime.epoch
+      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some sample_schema)
   in
   Memory.run st (fun () ->
@@ -34,13 +34,13 @@ let find_schema_by_walking_up () =
   let c2 = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-000000000020") in
   let n2 =
     Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"Acme"
-      ~parent:Node_id.root ~created:Ptime.epoch
+      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some sample_schema)
   in
   let c3 = Node_id.make Level.Hn3 (uuid "4b6a6f20-0000-0000-0000-000000000021") in
   let n3 =
     Node.make ~uuid:(Node_id.uuid c3) ~level:Level.Hn3 ~name:"Ostergade"
-      ~parent:c2 ~created:Ptime.epoch
+      ~parent:c2 ~parent_path:n2.Node.path ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:None
   in
   Memory.run st (fun () ->
@@ -57,7 +57,7 @@ let schema_missing_when_no_hn2 () =
   let c3 = Node_id.make Level.Hn3 (uuid "4b6a6f20-0000-0000-0000-000000000030") in
   let n3 =
     Node.make ~uuid:(Node_id.uuid c3) ~level:Level.Hn3 ~name:"orphan"
-      ~parent:Node_id.root ~created:Ptime.epoch
+      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:None
   in
   Memory.run st (fun () ->

@@ -141,7 +141,7 @@ let delete_cascades_blocked_edges () =
   in
   let node =
     Node.make ~uuid:(Node_id.uuid node_id) ~level:Level.Hn2 ~name:"Acme"
-      ~parent:Node_id.root ~created:Ptime.epoch
+      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some sample_schema)
   in
   Memory.run st (fun () -> Effects.put_node node);

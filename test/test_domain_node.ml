@@ -12,8 +12,9 @@ let make_child () =
   let parent = Node_id.root in
   let now = Ptime_clock.now () in
   let n =
-    Node.make ~uuid ~level:Level.Hn1 ~name:"Acme" ~parent ~created:now
-      ~metadata:(`Assoc []) ~schema:None
+    Node.make ~uuid ~level:Level.Hn1 ~name:"Acme" ~parent
+      ~parent_path:(Node_id.to_string Node_id.root)
+      ~created:now ~metadata:(`Assoc []) ~schema:None
   in
   Alcotest.(check string) "id has level prefix" "HN1#4b6a6f20-0000-0000-0000-000000000001"
     (Node_id.to_string n.Node.id);

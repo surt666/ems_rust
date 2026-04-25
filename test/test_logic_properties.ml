@@ -19,7 +19,7 @@ let seed () =
   let c2 = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-00000000bbbb") in
   let n2 =
     Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"Acme"
-      ~parent:Node_id.root ~created:Ptime.epoch
+      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some (mk_schema ()))
   in
   Memory.run st (fun () -> Effects.put_node n2);

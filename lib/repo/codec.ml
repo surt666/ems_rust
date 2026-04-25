@@ -105,10 +105,11 @@ let node_to_item (nd : Node.t) : (string * Dyn.attribute_value) list =
       ("metadata", json_to_attr nd.Node.metadata);
     ]
   in
+  let with_path = ("path", s nd.Node.path) :: base in
   let with_parent =
     match nd.Node.parent with
-    | Some p -> ("parent", s (Node_id.to_string p)) :: base
-    | None -> base
+    | Some p -> ("parent", s (Node_id.to_string p)) :: with_path
+    | None -> with_path
   in
   match nd.Node.schema with
   | Some sch -> ("schema", schema_to_attr sch) :: with_parent
@@ -480,10 +481,16 @@ let node_of_item kvs =
          | Ok s -> Some s
          | Error _ -> None)
   in
+  let* path =
+    match List.assoc_opt "path" kvs with
+    | Some (Dyn.S v) -> Ok v
+    | _ -> Error (Printf.sprintf "node %s missing path" (Node_id.to_string id))
+  in
   Ok {
     Node.id;
     name;
     parent;
+    path;
     created;
     metadata;
     schema;

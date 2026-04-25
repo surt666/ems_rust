@@ -1,0 +1,8 @@
+# CDK output
+.cdk.staging
+cdk.out
+
+# Go build leftovers
+*.test
+*.out
+!go.sum

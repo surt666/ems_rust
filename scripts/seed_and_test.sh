@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-BASE="${BASE:-https://vp9p5wrn6f.execute-api.eu-central-1.amazonaws.com}"
+BASE="${BASE:-https://doztw28ic6.execute-api.eu-central-1.amazonaws.com}"
 TABLE="${TABLE:-hierarchy_new}"
 REGION="${REGION:-eu-central-1}"
 
@@ -65,11 +65,13 @@ fi
 echo "wiped"
 
 section "Seed root via AWS CLI"
+# path on the root is the root id itself (every node's path is self-inclusive).
 aws dynamodb put-item --region "$REGION" --table-name "$TABLE" --item '{
   "pk":       {"S":"HN0#root"},
   "sk":       {"S":"HN0#root"},
   "type":     {"S":"node"},
   "name":     {"S":"root"},
+  "path":     {"S":"HN0#root"},
   "created":  {"S":"1970-01-01T00:00:00Z"},
   "metadata": {"M":{}}
 }' >/dev/null
@@ -346,5 +348,11 @@ done
 section "Bulk seed: counts from DynamoDB"
 aws dynamodb scan --region "$REGION" --table-name "$TABLE" \
     --select COUNT --output json | jq '{count: .Count, scanned: .ScannedCount}'
+
+section "Seed admin user + root grant"
+cmd '{"action":"create_user","email":"steen666@gmail.com","name":"Steen Larsen","cognito_group":"admin"}'
+echo "HTTP $status"; echo "$body" | jq .
+cmd '{"action":"grant_administrates","user_id":"U#steen666@gmail.com","node_id":"HN0#root"}'
+echo "HTTP $status"; echo "$body" | jq .
 
 section "Done"

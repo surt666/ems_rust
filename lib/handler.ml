@@ -36,22 +36,59 @@ let parse_form body =
         let v = String.sub pair (i + 1) (String.length pair - i - 1) in
         Some (url_decode k, url_decode v))
 
-(* Build JSON command body from flat form fields like "action=attach_sensor&data.daq_id=foo".
-   The OCaml command dispatcher expects a flat JSON object (action + fields side by side),
-   so strip any "data." prefix rather than nesting. *)
+(* Coerce HTML-form string values to typed JSON for metadata fields — the
+   Metadata validator expects JSON numbers/bools, not strings. Everywhere else
+   keep strings as-is (names, ids, etc.). *)
+let coerce_metadata_value raw =
+  match float_of_string_opt raw with
+  | Some f when String.length raw > 0 ->
+      if Float.is_integer f && String.for_all (fun c ->
+          c = '-' || (c >= '0' && c <= '9')) raw then
+        `Int (int_of_float f)
+      else `Float f
+  | _ ->
+      match raw with
+      | "true"  -> `Bool true
+      | "false" -> `Bool false
+      | s -> `String s
+
+(* Merge a dotted-path key into an assoc list, nesting sub-objects as needed.
+   Values under a "metadata" root are typed; everything else is string. *)
+let rec set_path ~under_metadata assoc path v =
+  match path with
+  | [] -> assoc
+  | [ key ] ->
+      let others = List.filter (fun (k, _) -> k <> key) assoc in
+      let typed = if under_metadata then coerce_metadata_value v else `String v in
+      others @ [ (key, typed) ]
+  | key :: rest ->
+      let existing =
+        match List.assoc_opt key assoc with
+        | Some (`Assoc kvs) -> kvs
+        | _ -> []
+      in
+      let nested_under = under_metadata || key = "metadata" in
+      let nested = `Assoc (set_path ~under_metadata:nested_under existing rest v) in
+      let others = List.filter (fun (k, _) -> k <> key) assoc in
+      others @ [ (key, nested) ]
+
+(* Build JSON body from flat form fields. Strip a leading "data." prefix so
+   "data.daq_id=foo" lands at top level. Nested dotted keys like
+   "data.metadata.lat=55" become {"metadata": {"lat": 55.0}}. *)
 let form_to_command_json fields =
-  let flat =
-    List.filter_map (fun (k, v) ->
-      if k = "" then None
+  let assoc =
+    List.fold_left (fun acc (k, v) ->
+      if k = "" then acc
       else
         let key =
           match strip_prefix "data." k with
           | Some name -> name
           | None -> k
         in
-        Some (key, `String v)) fields
+        let parts = String.split_on_char '.' key in
+        set_path ~under_metadata:false acc parts v) [] fields
   in
-  Yojson.Safe.to_string (`Assoc flat)
+  Yojson.Safe.to_string (`Assoc assoc)
 
 let content_type (req : Api_gateway.V2.request) =
   match List.assoc_opt "content-type" req.headers with
@@ -67,15 +104,27 @@ let b64_decode s =
   | Ok v -> v
   | Error _ -> s
 
+let looks_like_json s =
+  let n = String.length s in
+  let rec skip_ws i =
+    if i >= n then i
+    else match s.[i] with ' ' | '\t' | '\n' | '\r' -> skip_ws (i + 1) | _ -> i
+  in
+  let i = skip_ws 0 in
+  i < n && (s.[i] = '{' || s.[i] = '[')
+
 let handle_command (req : Api_gateway.V2.request) =
   let raw0 = Option.value ~default:"" req.body in
   let raw = if req.is_base64_encoded then b64_decode raw0 else raw0 in
   let ct = lower (content_type req) in
-  let is_form =
+  let is_form_ct =
     let needle = "application/x-www-form-urlencoded" in
     String.length ct >= String.length needle
     && String.sub ct 0 (String.length needle) = needle
   in
+  (* HTMX defaults to text/plain for programmatic submits — sniff the body
+     when the content-type is unhelpful. *)
+  let is_form = is_form_ct || (not (looks_like_json raw)) in
   let body =
     if is_form then form_to_command_json (parse_form raw) else raw
   in

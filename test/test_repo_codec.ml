@@ -7,7 +7,7 @@ let node_roundtrip_without_schema () =
   let parent = Node_id.make Level.Hn3 (uuid "4b6a6f20-0000-0000-0000-000000000002") in
   let n =
     Node.make ~uuid:(Node_id.uuid id) ~level:Level.Hn4 ~name:"Building"
-      ~parent ~created:(Ptime.epoch)
+      ~parent ~parent_path:(Node_id.to_string Node_id.root) ~created:(Ptime.epoch)
       ~metadata:(`Assoc [ ("lat", `Float 55.0) ])
       ~schema:None
   in
@@ -161,7 +161,7 @@ let schema_sensors_roundtrip () =
   in
   let n =
     Node.make ~uuid:(Node_id.uuid id) ~level:Level.Hn2 ~name:"Co"
-      ~parent:Node_id.root ~created:Ptime.epoch
+      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some sch)
   in
   let item = Codec.node_to_item n in
