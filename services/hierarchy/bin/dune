@@ -1,0 +1,4 @@
+(executable
+ (public_name ocaml-lambda-hierarchy)
+ (name main)
+ (libraries ocaml_lambda_hierarchy lambda-runtime eio eio_main smaws-lib))

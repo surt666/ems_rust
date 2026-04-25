@@ -1,0 +1,6 @@
+(test
+ (name test_ocaml_lambda_hierarchy)
+ (libraries ocaml_lambda_hierarchy lambda-runtime yojson alcotest base core
+   base_quickcheck astring ptime.clock.os)
+ (preprocess
+  (pps ppx_jane)))
