@@ -3,8 +3,9 @@ type t = {
   name     : string;
   parent   : Node_id.t option;
   (* Pipe-separated list of ancestor node-ids from root down to and including
-     self. Root has path = "HN0#root". HN1 has "HN0#root|HN1#<uuid>". HN2 has
-     "HN0#root|HN1#<uuid>|HN2#<uuid>". Every node must have path populated. *)
+     self. Root has path = "HN0#root". HN1 has "HN0#root|HN1#<id>". HN2 has
+     "HN0#root|HN1#<id>|HN2#<id>". Every node must have path populated.
+     In storage this string is also the gsi1sk attribute. *)
   path     : string;
   created  : Ptime.t;
   metadata : Yojson.Safe.t;
@@ -16,10 +17,10 @@ let path_sep = "|"
 (* child_path p c = path of [c] given parent's full path and child id. *)
 let child_path ~parent_path ~child_id_str = parent_path ^ path_sep ^ child_id_str
 
-let make ~uuid ~level ~name ~parent ~parent_path ~created ~metadata ~schema =
-  let id = Node_id.make level uuid in
-  let path = child_path ~parent_path ~child_id_str:(Node_id.to_string id) in
-  { id; name; parent = Some parent; path; created; metadata; schema }
+let make ~id ~level ~name ~parent ~parent_path ~created ~metadata ~schema =
+  let nid = Node_id.make level id in
+  let path = child_path ~parent_path ~child_id_str:(Node_id.to_string nid) in
+  { id = nid; name; parent = Some parent; path; created; metadata; schema }
 
 let make_root ~created =
   {

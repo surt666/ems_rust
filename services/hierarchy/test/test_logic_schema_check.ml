@@ -1,7 +1,5 @@
 open Ocaml_lambda_hierarchy
 
-let uuid s = Uuidm.of_string s |> Option.get
-
 let sample_schema : Schema.t =
   Schema.{
     version = 1;
@@ -13,12 +11,16 @@ let sample_schema : Schema.t =
     sensors = [];
   }
 
+let parent_path_for_hn2 () =
+  Node_id.to_string Node_id.root ^ "|"
+  ^ Node_id.to_string (Node_id.make Level.Hn1 10001)
+
 let find_schema_from_self () =
   let st = Memory.empty () in
-  let c2 = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-000000000010") in
+  let c2 = Node_id.make Level.Hn2 10010 in
   let n =
-    Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"Acme"
-      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
+    Node.make ~id:10010 ~level:Level.Hn2 ~name:"Acme"
+      ~parent:Node_id.root ~parent_path:(parent_path_for_hn2 ()) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some sample_schema)
   in
   Memory.run st (fun () ->
@@ -31,15 +33,15 @@ let find_schema_from_self () =
 
 let find_schema_by_walking_up () =
   let st = Memory.empty () in
-  let c2 = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-000000000020") in
+  let c2 = Node_id.make Level.Hn2 10020 in
   let n2 =
-    Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"Acme"
-      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
+    Node.make ~id:10020 ~level:Level.Hn2 ~name:"Acme"
+      ~parent:Node_id.root ~parent_path:(parent_path_for_hn2 ()) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some sample_schema)
   in
-  let c3 = Node_id.make Level.Hn3 (uuid "4b6a6f20-0000-0000-0000-000000000021") in
+  let c3 = Node_id.make Level.Hn3 10021 in
   let n3 =
-    Node.make ~uuid:(Node_id.uuid c3) ~level:Level.Hn3 ~name:"Ostergade"
+    Node.make ~id:10021 ~level:Level.Hn3 ~name:"Ostergade"
       ~parent:c2 ~parent_path:n2.Node.path ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:None
   in
@@ -54,9 +56,9 @@ let find_schema_by_walking_up () =
 
 let schema_missing_when_no_hn2 () =
   let st = Memory.empty () in
-  let c3 = Node_id.make Level.Hn3 (uuid "4b6a6f20-0000-0000-0000-000000000030") in
+  let c3 = Node_id.make Level.Hn3 10030 in
   let n3 =
-    Node.make ~uuid:(Node_id.uuid c3) ~level:Level.Hn3 ~name:"orphan"
+    Node.make ~id:10030 ~level:Level.Hn3 ~name:"orphan"
       ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:None
   in

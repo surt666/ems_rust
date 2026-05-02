@@ -124,21 +124,22 @@ let add_node ?label ?schema ?level ~parent ~name ~metadata () =
         let* lbl = add_under_schema ?label ~parent ~parent_level ~level ~metadata () in
         Ok (lbl, None)
   in
-  let uuid = Effects.gen_uuid () in
   let created = Effects.now () in
-  let child =
-    Node.make ~uuid ~level ~name ~parent
-      ~parent_path:parent_node.Node.path
-      ~created ~metadata ~schema:node_schema
-  in
-  Effects.put_node child;
-  Effects.put_edge
-    ~from_:(Node_id.to_string parent)
-    ~to_:(Node_id.to_string child.Node.id)
-    ~kind:(Edge_kind.Has_label edge_label)
-    ~name:child.Node.name
-    ~created;
-  Ok child
+  Effects.add_node ~level ~build:(fun ~id ->
+    let child =
+      Node.make ~id ~level ~name ~parent
+        ~parent_path:parent_node.Node.path
+        ~created ~metadata ~schema:node_schema
+    in
+    let edge =
+      { Effects.from_ = Node_id.to_string parent;
+        to_ = Node_id.to_string child.Node.id;
+        kind = Edge_kind.Has_label edge_label;
+        name = child.Node.name;
+        created;
+        self_path = Some child.Node.path; }
+    in
+    (child, edge))
 
 let get_node id =
   match Effects.get_node id with

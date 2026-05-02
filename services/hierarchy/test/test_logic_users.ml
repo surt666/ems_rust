@@ -122,7 +122,9 @@ let delete_unknown_errors () =
     | Error (Errors.Not_found_user _) -> ()
     | Error e -> Alcotest.failf "wrong error: %s" (Errors.message e))
 
-let uuid_of s = Uuidm.of_string s |> Option.get
+let parent_path_for_hn2 () =
+  Node_id.to_string Node_id.root ^ "|"
+  ^ Node_id.to_string (Node_id.make Level.Hn1 10001)
 
 let sample_schema : Schema.t =
   Schema.{
@@ -136,12 +138,10 @@ let sample_schema : Schema.t =
 
 let delete_cascades_blocked_edges () =
   let st = Memory.empty () in
-  let node_id =
-    Node_id.make Level.Hn2 (uuid_of "4b6a6f20-0000-0000-0000-0000000000d0")
-  in
+  let node_id = Node_id.make Level.Hn2 10042 in
   let node =
-    Node.make ~uuid:(Node_id.uuid node_id) ~level:Level.Hn2 ~name:"Acme"
-      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
+    Node.make ~id:10042 ~level:Level.Hn2 ~name:"Acme"
+      ~parent:Node_id.root ~parent_path:(parent_path_for_hn2 ()) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some sample_schema)
   in
   Memory.run st (fun () -> Effects.put_node node);

@@ -1,7 +1,5 @@
 open Ocaml_lambda_hierarchy
 
-let uuid s = Uuidm.of_string s |> Option.get
-
 let error_body_has_expected_shape () =
   let err = Errors.Bad_request "boom" in
   let body = Api_json.error_body err in
@@ -12,10 +10,9 @@ let error_body_has_expected_shape () =
   Alcotest.(check string) "message" "boom" msg
 
 let node_to_json_has_expected_keys () =
-  let id = Node_id.make Level.Hn4 (uuid "4b6a6f20-0000-0000-0000-000000000001") in
   let n =
-    Node.make ~uuid:(Node_id.uuid id) ~level:Level.Hn4 ~name:"X"
-      ~parent:(Node_id.make Level.Hn3 (uuid "4b6a6f20-0000-0000-0000-000000000002"))
+    Node.make ~id:10004 ~level:Level.Hn4 ~name:"X"
+      ~parent:(Node_id.make Level.Hn3 10003)
       ~parent_path:(Node_id.to_string Node_id.root)
       ~created:Ptime.epoch
       ~metadata:(`Assoc [ ("lat", `Float 55.0) ]) ~schema:None

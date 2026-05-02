@@ -15,7 +15,7 @@ let block ~user_id ~node_id () =
   Effects.put_edge
     ~from_:(User_id.to_string user_id)
     ~to_:(Node_id.to_string node_id)
-    ~kind:Edge_kind.Blocked ~name:"" ~created;
+    ~kind:Edge_kind.Blocked ~name:"" ~created ();
   Ok ()
 
 let unblock ~user_id ~node_id () =
@@ -81,7 +81,7 @@ let grant_administrates ~user_id ~node_id () =
   Effects.put_edge
     ~from_:(User_id.to_string user_id)
     ~to_:(Node_id.to_string node_id)
-    ~kind:Edge_kind.Administrates ~name:"" ~created;
+    ~kind:Edge_kind.Administrates ~name:"" ~created ();
   Ok ()
 
 let list_administrated_nodes ~user_id =

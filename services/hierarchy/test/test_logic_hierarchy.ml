@@ -1,7 +1,5 @@
 open Ocaml_lambda_hierarchy
 
-let uuid s = Uuidm.of_string s |> Option.get
-
 let sample_schema : Schema.t =
   Schema.{
     version = 1;
@@ -17,11 +15,15 @@ let sample_schema : Schema.t =
     sensors = [];
   }
 
+let parent_path_for_hn2 () =
+  Node_id.to_string Node_id.root ^ "|"
+  ^ Node_id.to_string (Node_id.make Level.Hn1 10001)
+
 let seed_company st =
-  let c2 = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-00000000aaaa") in
+  let c2 = Node_id.make Level.Hn2 10002 in
   let n2 =
-    Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"Acme"
-      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
+    Node.make ~id:10002 ~level:Level.Hn2 ~name:"Acme"
+      ~parent:Node_id.root ~parent_path:(parent_path_for_hn2 ()) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some sample_schema)
   in
   Memory.run st (fun () -> Effects.put_node n2);
@@ -200,10 +202,10 @@ let cross_level_label_schema : Schema.t =
 
 let infers_level_from_cross_level_label () =
   let st = Memory.empty () in
-  let c2 = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-0000000000bb") in
+  let c2 = Node_id.make Level.Hn2 10003 in
   let n2 =
-    Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"X"
-      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
+    Node.make ~id:10003 ~level:Level.Hn2 ~name:"X"
+      ~parent:Node_id.root ~parent_path:(parent_path_for_hn2 ()) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some cross_level_label_schema)
   in
   Memory.run st (fun () -> Effects.put_node n2);

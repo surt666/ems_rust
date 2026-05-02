@@ -1,141 +1,206 @@
-(* HTML fragment responses for HTMX endpoints — mirrors the Rust
-   hierarchy service's /hierarchy/query/* routes. Plain string formatting,
-   no jingoo/lwt. *)
+(* HTML fragment responses for HTMX endpoints — mirrors the Rust hierarchy
+   service's /hierarchy/query/* routes.
 
-let v2_html ?(status = 200) body =
-  let open Lambda_runtime_api_gateway in
-  let headers = [ ("content-type", "text/html; charset=utf-8") ] in
-  let response = Api_gateway.V2.make_response ~status_code:status ~headers body in
-  Yojson.Safe.to_string (Api_gateway.V2.response_to_json response)
+   Built on pure-html (the eDSL half of dream-html, sans the Dream/lwt
+   integration). Attribute and text values are escaped automatically; HTMX
+   attrs come from [Pure_html.Hx] (rendered as [data-hx-*], which HTMX accepts
+   identically to the bare [hx-*] form). *)
 
-let html_error ?(status = 400) msg =
-  let escaped = String.concat "" (List.map (function
-    | '<' -> "&lt;" | '>' -> "&gt;" | '&' -> "&amp;"
-    | '"' -> "&quot;" | c -> String.make 1 c) (List.init (String.length msg) (String.get msg))) in
-  v2_html ~status (Printf.sprintf "<div class=\"error\">%s</div>" escaped)
+open Pure_html
+open Pure_html.HTML
 
-let escape s =
+(* [data-*] is not a first-class helper in pure-html — its [data_] is the rare
+   HTML4 <object data="..."> attribute, not the data-* namespace. *)
+let data ~suffix fmt = string_attr ("data-" ^ suffix) fmt
+
+let i18n key = data ~suffix:"i18n" "%s" key
+
+(* Percent-encode unreserved-only — for URL components that contain '#' or
+   other reserved chars. We can't use [Hx.get] (= [uri_attr]) for parameterised
+   URLs because it round-trips through [Uri.of_string], which mistakes the '#'
+   in [HN2#<uuid>] for the URL fragment delimiter and re-encodes the '&'
+   separators that follow. So we hand-encode components and emit the URL via a
+   plain [string_attr] (which only HTML-escapes; the browser DOM parser
+   decodes [&amp;] back to [&] when reading the attribute). *)
+let pct s =
   let buf = Buffer.create (String.length s) in
   String.iter (fun c -> match c with
-    | '<' -> Buffer.add_string buf "&lt;"
-    | '>' -> Buffer.add_string buf "&gt;"
-    | '&' -> Buffer.add_string buf "&amp;"
-    | '"' -> Buffer.add_string buf "&quot;"
-    | '\'' -> Buffer.add_string buf "&#39;"
-    | c -> Buffer.add_char buf c) s;
-  Buffer.contents buf
-
-let url_encode s =
-  let buf = Buffer.create (String.length s) in
-  String.iter (fun c ->
-    match c with
     | 'A'..'Z' | 'a'..'z' | '0'..'9' | '-' | '_' | '.' | '~' ->
         Buffer.add_char buf c
     | c -> Buffer.add_string buf (Printf.sprintf "%%%02X" (Char.code c))) s;
   Buffer.contents buf
 
-(* Level-based heuristic mapping — matches the EMS convention. *)
-let category_of_level lvl =
-  match Level.depth lvl with
-  | 0 -> "root"
-  | 1 -> "partner"
-  | 2 -> "company"
-  | 3 -> "property"
-  | 4 -> "building"
-  | _ -> "area"
+let hx_get fmt = string_attr "data-hx-get" fmt
 
-let icon_href_of_category = function
-  | "root" | "partner" -> "#icon-partner"
-  | "company" -> "#icon-company"
-  | "property" -> "#icon-property"
-  | "building" -> "#icon-building"
-  | "area" -> "#icon-area"
-  | "group" -> "#icon-group"
-  | _ -> ""
+let respond ?(status = 200) (n : node) : string =
+  let open Lambda_runtime_api_gateway in
+  let headers = [ ("content-type", "text/html; charset=utf-8") ] in
+  let response =
+    Api_gateway.V2.make_response ~status_code:status ~headers (to_string n)
+  in
+  Yojson.Safe.to_string (Api_gateway.V2.response_to_json response)
 
-let bar_class_of_category = function
-  | "root" | "partner" -> "partner"
-  | c -> c
+let respond_error ?(status = 400) msg =
+  respond ~status (div [ class_ "error" ] [ txt "%s" msg ])
 
-let options_block values =
-  String.concat "" (List.map (fun v ->
-    Printf.sprintf "<option value=\"%s\">%s</option>" (escape v) (escape v)) values)
+(* Tree styling per HN level. Tenant-specific naming (partner/company/...)
+   used to be derived from depth, but the meaning of HN3-HN9 is per-tenant
+   and lives in the schema config on the HN2 node — see [Schema.t.edges]
+   for the labels. Today the schema does not yet carry icon/bar-class
+   metadata, so we keep a level → (icon_href, bar_class) fallback that
+   reuses the existing sprite IDs. When the schema gains a visual-config
+   field, this should consult [Schema_check.find_for] and fall back to
+   this table only for unconfigured levels. *)
+let level_visual : Level.t -> string * string = function
+  | Hn0 -> ("", "")
+  | Hn1 -> ("#icon-partner", "partner")
+  | Hn2 -> ("#icon-company", "company")
+  | Hn3 -> ("#icon-property", "property")
+  | Hn4 -> ("#icon-building", "building")
+  | Hn5 -> ("#icon-area", "area")
+  | Hn6 -> ("#icon-group", "group")
+  | Hn7 | Hn8 | Hn9 -> ("#icon-area", "area")
 
-let render_nodetypes () =
-  v2_html (options_block ["partner"; "company"; "property"; "building"; "area"])
+let option_nodes values =
+  List.map (fun v -> option [ value "%s" v ] "%s" v) values
+
+let respond_options values = respond (null (option_nodes values))
 
 let render_profiles () =
-  v2_html (options_block ["Developer"; "Standard"; "Technician"; "Reader"; "SysAdm"])
+  respond_options [ "Developer"; "Standard"; "Technician"; "Reader"; "SysAdm" ]
 
 let render_languages () =
-  v2_html (options_block ["danish"; "swedish"; "norwegian"; "english"; "german"])
+  respond_options [ "danish"; "swedish"; "norwegian"; "english"; "german" ]
 
 let render_currencies () =
-  v2_html (options_block ["DKK"; "SEK"; "NOK"; "USD"; "EUR"])
+  respond_options [ "DKK"; "SEK"; "NOK"; "USD"; "EUR" ]
 
 let render_permissions () =
-  v2_html (options_block ["view"; "edit"; "admin"])
+  respond_options [ "view"; "edit"; "admin" ]
 
 let render_timezones () =
-  let tzs = [
-    "Europe/Copenhagen"; "Europe/Stockholm"; "Europe/Oslo"; "Europe/Berlin";
-    "Europe/London"; "Europe/Paris"; "Europe/Madrid"; "Europe/Rome";
-    "Europe/Amsterdam"; "UTC"
-  ] in
-  v2_html (options_block tzs)
+  respond_options
+    [ "Europe/Copenhagen"; "Europe/Stockholm"; "Europe/Oslo"; "Europe/Berlin";
+      "Europe/London"; "Europe/Paris"; "Europe/Madrid"; "Europe/Rome";
+      "Europe/Amsterdam"; "UTC" ]
 
-(* Build one <li> tree node. `id_str` is "HN{n}#{uuid}"; `parent_path` is
-   the ancestor path joined with '#' (or "H#root" for top-level children).
-   `is_leaf` controls whether we emit a toggle arrow. *)
-let list_item ~id_str ~category ~user ~name ~parent_path ~is_leaf ~with_permissions =
+(* Toggle arrow + icon, used in both the standard and permission-grid
+   variants of [list_item]. *)
+let tree_toggle ~is_leaf ~bar_class =
+  if is_leaf then span [ class_ "tree-toggle-spacer" ] []
+  else
+    std_tag "svg"
+      [ class_ "tree-toggle tree-toggle-%s" bar_class;
+        width "20"; height "20";
+        string_attr "viewBox" "0 0 16 16";
+        SVG.fill "currentColor" ]
+      [ std_tag "path" [ SVG.d "M3 1l12 7-12 7z" ] [] ]
+
+let tree_icon ~icon_href =
+  if icon_href = "" then null []
+  else
+    std_tag "svg"
+      [ string_attr "aria-hidden" "true";
+        string_attr "focusable" "false";
+        class_ "tree-icon"; width "16"; height "16" ]
+      [ std_tag "use" [ string_attr "href" "%s" icon_href ] [] ]
+
+(* Build one tree node. [id_str] is "HN{n}#{uuid}"; [parent_path] is the
+   ancestor path joined with '#' (or "H#root" for top-level children).
+   [is_leaf] controls whether we emit a toggle arrow. *)
+let list_item ~id_str ~level ~user ~node_name ~parent_path ~is_leaf
+              ~with_permissions =
   let current_path =
     match parent_path with
     | Some p -> Printf.sprintf "%s#%s" p id_str
     | None -> Printf.sprintf "H#%s" id_str
   in
-  let display_name = if name = "root" then "" else name in
-  let encoded_id   = url_encode id_str in
-  let encoded_path = url_encode current_path in
-  let encoded_user = url_encode user in
-  let bar_class = bar_class_of_category category in
-  let icon_href = icon_href_of_category category in
-  let toggle =
-    if is_leaf then
-      {|<span class="tree-toggle-spacer"></span>|}
-    else
-      Printf.sprintf
-        {|<svg class="tree-toggle tree-toggle-%s" width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M3 1l12 7-12 7z"/></svg>|}
-        bar_class
-  in
-  let icon =
-    if icon_href = "" then ""
-    else
-      Printf.sprintf
-        {|<svg aria-hidden="true" focusable="false" class="tree-icon" width="16" height="16"><use href="%s"></use></svg>|}
-        icon_href
-  in
+  let display_name = if node_name = "root" then "" else node_name in
+  let icon_href, bar_class = level_visual level in
+  let toggle = tree_toggle ~is_leaf ~bar_class in
+  let icon = tree_icon ~icon_href in
   let node_path = Option.value parent_path ~default:"" in
   if with_permissions then
-    (* Permission-grid view: <div class="permission-row"> rather than <li>. *)
-    Printf.sprintf
-      {|<div class="permission-row" data-id="%s" data-path="%s" style="display: grid; grid-template-columns: auto auto auto auto auto auto 1fr; gap: 0.5rem; align-items: center;">%s%s<input type="checkbox" name="data.allowed" value="%s" class="allowed-checkbox" /><svg width="16" height="16" style="color: var(--success);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg><input type="checkbox" name="data.blocked" value="%s" class="blocked-checkbox" /><svg width="16" height="16" style="color: var(--danger);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg><span style="font-weight: 600;">%s</span></div><div class="child-rows" style="display:none;" hx-get="/hierarchy/query/nodes?id=%s&user=%s&path=%s&permissions=true" hx-request='{"noHeaders": true}' hx-target="this" hx-swap="innerHTML" hx-trigger="loadChildren once"></div>|}
-      (escape id_str) (escape current_path) toggle icon
-      (escape id_str) (escape id_str) (escape display_name)
-      encoded_id encoded_user encoded_path
+    null
+      [ div
+          [ class_ "permission-row";
+            data ~suffix:"id" "%s" id_str;
+            data ~suffix:"path" "%s" current_path;
+            style_
+              "display: grid; grid-template-columns: auto auto auto auto auto \
+               auto 1fr; gap: 0.5rem; align-items: center;" ]
+          [ toggle; icon;
+            input
+              [ type_ "checkbox"; name "data.allowed"; value "%s" id_str;
+                class_ "allowed-checkbox" ];
+            std_tag "svg"
+              [ width "16"; height "16"; style_ "color: var(--success);";
+                SVG.fill "none"; SVG.stroke "currentColor";
+                string_attr "viewBox" "0 0 24 24" ]
+              [ std_tag "path"
+                  [ SVG.stroke_linecap `round; SVG.stroke_linejoin `round;
+                    SVG.stroke_width "2"; SVG.d "M5 13l4 4L19 7" ]
+                  [] ];
+            input
+              [ type_ "checkbox"; name "data.blocked"; value "%s" id_str;
+                class_ "blocked-checkbox" ];
+            std_tag "svg"
+              [ width "16"; height "16"; style_ "color: var(--danger);";
+                SVG.fill "none"; SVG.stroke "currentColor";
+                string_attr "viewBox" "0 0 24 24" ]
+              [ std_tag "path"
+                  [ SVG.stroke_linecap `round; SVG.stroke_linejoin `round;
+                    SVG.stroke_width "2"; SVG.d "M6 18L18 6M6 6l12 12" ]
+                  [] ];
+            span [ style_ "font-weight: 600;" ] [ txt "%s" display_name ] ];
+        div
+          [ class_ "child-rows"; style_ "display:none;";
+            hx_get
+              "/hierarchy/query/nodes?id=%s&user=%s&path=%s&permissions=true"
+              (pct id_str) (pct user) (pct current_path);
+            Hx.request {|{"noHeaders": true}|};
+            Hx.target "this"; Hx.swap "innerHTML";
+            Hx.trigger "loadChildren once" ]
+          [] ]
   else
-    Printf.sprintf
-      {|<li data-id="%s" data-path="%s"><div class="icon-wrapper" hx-get="/hierarchy/query/nodes?id=%s&user=%s&path=%s" hx-request='{"noHeaders": true}' hx-target="next .nested-list" hx-trigger="loadChildren" _="on click toggle .tree-toggle-expanded on first .tree-toggle in me then get the next .nested-list then if its @style is 'display:none;' then set its @style to '' else if its innerHTML is '' then send loadChildren to me else set its @style to 'display:none;' end end">%s</div>%s<a href="#" class="node-name-link" data-node-id="%s" data-node-path="%s" hx-get="/hierarchy/query/node?id=%s&user=%s" hx-request='{"noHeaders": true}' hx-target=".main-area" hx-swap="innerHTML" _="on click remove .selected from .node-name-link in body then add .selected to me then set sessionStorage.selectedNodeId to my @data-node-id then set sessionStorage.selectedNodePath to my @data-node-path" style="cursor: pointer; text-decoration: none; color: inherit;">%s</a><ul class="nested-list"></ul></li>|}
-      (escape id_str) (escape current_path)
-      encoded_id encoded_user encoded_path
-      toggle icon
-      (escape id_str) (escape node_path)
-      encoded_id encoded_user
-      (escape display_name)
+    li
+      [ data ~suffix:"id" "%s" id_str;
+        data ~suffix:"path" "%s" current_path ]
+      [ div
+          [ class_ "icon-wrapper";
+            hx_get "/hierarchy/query/nodes?id=%s&user=%s&path=%s"
+              (pct id_str) (pct user) (pct current_path);
+            Hx.request {|{"noHeaders": true}|};
+            Hx.target "next .nested-list";
+            Hx.trigger "loadChildren";
+            Hx.__
+              "on click toggle .tree-toggle-expanded on first .tree-toggle \
+               in me then get the next .nested-list then if its @style is \
+               'display:none;' then set its @style to '' else if its \
+               innerHTML is '' then send loadChildren to me else set its \
+               @style to 'display:none;' end end" ]
+          [ toggle ];
+        icon;
+        a
+          [ href "#"; class_ "node-name-link";
+            data ~suffix:"node-id" "%s" id_str;
+            data ~suffix:"node-path" "%s" node_path;
+            hx_get "/hierarchy/query/node?id=%s&user=%s" (pct id_str) (pct user);
+            Hx.request {|{"noHeaders": true}|};
+            Hx.target ".main-area"; Hx.swap "innerHTML";
+            Hx.__
+              "on click remove .selected from .node-name-link in body then \
+               add .selected to me then set sessionStorage.selectedNodeId to \
+               my @data-node-id then set sessionStorage.selectedNodePath to \
+               my @data-node-path";
+            style_ "cursor: pointer; text-decoration: none; color: inherit;" ]
+          [ txt "%s" display_name ];
+        ul [ class_ "nested-list" ] [] ]
 
 (* /hierarchy/query/nodes — list children of id (or top-level for user).
    Gated by administrates grants: a user only sees children of a node if they
    have an Administrates edge on the node or any of its ancestors. No user or
-   no grants → empty list (not an error — HTMX treats it as "nothing to show"). *)
+   no grants → empty list (HTMX treats it as "nothing to show"). *)
 let render_nodes ~params =
   let user_s = Option.value ~default:"" (List.assoc_opt "user" params) in
   let id_opt = List.assoc_opt "id" params in
@@ -146,14 +211,11 @@ let render_nodes ~params =
   in
   let parent =
     match id_opt with
-    | Some s when s <> "" ->
-        (match Node_id.of_string s with
-         | Ok p -> Ok p
-         | Error e -> Error e)
+    | Some s when s <> "" -> Node_id.of_string s
     | _ -> Ok Node_id.root
   in
   match parent with
-  | Error e -> html_error e
+  | Error e -> respond_error e
   | Ok parent_id ->
       (* The frontend passes either "U#<email>" or a bare email from login. *)
       let normalized =
@@ -166,84 +228,249 @@ let render_nodes ~params =
         | Error _ -> false
         | Ok uid -> Access.has_admin_access ~user_id:uid ~node_id:parent_id
       in
-      if not allowed then v2_html ""
+      if not allowed then respond (null [])
       else
         (match Hierarchy.list_child_refs parent_id with
          | Error err ->
-             html_error ~status:(Errors.http_status err) (Errors.message err)
+             respond_error ~status:(Errors.http_status err) (Errors.message err)
          | Ok refs ->
              let parent_path_for_children =
                match id_opt with
                | Some s when s <> "" -> path_opt
                | _ -> Some "H#root"
              in
-             let html =
-               String.concat "" (List.map (fun (id, name) ->
+             let items =
+               List.map (fun (id, name) ->
                  let lvl = Node_id.level id in
-                 let cat = category_of_level lvl in
-                 let is_leaf = cat = "building" in
+                 (* Until schema-driven leaf detection is wired up, treat
+                    HN4 as the deepest displayable level. *)
+                 let is_leaf = lvl = Level.Hn4 in
                  list_item
                    ~id_str:(Node_id.to_string id)
-                   ~category:cat ~user:user_s ~name
+                   ~level:lvl ~user:user_s ~node_name:name
                    ~parent_path:parent_path_for_children
-                   ~is_leaf ~with_permissions:with_perms) refs)
+                   ~is_leaf ~with_permissions:with_perms) refs
              in
-             v2_html html)
+             respond (null items))
 
 (* Format a metadata JSON blob as a simple key/value form. *)
-let rec metadata_rows (json : Yojson.Safe.t) : string =
-  match json with
+let rec metadata_rows (j : Yojson.Safe.t) : node =
+  match j with
   | `Assoc kvs ->
-      String.concat "" (List.map (fun (k, v) ->
-        match v with
-        | `Assoc _ | `List _ ->
-            Printf.sprintf
-              {|<div style="margin-top: 1rem;"><h3 class="table-title">%s</h3>%s</div>|}
-              (escape k) (metadata_rows v)
-        | _ ->
-            let s =
-              match v with
-              | `String s -> s
-              | `Int i -> string_of_int i
-              | `Intlit s -> s
-              | `Float f -> string_of_float f
-              | `Bool b -> string_of_bool b
-              | `Null -> ""
-              | _ -> Yojson.Safe.to_string v
-            in
-            Printf.sprintf
-              {|<div class="form-row-2col"><label class="form-label">%s:</label><input type="text" value="%s" readonly class="form-input"></div>|}
-              (escape k) (escape s)) kvs)
+      null
+        (List.map (fun (k, v) ->
+           match v with
+           | `Assoc _ | `List _ ->
+               div [ style_ "margin-top: 1rem;" ]
+                 [ h3 [ class_ "table-title" ] [ txt "%s" k ];
+                   metadata_rows v ]
+           | _ ->
+               let s =
+                 match v with
+                 | `String s -> s
+                 | `Int i -> string_of_int i
+                 | `Intlit s -> s
+                 | `Float f -> string_of_float f
+                 | `Bool b -> string_of_bool b
+                 | `Null -> ""
+                 | _ -> Yojson.Safe.to_string v
+               in
+               div [ class_ "form-row-2col" ]
+                 [ label [ class_ "form-label" ] [ txt "%s:" k ];
+                   input
+                     [ type_ "text"; value "%s" s; readonly;
+                       class_ "form-input" ] ]) kvs)
   | `List xs ->
-      String.concat "" (List.mapi (fun i v ->
-        Printf.sprintf
-          {|<div style="margin-top: 0.5rem;"><h4>[%d]</h4>%s</div>|}
-          i (metadata_rows v)) xs)
-  | _ ->
-      Printf.sprintf
-        {|<div class="form-row-2col"><input type="text" value="%s" readonly class="form-input"></div>|}
-        (escape (Yojson.Safe.to_string json))
+      null
+        (List.mapi (fun i v ->
+           div [ style_ "margin-top: 0.5rem;" ]
+             [ h4 [] [ txt "[%d]" i ]; metadata_rows v ]) xs)
+  | other ->
+      div [ class_ "form-row-2col" ]
+        [ input
+            [ type_ "text"; value "%s" (Yojson.Safe.to_string other);
+              readonly; class_ "form-input" ] ]
+
+(* The [hx-on::after-request] inline-JS attribute. Pure-html doesn't ship a
+   helper for it (it has Hx.on_ but with a single colon prefix), and the
+   value contains literal JS so we render it raw. *)
+let hx_on_after_request js =
+  string_attr ~raw:true "hx-on::after-request" "%s" js
+
+let sensor_dialog ~nid_str =
+  dialog
+    [ id "add-sensor-dialog";
+      Hx.__ "on click if event.target == me then call me.close()" ]
+    [ div [ class_ "dialog-header" ]
+        [ h2 [ i18n "node.add_sensor_dialog_title" ] [ txt "ADD SENSOR" ];
+          button
+            [ type_ "button"; class_ "btn-close";
+              Hx.__ "on click call #add-sensor-dialog.close()" ]
+            [ txt ~raw:true "&times;" ] ];
+      div [ class_ "dialog-body" ]
+        [ div
+            [ id "sensor-form-error"; class_ "login-error";
+              style_ "display:none; margin-bottom: 1rem;" ]
+            [];
+          form
+            [ id "add-sensor-form"; class_ "form";
+              Hx.post "/hierarchy/command";
+              Hx.swap "none";
+              hx_on_after_request
+                "if(event.detail.elt.id === 'add-sensor-form' && \
+                 event.detail.successful) { \
+                 document.querySelector('#add-sensor-dialog').close(); \
+                 htmx.trigger('#sensor-list', 'load'); } else if \
+                 (event.detail.elt.id === 'add-sensor-form') { \
+                 document.getElementById('sensor-form-error').textContent = \
+                 event.detail.xhr.responseText; \
+                 document.getElementById('sensor-form-error').style.display \
+                 = 'block'; }" ]
+            [ input [ type_ "hidden"; name "action"; value "attach_sensor" ];
+              input [ type_ "hidden"; name "data.parent_id"; value "%s" nid_str ];
+              div [ class_ "form-row" ]
+                [ label [ class_ "form-label" ] [ txt "DAQ Id" ];
+                  input
+                    [ type_ "text"; name "data.daq_id"; required;
+                      class_ "form-input" ];
+                  span [ class_ "required" ] [ txt "*" ] ];
+              div [ class_ "form-row" ]
+                [ label [ class_ "form-label" ] [ txt "Purpose" ];
+                  input
+                    [ type_ "text"; name "data.purpose"; required;
+                      class_ "form-input" ];
+                  span [ class_ "required" ] [ txt "*" ] ];
+              div [ class_ "form-row" ]
+                [ label [ class_ "form-label" ] [ txt "Meter type" ];
+                  select
+                    [ name "data.meter_type"; required; class_ "form-select" ]
+                    [ option [ value "counter" ] "counter";
+                      option [ value "gauge" ] "gauge" ];
+                  span [ class_ "required" ] [ txt "*" ] ];
+              div [ class_ "form-row" ]
+                [ label [ class_ "form-label" ] [ txt "Unit" ];
+                  input [ type_ "text"; name "data.unit"; class_ "form-input" ] ] ] ];
+      div [ class_ "dialog-footer" ]
+        [ button
+            [ type_ "submit"; string_attr "form" "add-sensor-form";
+              class_ "btn-warning"; i18n "common.save" ]
+            [ txt "Save" ];
+          div [] [];
+          button
+            [ type_ "button"; class_ "btn-warning";
+              Hx.__ "on click call #add-sensor-dialog.close()";
+              i18n "common.close" ]
+            [ txt "Close" ] ] ]
+
+let sensor_block ~nid_str ~parent_str =
+  div [ style_ "margin-top: 2rem;" ]
+    [ div
+        [ style_
+            "display: grid; grid-template-columns: 1fr auto; align-items: \
+             center; margin-bottom: 1rem;" ]
+        [ h2 [ class_ "section-title"; style_ "margin-bottom: 0;" ]
+            [ span [ i18n "node.sensors" ] [ txt "Sensors" ];
+              txt " ";
+              span
+                [ id "loading-indicator"; class_ "htmx-indicator";
+                  style_
+                    "display: none; font-size: var(--text-sm); color: \
+                     var(--accent); margin-left: 8px;";
+                  i18n "common.loading" ]
+                [ txt {|Loading…|} ] ];
+          button
+            [ type_ "button"; class_ "btn-primary";
+              Hx.__ "on click call #add-sensor-dialog.showModal()";
+              i18n "node.add_sensor" ]
+            [ txt "Add sensor" ] ];
+      sensor_dialog ~nid_str;
+      ul
+        [ id "sensor-list"; style_ "display: grid; gap: 8px;";
+          Hx.get "/hierarchy/query/sensors";
+          Hx.vals {|{"nodepath": "%s"}|} parent_str;
+          Hx.trigger "load";
+          Hx.target "#sensor-list"; Hx.swap "innerHTML";
+          Hx.request {|{"noHeaders": true}|};
+          Hx.indicator "#loading-indicator" ]
+        [ li
+            [ style_ "color: var(--text-muted);"; i18n "node.sensors_loading" ]
+            [ txt {|Loading sensors…|} ] ] ]
+
+let add_child_block ~parent_id_str =
+  null
+    [ div [ style_ "margin-top: 2rem;" ]
+        [ div
+            [ style_
+                "display: grid; grid-template-columns: 1fr auto; \
+                 align-items: center; margin-bottom: 1rem;" ]
+            [ h2
+                [ class_ "section-title"; style_ "margin-bottom: 0;";
+                  i18n "node.children" ]
+                [ txt "Children" ];
+              button
+                [ type_ "button"; class_ "btn-primary";
+                  Hx.__
+                    "on click call #add-child-dialog.showModal() then send \
+                     refresh to #add-child-body";
+                  i18n "node.add_child" ]
+                [ txt "Add child" ] ] ];
+      dialog
+        [ id "add-child-dialog";
+          Hx.__ "on click if event.target == me then call me.close()" ]
+        [ div [ class_ "dialog-header" ]
+            [ h2 [ i18n "node.add_child_dialog_title" ] [ txt "ADD CHILD" ];
+              button
+                [ type_ "button"; class_ "btn-close";
+                  Hx.__ "on click call #add-child-dialog.close()" ]
+                [ txt ~raw:true "&times;" ] ];
+          div [ class_ "dialog-body" ]
+            [ div
+                [ id "add-child-body";
+                  Hx.get "/hierarchy/query/add_child_form";
+                  Hx.vals {|{"parent": "%s"}|} parent_id_str;
+                  Hx.trigger "refresh";
+                  Hx.request {|{"noHeaders": true}|};
+                  Hx.target "#add-child-body"; Hx.swap "innerHTML" ]
+                [ em [ i18n "common.loading" ] [ txt {|Loading…|} ] ] ];
+          div [ class_ "dialog-footer" ]
+            [ button
+                [ type_ "submit"; string_attr "form" "add-child-form";
+                  class_ "btn-warning"; i18n "common.save" ]
+                [ txt "Save" ];
+              div [] [];
+              button
+                [ type_ "button"; class_ "btn-warning";
+                  Hx.__ "on click call #add-child-dialog.close()";
+                  i18n "common.close" ]
+                [ txt "Close" ] ] ] ]
 
 (* /hierarchy/query/node — node detail page *)
 let render_node ~params =
   match List.assoc_opt "id" params with
-  | None -> html_error "missing id"
+  | None -> respond_error "missing id"
   | Some id_s ->
       (match Node_id.of_string id_s with
-       | Error e -> html_error e
+       | Error e -> respond_error e
        | Ok nid ->
            (match Hierarchy.get_node nid with
-            | Error err -> html_error ~status:(Errors.http_status err) (Errors.message err)
+            | Error err ->
+                respond_error ~status:(Errors.http_status err) (Errors.message err)
             | Ok n ->
+                let nid_str = Node_id.to_string n.Node.id in
                 let parent_str =
                   match n.Node.parent with
-                  | None -> Node_id.to_string n.Node.id
-                  | Some p -> Printf.sprintf "%s#%s" (Node_id.to_string p) (Node_id.to_string n.Node.id)
+                  | None -> nid_str
+                  | Some p ->
+                      Printf.sprintf "%s#%s" (Node_id.to_string p) nid_str
                 in
-                let metadata_html =
+                let metadata_section =
                   match n.Node.metadata with
-                  | `Assoc [] | `Null -> {|<p style="color: var(--text-muted);">No metadata available</p>|}
-                  | j -> Printf.sprintf {|<div class="form">%s</div>|} (metadata_rows j)
+                  | `Assoc [] | `Null ->
+                      p
+                        [ style_ "color: var(--text-muted);";
+                          i18n "node.no_metadata" ]
+                        [ txt "No metadata available" ]
+                  | j -> div [ class_ "form" ] [ metadata_rows j ]
                 in
                 let level = Node_id.level n.Node.id in
                 let show_sensors =
@@ -251,122 +478,55 @@ let render_node ~params =
                   | Ok (_, schema) -> Schema.allows_sensors schema level
                   | Error _ -> false
                 in
-                let nid_str = Node_id.to_string n.Node.id in
-                let sensor_block =
-                  if not show_sensors then ""
-                  else
-                    Printf.sprintf
-                      {|<div style="margin-top: 2rem;">
-  <div style="display: grid; grid-template-columns: 1fr auto; align-items: center; margin-bottom: 1rem;">
-    <h2 class="section-title" style="margin-bottom: 0;">Sensors <span id="loading-indicator" class="htmx-indicator" style="display: none; font-size: var(--text-sm); color: var(--accent); margin-left: 8px;">Loading...</span></h2>
-    <button type="button" _="on click call #add-sensor-dialog.showModal()" class="btn-primary">Tilføj sensor</button>
-  </div>
-
-  <dialog id="add-sensor-dialog" _="on click if event.target == me then call me.close()">
-    <div class="dialog-header">
-      <h2>TILFØJ SENSOR</h2>
-      <button type="button" _="on click call #add-sensor-dialog.close()" class="btn-close">&times;</button>
-    </div>
-    <div class="dialog-body">
-      <div id="sensor-form-error" class="login-error" style="display:none; margin-bottom: 1rem;"></div>
-      <form id="add-sensor-form" class="form"
-            hx-post="/hierarchy/command"
-            hx-swap="none"
-            hx-on::after-request="if(event.detail.elt.id === 'add-sensor-form' && event.detail.successful) { document.querySelector('#add-sensor-dialog').close(); htmx.trigger('#sensor-list', 'load'); } else if(event.detail.elt.id === 'add-sensor-form') { document.getElementById('sensor-form-error').textContent = event.detail.xhr.responseText; document.getElementById('sensor-form-error').style.display = 'block'; }">
-        <input type="hidden" name="action" value="attach_sensor" />
-        <input type="hidden" name="data.parent_id" value="%s" />
-        <div class="form-row"><label class="form-label">DAQ Id</label><input type="text" name="data.daq_id" required class="form-input" /><span class="required">*</span></div>
-        <div class="form-row"><label class="form-label">Purpose</label><input type="text" name="data.purpose" required class="form-input" /><span class="required">*</span></div>
-        <div class="form-row"><label class="form-label">Meter type</label>
-          <select name="data.meter_type" required class="form-select">
-            <option value="counter">counter</option>
-            <option value="gauge">gauge</option>
-          </select>
-          <span class="required">*</span>
-        </div>
-        <div class="form-row"><label class="form-label">Unit</label><input type="text" name="data.unit" class="form-input" /></div>
-      </form>
-    </div>
-    <div class="dialog-footer">
-      <button type="submit" form="add-sensor-form" class="btn-warning">Gem</button>
-      <div></div>
-      <button type="button" _="on click call #add-sensor-dialog.close()" class="btn-warning">Luk</button>
-    </div>
-  </dialog>
-
-  <ul id="sensor-list" style="display: grid; gap: 8px;" hx-get="/hierarchy/query/sensors" hx-vals='{"nodepath": "%s"}' hx-trigger="load" hx-target="#sensor-list" hx-swap="innerHTML" hx-request='{"noHeaders": true}' hx-indicator="#loading-indicator"><li style="color: var(--text-muted);">Loading sensors...</li></ul>
-</div>|}
-                      (escape nid_str) (escape parent_str)
-                in
-                let add_child_block =
-                  Printf.sprintf
-                    {|<div style="margin-top: 2rem;">
-  <div style="display: grid; grid-template-columns: 1fr auto; align-items: center; margin-bottom: 1rem;">
-    <h2 class="section-title" style="margin-bottom: 0;">Children</h2>
-    <button type="button" class="btn-primary" _="on click call #add-child-dialog.showModal() then send refresh to #add-child-body">Add child</button>
-  </div>
-</div>
-<dialog id="add-child-dialog" _="on click if event.target == me then call me.close()">
-  <div class="dialog-header">
-    <h2>ADD CHILD</h2>
-    <button type="button" _="on click call #add-child-dialog.close()" class="btn-close">&times;</button>
-  </div>
-  <div class="dialog-body">
-    <div id="add-child-body"
-         hx-get="/hierarchy/query/add_child_form"
-         hx-vals='{"parent": "%s"}'
-         hx-trigger="refresh"
-         hx-request='{"noHeaders": true}'
-         hx-target="#add-child-body"
-         hx-swap="innerHTML"><em>Loading…</em></div>
-  </div>
-  <div class="dialog-footer">
-    <button type="submit" form="add-child-form" class="btn-warning">Save</button>
-    <div></div>
-    <button type="button" _="on click call #add-child-dialog.close()" class="btn-warning">Close</button>
-  </div>
-</dialog>|}
-                    (escape (Node_id.to_string n.Node.id))
-                in
                 let html =
-                  Printf.sprintf
-                    {|<div class="page-container">
-  <div class="card">
-    <div class="form">
-      <div class="form-row-2col"><label class="form-label">ID:</label><input type="text" id="id" value="%s" readonly class="form-input"></div>
-      <div class="form-row-2col"><label class="form-label">Name:</label><input type="text" id="name" value="%s" readonly class="form-input"></div>
-    </div>
-    %s
-    <div style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-medium);">
-      <h2 class="section-title">Metadata</h2>
-      %s
-      %s
-    </div>
-  </div>
-</div>|}
-                    (escape (Node_id.to_string n.Node.id))
-                    (escape n.Node.name)
-                    add_child_block
-                    metadata_html
-                    sensor_block
+                  div [ class_ "page-container" ]
+                    [ div [ class_ "card" ]
+                        [ div [ class_ "form" ]
+                            [ div [ class_ "form-row-2col" ]
+                                [ label [ class_ "form-label" ] [ txt "ID:" ];
+                                  input
+                                    [ type_ "text"; id "id";
+                                      value "%s" nid_str; readonly;
+                                      class_ "form-input" ] ];
+                              div [ class_ "form-row-2col" ]
+                                [ label
+                                    [ class_ "form-label"; i18n "common.name" ]
+                                    [ txt "Name" ];
+                                  input
+                                    [ type_ "text"; id "name";
+                                      value "%s" n.Node.name; readonly;
+                                      class_ "form-input" ] ] ];
+                          add_child_block ~parent_id_str:nid_str;
+                          div
+                            [ style_
+                                "margin-top: 2rem; padding-top: 1.5rem; \
+                                 border-top: 1px solid var(--border-medium);" ]
+                            [ h2
+                                [ class_ "section-title"; i18n "node.metadata" ]
+                                [ txt "Metadata" ];
+                              metadata_section;
+                              if show_sensors then
+                                sensor_block ~nid_str ~parent_str
+                              else null [] ] ] ]
                 in
-                v2_html html))
+                respond html))
 
 (* /hierarchy/query/sensors?nodepath=<path> *)
 let render_sensors ~params =
   match List.assoc_opt "nodepath" params with
-  | None -> html_error "missing nodepath"
+  | None -> respond_error "missing nodepath"
   | Some nodepath ->
-      (* nodepath is the concatenated hierarchy path; the leaf id is the last segment. *)
+      (* nodepath is the concatenated hierarchy path; the leaf id is the last
+         "HN{n}#..." segment. *)
       let last =
         match String.rindex_opt nodepath '#' with
         | Some _ ->
-            (* strip trailing '#'s then find the HN{n}#... at the end *)
             let rec last_node_id i =
               if i < 0 then nodepath
               else
                 match nodepath.[i] with
-                | 'H' when i + 1 < String.length nodepath && nodepath.[i + 1] = 'N' ->
+                | 'H' when i + 1 < String.length nodepath
+                           && nodepath.[i + 1] = 'N' ->
                     String.sub nodepath i (String.length nodepath - i)
                 | _ -> last_node_id (i - 1)
             in
@@ -374,106 +534,106 @@ let render_sensors ~params =
         | None -> nodepath
       in
       (match Node_id.of_string last with
-       | Error e -> html_error e
+       | Error e -> respond_error e
        | Ok nid ->
            (match Sensors.list_active ~parent:nid with
-            | Error err -> html_error ~status:(Errors.http_status err) (Errors.message err)
-            | Ok [] -> v2_html {|<li style="color: var(--text-muted);">No sensors found</li>|}
+            | Error err ->
+                respond_error ~status:(Errors.http_status err) (Errors.message err)
+            | Ok [] ->
+                respond
+                  (li
+                     [ style_ "color: var(--text-muted);";
+                       i18n "node.no_sensors" ]
+                     [ txt "No sensors found" ])
             | Ok ss ->
-                let html =
-                  String.concat "" (List.map (fun (s : Sensor.t) ->
-                    Printf.sprintf {|<li class="sensor-item">%s (%s)</li>|}
-                      (escape s.Sensor.daq_id)
-                      (escape s.Sensor.purpose)) ss)
+                let items =
+                  List.map (fun (s : Sensor.t) ->
+                    li [ class_ "sensor-item" ]
+                      [ txt "%s (%s)" s.Sensor.daq_id s.Sensor.purpose ]) ss
                 in
-                v2_html html))
+                respond (null items)))
 
 (* /hierarchy/query/users — <tr> rows *)
 let render_users () =
   match Users.list () with
-  | Error err -> html_error ~status:(Errors.http_status err) (Errors.message err)
+  | Error err ->
+      respond_error ~status:(Errors.http_status err) (Errors.message err)
   | Ok [] ->
-      v2_html {|<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1rem;">No users found</td></tr>|}
+      respond
+        (tr []
+           [ td
+               [ string_attr "colspan" "6";
+                 style_
+                   "text-align: center; color: var(--text-muted); padding: \
+                    1rem;" ]
+               [ txt "No users found" ] ])
   | Ok us ->
-      let html =
-        String.concat "" (List.map (fun (u : User.t) ->
+      let rows =
+        List.map (fun (u : User.t) ->
           let email = User_id.email u.User.id in
-          Printf.sprintf
-            {|<tr>
-  <td>%s</td>
-  <td>%s</td>
-  <td>%s</td>
-  <td>%s</td>
-  <td>%s</td>
-  <td><button class="btn-danger btn-sm" onclick="window.dispatchEvent(new CustomEvent('delete-user', { detail: { email: '%s' } }))">Slet</button></td>
-</tr>|}
-            (escape u.User.name)
-            (escape email)
-            (escape (Cognito_group.to_string u.User.cognito_group))
-            (escape (Language.to_string u.User.language))
-            (escape (Currency.to_string u.User.currency))
-            (escape email)) us)
+          tr []
+            [ td [] [ txt "%s" u.User.name ];
+              td [] [ txt "%s" email ];
+              td [] [ txt "%s" (Cognito_group.to_string u.User.cognito_group) ];
+              td [] [ txt "%s" (Language.to_string u.User.language) ];
+              td [] [ txt "%s" (Currency.to_string u.User.currency) ];
+              td []
+                [ button
+                    [ class_ "btn-danger btn-sm";
+                      string_attr "onclick"
+                        "window.dispatchEvent(new \
+                         CustomEvent('delete-user', { detail: { email: \
+                         '%s' } }))" email ]
+                    [ txt "Slet" ] ] ]) us
       in
-      v2_html html
+      respond (null rows)
+
+(* Form input for one schema-defined metadata field. *)
+let field_input fname (spec : Metadata.field_spec) =
+  let req_attr = if spec.required then required else null_ in
+  let req_mark = if spec.required then span [ class_ "required" ] [ txt "*" ]
+                 else null [] in
+  let common =
+    [ name "data.metadata.%s" fname; class_ "form-input"; req_attr ]
+  in
+  let input_node =
+    match spec.typ with
+    | Metadata.String _ -> input (type_ "text" :: common)
+    | Metadata.Number _ ->
+        input (type_ "number" :: string_attr "step" "any" :: common)
+    | Metadata.Integer _ ->
+        input (type_ "number" :: string_attr "step" "1" :: common)
+    | Metadata.Boolean ->
+        select
+          [ name "data.metadata.%s" fname; class_ "form-select"; req_attr ]
+          [ option [ value "true" ] "true";
+            option [ value "false" ] "false" ]
+    | Metadata.Timestamp ->
+        input (type_ "datetime-local" :: common)
+    | Metadata.Enum { one_of } ->
+        select
+          [ name "data.metadata.%s" fname; class_ "form-select"; req_attr ]
+          (List.map (fun v -> option [ value "%s" v ] "%s" v) one_of)
+  in
+  div [ class_ "form-row" ]
+    [ label [ class_ "form-label" ] [ txt "%s" fname ]; input_node; req_mark ]
 
 (* /hierarchy/query/add_child_form?parent=<id> — modal dialog body with a
    form for creating a child node under [parent]. If the schema allows more
-   than one child level under the parent, a level <select> is emitted (with an
-   HTMX hx-get that re-fetches the form for the newly chosen level). The
+   than one child level under the parent, a level <select> is emitted (with
+   an HTMX hx-get that re-fetches the form for the newly chosen level). The
    metadata fields for the selected (or first allowed) level are rendered
    inline. Post target is /hierarchy/command action=add_node. *)
-let field_input name (spec : Metadata.field_spec) =
-  let required_attr = if spec.required then " required" else "" in
-  let required_mark =
-    if spec.required then {|<span class="required">*</span>|} else ""
-  in
-  let input_html =
-    match spec.typ with
-    | Metadata.String _ ->
-        Printf.sprintf
-          {|<input type="text" name="data.metadata.%s"%s class="form-input" />|}
-          (escape name) required_attr
-    | Metadata.Number _ ->
-        Printf.sprintf
-          {|<input type="number" step="any" name="data.metadata.%s"%s class="form-input" />|}
-          (escape name) required_attr
-    | Metadata.Integer _ ->
-        Printf.sprintf
-          {|<input type="number" step="1" name="data.metadata.%s"%s class="form-input" />|}
-          (escape name) required_attr
-    | Metadata.Boolean ->
-        Printf.sprintf
-          {|<select name="data.metadata.%s"%s class="form-select"><option value="true">true</option><option value="false">false</option></select>|}
-          (escape name) required_attr
-    | Metadata.Timestamp ->
-        Printf.sprintf
-          {|<input type="datetime-local" name="data.metadata.%s"%s class="form-input" />|}
-          (escape name) required_attr
-    | Metadata.Enum { one_of } ->
-        let opts =
-          String.concat ""
-            (List.map (fun v ->
-               Printf.sprintf {|<option value="%s">%s</option>|}
-                 (escape v) (escape v)) one_of)
-        in
-        Printf.sprintf
-          {|<select name="data.metadata.%s"%s class="form-select">%s</select>|}
-          (escape name) required_attr opts
-  in
-  Printf.sprintf
-    {|<div class="form-row"><label class="form-label">%s</label>%s%s</div>|}
-    (escape name) input_html required_mark
-
 let render_add_child_form ~params =
   match List.assoc_opt "parent" params with
-  | None -> html_error "missing parent"
+  | None -> respond_error "missing parent"
   | Some parent_s ->
       (match Node_id.of_string parent_s with
-       | Error e -> html_error e
+       | Error e -> respond_error e
        | Ok parent_id ->
            (match Hierarchy.get_node parent_id with
             | Error err ->
-                html_error ~status:(Errors.http_status err) (Errors.message err)
+                respond_error ~status:(Errors.http_status err) (Errors.message err)
             | Ok parent_node ->
                 let parent_level = Node_id.level parent_node.Node.id in
                 let schema_opt =
@@ -488,19 +648,21 @@ let render_add_child_form ~params =
                 let allowed : (Level.t * Schema.edge_spec list) list =
                   match parent_level with
                   | Level.Hn0 ->
-                      [ (Level.Hn1, [ { Schema.label = "partner"; min = None; max = None } ]) ]
+                      [ Level.Hn1,
+                        [ { Schema.label = "partner"; min = None; max = None } ] ]
                   | Level.Hn1 ->
-                      [ (Level.Hn2, [ { Schema.label = "company"; min = None; max = None } ]) ]
+                      [ Level.Hn2,
+                        [ { Schema.label = "company"; min = None; max = None } ] ]
                   | _ ->
                       (match schema_opt with
                        | Some sch -> Schema.allowed_children sch parent_level
                        | None -> [])
                 in
-                (* Pick the requested level if any, else first allowed. *)
                 let requested_level =
                   match List.assoc_opt "level" params with
                   | Some s ->
-                      (match Level.of_string s with Ok l -> Some l | Error _ -> None)
+                      (match Level.of_string s with
+                       | Ok l -> Some l | Error _ -> None)
                   | None -> None
                 in
                 let chosen_level =
@@ -511,8 +673,11 @@ let render_add_child_form ~params =
                 in
                 match chosen_level with
                 | None ->
-                    v2_html
-                      {|<div class="error">This node type cannot have children according to its schema.</div>|}
+                    respond
+                      (div [ class_ "error" ]
+                         [ txt
+                             "This node type cannot have children according \
+                              to its schema." ])
                 | Some level ->
                     let labels =
                       match List.assoc_opt level allowed with
@@ -524,87 +689,120 @@ let render_add_child_form ~params =
                       | Some sch -> Schema.metadata_for sch level
                       | None -> []
                     in
-                    let level_opts =
-                      String.concat ""
-                        (List.map (fun (l, _) ->
-                           let selected = if l = level then " selected" else "" in
-                           Printf.sprintf
-                             {|<option value="%s"%s>%s</option>|}
-                             (Level.to_string l) selected (Level.to_string l))
-                           allowed)
+                    let level_options =
+                      List.map (fun (l, _) ->
+                        let attrs =
+                          if l = level then
+                            [ value "%s" (Level.to_string l);
+                              attr "selected" ]
+                          else
+                            [ value "%s" (Level.to_string l) ]
+                        in
+                        option attrs "%s" (Level.to_string l)) allowed
                     in
                     let level_selector =
                       if List.length allowed <= 1 then
-                        Printf.sprintf
-                          {|<div class="form-row">
-  <label class="form-label">Type</label>
-  <select class="form-select" disabled>%s</select>
-  <input type="hidden" name="data.level" value="%s" />
-</div>|}
-                          level_opts (Level.to_string level)
+                        div [ class_ "form-row" ]
+                          [ label
+                              [ class_ "form-label"; i18n "common.type" ]
+                              [ txt "Type" ];
+                            select
+                              [ class_ "form-select"; disabled ]
+                              level_options;
+                            input
+                              [ type_ "hidden"; name "data.level";
+                                value "%s" (Level.to_string level) ] ]
                       else
-                        Printf.sprintf
-                          {|<div class="form-row">
-  <label class="form-label">Type</label>
-  <select name="data.level" class="form-select"
-          hx-get="/hierarchy/query/add_child_form"
-          hx-trigger="change"
-          hx-vals='{"parent": "%s"}'
-          hx-include="this"
-          hx-target="#add-child-body" hx-swap="innerHTML">%s</select>
-</div>|}
-                          (escape parent_s) level_opts
+                        div [ class_ "form-row" ]
+                          [ label
+                              [ class_ "form-label"; i18n "common.type" ]
+                              [ txt "Type" ];
+                            select
+                              [ name "data.level"; class_ "form-select";
+                                Hx.get "/hierarchy/query/add_child_form";
+                                Hx.trigger "change";
+                                Hx.vals {|{"parent": "%s"}|} parent_s;
+                                Hx.include_ "this";
+                                Hx.target "#add-child-body";
+                                Hx.swap "innerHTML" ]
+                              level_options ]
                     in
                     let label_selector =
                       match labels with
-                      | [] -> ""
+                      | [] -> null []
                       | [ only ] ->
-                          Printf.sprintf
-                            {|<div class="form-row">
-  <label class="form-label">Label</label>
-  <select class="form-select" disabled><option value="%s" selected>%s</option></select>
-  <input type="hidden" name="data.label" value="%s" />
-</div>|}
-                            (escape only) (escape only) (escape only)
+                          div [ class_ "form-row" ]
+                            [ label
+                                [ class_ "form-label"; i18n "common.label" ]
+                                [ txt "Label" ];
+                              select
+                                [ class_ "form-select"; disabled ]
+                                [ option
+                                    [ value "%s" only; attr "selected" ]
+                                    "%s" only ];
+                              input
+                                [ type_ "hidden"; name "data.label";
+                                  value "%s" only ] ]
                       | xs ->
-                          let opts =
-                            String.concat ""
-                              (List.map (fun l ->
-                                 Printf.sprintf {|<option value="%s">%s</option>|}
-                                   (escape l) (escape l)) xs)
-                          in
-                          Printf.sprintf
-                            {|<div class="form-row"><label class="form-label">Label</label><select name="data.label" class="form-select">%s</select></div>|}
-                            opts
+                          div [ class_ "form-row" ]
+                            [ label
+                                [ class_ "form-label"; i18n "common.label" ]
+                                [ txt "Label" ];
+                              select
+                                [ name "data.label"; class_ "form-select" ]
+                                (List.map
+                                   (fun l -> option [ value "%s" l ] "%s" l)
+                                   xs) ]
                     in
-                    let metadata_html =
-                      String.concat ""
-                        (List.map (fun (n, spec) -> field_input n spec) metadata_fields)
+                    let metadata_inputs =
+                      null
+                        (List.map (fun (n, spec) -> field_input n spec)
+                           metadata_fields)
                     in
                     let html =
-                      Printf.sprintf
-                        {|<div id="add-child-error" class="login-error" style="display:none; margin-bottom: 1rem;"></div>
-<form id="add-child-form" class="form"
-      hx-post="/hierarchy/command"
-      hx-swap="none"
-      hx-on::after-request="if(event.detail.elt.id === 'add-child-form' && event.detail.successful) { document.querySelector('#add-child-dialog').close(); location.reload(); } else if(event.detail.elt.id === 'add-child-form') { document.getElementById('add-child-error').textContent = event.detail.xhr.responseText; document.getElementById('add-child-error').style.display = 'block'; }">
-  <input type="hidden" name="action" value="add_node" />
-  <input type="hidden" name="data.parent_id" value="%s" />
-  %s
-  %s
-  <div class="form-row"><label class="form-label">Name</label><input type="text" name="data.name" required class="form-input" /><span class="required">*</span></div>
-  %s
-</form>|}
-                        (escape parent_s)
-                        level_selector
-                        label_selector
-                        metadata_html
+                      null
+                        [ div
+                            [ id "add-child-error"; class_ "login-error";
+                              style_ "display:none; margin-bottom: 1rem;" ]
+                            [];
+                          form
+                            [ id "add-child-form"; class_ "form";
+                              Hx.post "/hierarchy/command";
+                              Hx.swap "none";
+                              hx_on_after_request
+                                "if(event.detail.elt.id === \
+                                 'add-child-form' && \
+                                 event.detail.successful) { \
+                                 document.querySelector('#add-child-dialog').close(); \
+                                 location.reload(); } else if \
+                                 (event.detail.elt.id === \
+                                 'add-child-form') { \
+                                 document.getElementById('add-child-error').textContent \
+                                 = event.detail.xhr.responseText; \
+                                 document.getElementById('add-child-error').style.display \
+                                 = 'block'; }" ]
+                            [ input
+                                [ type_ "hidden"; name "action";
+                                  value "add_node" ];
+                              input
+                                [ type_ "hidden"; name "data.parent_id";
+                                  value "%s" parent_s ];
+                              level_selector;
+                              label_selector;
+                              div [ class_ "form-row" ]
+                                [ label
+                                    [ class_ "form-label"; i18n "common.name" ]
+                                    [ txt "Name" ];
+                                  input
+                                    [ type_ "text"; name "data.name";
+                                      required; class_ "form-input" ];
+                                  span [ class_ "required" ] [ txt "*" ] ];
+                              metadata_inputs ] ]
                     in
-                    v2_html html))
+                    respond html))
 
 let dispatch ~action ~params =
   match action with
-  | "nodetypes" -> render_nodetypes ()
   | "profiles"  -> render_profiles ()
   | "languages" -> render_languages ()
   | "currencies" -> render_currencies ()
@@ -615,4 +813,5 @@ let dispatch ~action ~params =
   | "sensors"   -> render_sensors ~params
   | "users"     -> render_users ()
   | "add_child_form" -> render_add_child_form ~params
-  | other       -> html_error ~status:400 (Printf.sprintf "unknown hierarchy action %s" other)
+  | other       -> respond_error ~status:400
+                     (Printf.sprintf "unknown hierarchy action %s" other)

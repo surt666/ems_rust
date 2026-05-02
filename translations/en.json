@@ -19,7 +19,13 @@
     "energy_form": "Energy type",
     "type": "Type",
     "building": "Building",
-    "selected": "selected"
+    "selected": "selected",
+    "save": "Save",
+    "close": "Close",
+    "name": "Name",
+    "label": "Label",
+    "loading": "Loading…",
+    "cancel": "Cancel"
   },
   "energy": {
     "electricity": "Electricity",
@@ -148,5 +154,17 @@
     "ri_main": "Resource Insights",
     "ri_analysis": "Resource Insights - Analysis",
     "ri_energy_model": "Resource Insights - Energy Model"
+  },
+  "node": {
+    "children": "Children",
+    "add_child": "Add child",
+    "add_child_dialog_title": "ADD CHILD",
+    "sensors": "Sensors",
+    "add_sensor": "Add sensor",
+    "add_sensor_dialog_title": "ADD SENSOR",
+    "no_sensors": "No sensors found",
+    "sensors_loading": "Loading sensors…",
+    "no_metadata": "No metadata available",
+    "metadata": "Metadata"
   }
 }

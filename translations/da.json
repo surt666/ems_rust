@@ -19,7 +19,13 @@
     "energy_form": "Energiform",
     "type": "Type",
     "building": "Bygning",
-    "selected": "valgt"
+    "selected": "valgt",
+    "save": "Gem",
+    "close": "Luk",
+    "name": "Navn",
+    "label": "Etiket",
+    "loading": "Indlæser…",
+    "cancel": "Annullér"
   },
   "energy": {
     "electricity": "El",
@@ -148,5 +154,17 @@
     "ri_main": "Resource Insights",
     "ri_analysis": "Resource Insights - Analyse",
     "ri_energy_model": "Resource Insights - Energimodel"
+  },
+  "node": {
+    "children": "Underliggende",
+    "add_child": "Tilføj underliggende",
+    "add_child_dialog_title": "TILFØJ UNDERLIGGENDE",
+    "sensors": "Sensorer",
+    "add_sensor": "Tilføj sensor",
+    "add_sensor_dialog_title": "TILFØJ SENSOR",
+    "no_sensors": "Ingen sensorer fundet",
+    "sensors_loading": "Indlæser sensorer…",
+    "no_metadata": "Ingen metadata",
+    "metadata": "Metadata"
   }
 }

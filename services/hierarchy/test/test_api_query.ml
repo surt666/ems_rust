@@ -1,10 +1,8 @@
 open Ocaml_lambda_hierarchy
 
-let uuid s = Uuidm.of_string s |> Option.get
-
 let seed_with_one_child () =
   let st = Memory.empty () in
-  let c2 = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-00000000cccc") in
+  let c2 = Node_id.make Level.Hn2 10002 in
   let schema : Schema.t =
     Schema.{
       version = 1;
@@ -15,9 +13,13 @@ let seed_with_one_child () =
       sensors = [];
     }
   in
+  let parent_path =
+    Node_id.to_string Node_id.root ^ "|"
+    ^ Node_id.to_string (Node_id.make Level.Hn1 10001)
+  in
   let n2 =
-    Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"Acme"
-      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
+    Node.make ~id:10002 ~level:Level.Hn2 ~name:"Acme"
+      ~parent:Node_id.root ~parent_path ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some schema)
   in
   Memory.run st (fun () ->
@@ -71,10 +73,7 @@ let unknown_action_is_bad_request () =
 
 let list_sensors_empty () =
   let st = Memory.empty () in
-  let parent =
-    Node_id.make Level.Hn4
-      (Uuidm.of_string "55555555-0000-4000-8000-000000000001" |> Option.get)
-  in
+  let parent = Node_id.make Level.Hn4 10042 in
   Memory.run st (fun () ->
     let resp =
       Api_query.dispatch ~action:"list_sensors"

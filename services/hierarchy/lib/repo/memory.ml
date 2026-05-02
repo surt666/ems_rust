@@ -7,31 +7,57 @@ type edge = {
   name  : string;
 }
 
+type counter = { mutable n : int; mutable live : int }
+
 type state = {
   nodes    : (string, Node.t) Hashtbl.t;
   edges    : edge list ref;
   sensors  : (string, sensor_row list) Hashtbl.t;
   users    : (string, User.t) Hashtbl.t;
-  rng      : Random.State.t;
+  counters : (string, counter) Hashtbl.t;
   clock    : unit -> Ptime.t;
 }
 
 let empty ?(seed = 42) ?(clock = Ptime_clock.now) () =
+  let _ = seed in
   {
     nodes = Hashtbl.create 32;
     edges = ref [];
     sensors = Hashtbl.create 32;
     users = Hashtbl.create 32;
-    rng = Random.State.make [| seed |];
+    counters = Hashtbl.create 16;
     clock;
   }
 
-let fresh_uuid rng =
-  let bytes = Bytes.create 16 in
-  for i = 0 to 15 do Bytes.set_uint8 bytes i (Random.State.int rng 256) done;
-  Bytes.set_uint8 bytes 6 (0x40 lor (Bytes.get_uint8 bytes 6 land 0x0f));
-  Bytes.set_uint8 bytes 8 (0x80 lor (Bytes.get_uint8 bytes 8 land 0x3f));
-  Uuidm.unsafe_of_binary_string (Bytes.unsafe_to_string bytes)
+let counter_for st key =
+  match Hashtbl.find_opt st.counters key with
+  | Some c -> c
+  | None ->
+      let c = { n = 10000; live = 0 } in
+      Hashtbl.replace st.counters key c;
+      c
+
+let allocate_node_id st level =
+  let key = Codec.counter_pk_node level in
+  let c = counter_for st key in
+  c.n <- c.n + 1;
+  c.live <- c.live + 1;
+  c.n
+
+let allocate_sensor_id st =
+  let c = counter_for st Codec.counter_pk_sensor in
+  c.n <- c.n + 1;
+  c.live <- c.live + 1;
+  c.n
+
+let release_node_count st level =
+  let key = Codec.counter_pk_node level in
+  let c = counter_for st key in
+  c.live <- c.live - 1
+
+let release_sensor_count st =
+  let c = counter_for st Codec.counter_pk_sensor in
+  c.live <- c.live - 1
 
 let find_node st id =
   Hashtbl.find_opt st.nodes (Node_id.to_string id)
@@ -45,10 +71,6 @@ let set_sensor_rows st id rows =
 let active_of_rows rows =
   List.find_map (function Active s -> Some s | History _ -> None) rows
 
-(* For each edge whose from_ parses to the given parent node, optionally
-   filter by Edge_kind. If kind_opt is None, return all child edges whose
-   to_ parses as a Node_id (i.e. node-child edges, skipping sensor/other
-   non-node targets). If kind_opt is Some k, match edges whose e.kind = k. *)
 let edge_matches st parent kind_opt =
   List.filter_map
     (fun e ->
@@ -68,6 +90,10 @@ let edge_matches st parent kind_opt =
             | Error _ -> None)
     !(st.edges)
 
+let push_edge st (es : Effects.edge_spec) =
+  st.edges := { from_ = es.from_; to_ = es.to_; kind = es.kind; name = es.name }
+              :: !(st.edges)
+
 let run (st : state) (f : unit -> 'a) : 'a =
   let open Effect.Deep in
   try_with f ()
@@ -75,12 +101,12 @@ let run (st : state) (f : unit -> 'a) : 'a =
       effc =
         (fun (type a) (eff : a Effect.t) ->
           match eff with
-          | Effects.Gen_uuid () ->
-              Some (fun (k : (a, _) continuation) -> continue k (fresh_uuid st.rng))
-          | Effects.Now () ->
-              Some (fun k -> continue k (st.clock ()))
           | Effects.Get_node id ->
-              Some (fun k -> continue k (find_node st id))
+              Some (fun (k : (a, _) continuation) ->
+                continue k (find_node st id))
+          | Effects.Now () ->
+              Some (fun (k : (a, _) continuation) ->
+                continue k (st.clock ()))
           | Effects.Get_schema id ->
               let schema = Option.bind (find_node st id) (fun n -> n.Node.schema) in
               Some (fun k -> continue k schema)
@@ -96,32 +122,36 @@ let run (st : state) (f : unit -> 'a) : 'a =
               let matches = edge_matches st parent kind_opt in
               let refs = List.map (fun (e, c) -> (c, e.name)) matches in
               Some (fun k -> continue k refs)
+          | Effects.Add_node { level; build } ->
+              let id = allocate_node_id st level in
+              let (node, edge) = build ~id in
+              Hashtbl.replace st.nodes (Node_id.to_string node.Node.id) node;
+              push_edge st edge;
+              Some (fun k -> continue k (Ok node))
           | Effects.Put_node n ->
               Hashtbl.replace st.nodes (Node_id.to_string n.Node.id) n;
               Some (fun k -> continue k ())
-          | Effects.Put_edge { from_; to_; kind; name; created = _ } ->
-              st.edges := { from_; to_; kind; name } :: !(st.edges);
+          | Effects.Put_edge es ->
+              push_edge st es;
               Some (fun k -> continue k ())
           | Effects.Delete_node id ->
               let id_s = Node_id.to_string id in
+              (match find_node st id with
+               | Some n -> release_node_count st (Node.level n)
+               | None -> ());
               Hashtbl.remove st.nodes id_s;
               st.edges :=
                 List.filter
                   (fun e -> e.from_ <> id_s && e.to_ <> id_s)
                   !(st.edges);
               Some (fun k -> continue k ())
-          | Effects.Put_sensor { sensor; parent } ->
+          | Effects.Add_sensor { build } ->
+              let id = allocate_sensor_id st in
+              let (sensor, edge) = build ~id in
               let rows = sensor_rows st sensor.Sensor.id in
               set_sensor_rows st sensor.Sensor.id (Active sensor :: rows);
-              st.edges :=
-                {
-                  from_ = Node_id.to_string parent;
-                  to_   = Sensor_id.to_string sensor.Sensor.id;
-                  kind  = Edge_kind.Has_sensor;
-                  name  = "";
-                }
-                :: !(st.edges);
-              Some (fun k -> continue k ())
+              push_edge st edge;
+              Some (fun k -> continue k (Ok sensor))
           | Effects.Get_active_sensor id ->
               let v = active_of_rows (sensor_rows st id) in
               Some (fun k -> continue k v)
@@ -151,6 +181,7 @@ let run (st : state) (f : unit -> 'a) : 'a =
               set_sensor_rows st id (Active new_sensor :: demoted);
               Some (fun k -> continue k ())
           | Effects.Delete_sensor { sensor_id; parent } ->
+              release_sensor_count st;
               Hashtbl.remove st.sensors (Sensor_id.to_string sensor_id);
               let target_s = Sensor_id.to_string sensor_id in
               let parent_s = Node_id.to_string parent in

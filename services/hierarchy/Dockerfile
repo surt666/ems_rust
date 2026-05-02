@@ -19,8 +19,9 @@ RUN opam install --deps-only -y . 2>&1
 # Copy source
 COPY --chown=opam:opam . .
 
-# Build binary
-ENV OCAMLPARAM=_,ccopt=-static,cclib=-static
+# Build binary. -no-pie prevents producing a static-pie ELF on x86_64
+# musl, which segfaults on Lambda al2023 init. Plain static is fine.
+ENV OCAMLPARAM=_,ccopt=-static,ccopt=-no-pie,cclib=-static,cclib=-no-pie
 RUN opam exec -- dune build bin/main.exe --force 2>&1
 
 FROM alpine:3.20 AS package

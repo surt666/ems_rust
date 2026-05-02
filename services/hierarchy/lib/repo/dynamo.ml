@@ -3,8 +3,194 @@ module Dyn = Smaws_Client_DynamoDB
 type cfg = { ctx : Smaws_Lib.Context.t; table : string }
 
 let s (x : string) : Dyn.attribute_value = Dyn.S x
+let n (x : string) : Dyn.attribute_value = Dyn.N x
 
 let pk_key id = [ ("pk", s id); ("sk", s id) ]
+
+let counter_key pk =
+  [ ("pk", s pk); ("sk", s Codec.counter_sk) ]
+
+(* ----------------------------------------------------------------------
+   Counter ops
+   --------------------------------------------------------------------- *)
+
+(* Read counter; returns (n, live) or None if the row is missing. *)
+let read_counter cfg ~pk =
+  let input =
+    Dyn.make_get_item_input ~key:(counter_key pk)
+      ~table_name:cfg.table ()
+  in
+  match Dyn.GetItem.request cfg.ctx input with
+  | Error _ -> None
+  | Ok { item = None; _ } -> None
+  | Ok { item = Some kvs; _ } ->
+      let read k =
+        match List.assoc_opt k kvs with
+        | Some (Dyn.N v) -> int_of_string_opt v
+        | _ -> None
+      in
+      (match read "n", read "live" with
+       | Some n, Some l -> Some (n, l)
+       | Some n, None -> Some (n, 0)
+       | _ -> None)
+
+(* Idempotent counter seed; never overwrites an existing row. *)
+let seed_counter cfg ~pk ~initial_n =
+  let input =
+    Dyn.make_put_item_input
+      ~item:(Codec.counter_seed_item ~pk ~initial_n)
+      ~table_name:cfg.table
+      ~condition_expression:"attribute_not_exists(pk)"
+      ()
+  in
+  ignore (Dyn.PutItem.request cfg.ctx input)
+
+(* Adjust live by delta (no condition; used on delete-time cleanup). *)
+let bump_live cfg ~pk ~delta =
+  let input =
+    Dyn.make_update_item_input
+      ~table_name:cfg.table
+      ~key:(counter_key pk)
+      ~update_expression:"ADD #live :d"
+      ~expression_attribute_names:[ ("#live", "live") ]
+      ~expression_attribute_values:[ (":d", n (string_of_int delta)) ]
+      ()
+  in
+  ignore (Dyn.UpdateItem.request cfg.ctx input)
+
+(* ----------------------------------------------------------------------
+   Atomic add: TransactWriteItems with conditional counter update + node put
+   + edge put. Retries on counter contention.
+   --------------------------------------------------------------------- *)
+
+let max_alloc_retries = 5
+
+(* Returns Ok () or Error `Counter_race / `Conflict / `Other reason. *)
+let try_transact_alloc cfg ~counter_pk ~current_n ~next_n
+    ~node_item ~edge_item =
+  let upd =
+    Dyn.make_update
+      ~table_name:cfg.table
+      ~key:(counter_key counter_pk)
+      ~update_expression:"SET #n = :next ADD #live :one"
+      ~condition_expression:"#n = :current"
+      ~expression_attribute_names:[ ("#n", "n"); ("#live", "live") ]
+      ~expression_attribute_values:[
+        (":next", n (string_of_int next_n));
+        (":current", n (string_of_int current_n));
+        (":one", n "1");
+      ]
+      ()
+  in
+  let put_node =
+    Dyn.make_put
+      ~table_name:cfg.table
+      ~item:node_item
+      ~condition_expression:"attribute_not_exists(pk)"
+      ()
+  in
+  let put_edge =
+    Dyn.make_put
+      ~table_name:cfg.table
+      ~item:edge_item
+      ~condition_expression:"attribute_not_exists(sk)"
+      ()
+  in
+  let items =
+    [
+      Dyn.make_transact_write_item ~update:upd ();
+      Dyn.make_transact_write_item ~put:put_node ();
+      Dyn.make_transact_write_item ~put:put_edge ();
+    ]
+  in
+  let input = Dyn.make_transact_write_items_input ~transact_items:items () in
+  match Dyn.TransactWriteItems.request cfg.ctx input with
+  | Ok _ -> Ok ()
+  | Error (`TransactionCanceledException { cancellation_reasons = Some rs; _ }) ->
+      (* index 0 = counter, 1 = node, 2 = edge. The counter cond fails
+         on race; node cond fails on duplicate id (real conflict). *)
+      let code_at i =
+        match List.nth_opt rs i with
+        | Some { Dyn.code = Some c; _ } -> c
+        | _ -> ""
+      in
+      let counter_code = code_at 0 in
+      let node_code = code_at 1 in
+      let edge_code = code_at 2 in
+      if counter_code = "ConditionalCheckFailed" then Error `Counter_race
+      else if node_code = "ConditionalCheckFailed"
+              || edge_code = "ConditionalCheckFailed" then
+        Error (`Conflict "id collision on put")
+      else Error (`Other "transact canceled")
+  | Error _ -> Error (`Other "transact failed")
+
+let allocate_and_put_node cfg ~level ~build =
+  let counter_pk = Codec.counter_pk_node level in
+  let rec attempt remaining =
+    if remaining <= 0 then
+      Error (Errors.Conflict "counter contention exceeded retries")
+    else
+      let current_n =
+        match read_counter cfg ~pk:counter_pk with
+        | Some (n, _) -> n
+        | None ->
+            (* Lazy seed if missing — should normally be done in setup. *)
+            seed_counter cfg ~pk:counter_pk ~initial_n:10000;
+            10000
+      in
+      let next_n = current_n + 1 in
+      let (node, edge) = build ~id:next_n in
+      let node_item = Codec.node_to_item node in
+      let edge_item =
+        let self_path = Option.value edge.Effects.self_path ~default:"" in
+        Codec.edge_with_anchor
+          ~from_:edge.from_ ~to_:edge.to_ ~kind:edge.kind
+          ~name:edge.name ~created:edge.created ~self_path
+      in
+      match try_transact_alloc cfg
+              ~counter_pk ~current_n ~next_n ~node_item ~edge_item with
+      | Ok () -> Ok node
+      | Error `Counter_race -> attempt (remaining - 1)
+      | Error (`Conflict m) -> Error (Errors.Conflict m)
+      | Error (`Other m) -> Error (Errors.Internal m)
+  in
+  attempt max_alloc_retries
+
+let allocate_and_put_sensor cfg ~build =
+  let counter_pk = Codec.counter_pk_sensor in
+  let rec attempt remaining =
+    if remaining <= 0 then
+      Error (Errors.Conflict "counter contention exceeded retries")
+    else
+      let current_n =
+        match read_counter cfg ~pk:counter_pk with
+        | Some (n, _) -> n
+        | None ->
+            seed_counter cfg ~pk:counter_pk ~initial_n:10000;
+            10000
+      in
+      let next_n = current_n + 1 in
+      let (sensor, edge) = build ~id:next_n in
+      let sensor_item = Codec.sensor_to_item ~active:true sensor in
+      let edge_item =
+        let self_path = Option.value edge.Effects.self_path ~default:"" in
+        Codec.edge_with_anchor
+          ~from_:edge.from_ ~to_:edge.to_ ~kind:edge.kind
+          ~name:edge.name ~created:edge.created ~self_path
+      in
+      match try_transact_alloc cfg
+              ~counter_pk ~current_n ~next_n
+              ~node_item:sensor_item ~edge_item with
+      | Ok () -> Ok sensor
+      | Error `Counter_race -> attempt (remaining - 1)
+      | Error (`Conflict m) -> Error (Errors.Conflict m)
+      | Error (`Other m) -> Error (Errors.Internal m)
+  in
+  attempt max_alloc_retries
+
+(* ----------------------------------------------------------------------
+   Reads
+   --------------------------------------------------------------------- *)
 
 let get_item cfg id =
   let input =
@@ -12,16 +198,7 @@ let get_item cfg id =
       ~table_name:cfg.table ()
   in
   match Dyn.GetItem.request cfg.ctx input with
-  | Error e -> failwith (Printf.sprintf "GetItem failed: %s"
-                           (match e with
-                            | `InternalServerError _ -> "internal"
-                            | `ResourceNotFoundException _ -> "table not found"
-                            | `AWSServiceError { message; _type = { name; namespace } } ->
-                                Printf.sprintf "aws %s/%s: %s" namespace name
-                                  (Option.value message ~default:"<none>")
-                            | `HttpError _ -> "http"
-                            | `JsonParseError _ -> "json parse"
-                            | _ -> "other"))
+  | Error _ -> None
   | Ok { item = None; _ } -> None
   | Ok { item = Some kvs; _ } ->
       (match Codec.node_of_item kvs with
@@ -43,9 +220,12 @@ let query_child_edges cfg parent kind_opt =
           ~table_name:cfg.table ()
     | None ->
         Dyn.make_query_input
-          ~key_condition_expression:"#pk = :pk"
-          ~expression_attribute_names:[ ("#pk", "pk") ]
-          ~expression_attribute_values:[ (":pk", pk_val) ]
+          ~key_condition_expression:"#pk = :pk AND begins_with(#sk, :sk)"
+          ~expression_attribute_names:[ ("#pk", "pk"); ("#sk", "sk") ]
+          ~expression_attribute_values:[
+            (":pk", pk_val);
+            (":sk", s "has_");
+          ]
           ~table_name:cfg.table ()
   in
   match Dyn.Query.request cfg.ctx input with
@@ -53,30 +233,53 @@ let query_child_edges cfg parent kind_opt =
   | Ok { items = None; _ } -> []
   | Ok { items = Some edge_rows; _ } -> edge_rows
 
+(* Edge sk has shape "has_<label>#<child_id>" or "has_sensor#<sensor_id>".
+   Strip the leading "has_<verb>#" prefix to recover the child/sensor id. *)
+let child_id_from_edge_sk sk =
+  match String.index_opt sk '#' with
+  | None -> None
+  | Some i ->
+      let rest = String.sub sk (i + 1) (String.length sk - i - 1) in
+      Some rest
+
 let query_child_refs cfg parent kind_opt =
   List.filter_map
     (fun kvs ->
       match
-        (List.assoc_opt "gsi1pk" kvs : Dyn.attribute_value option),
+        (List.assoc_opt "sk" kvs : Dyn.attribute_value option),
         (List.assoc_opt "name" kvs : Dyn.attribute_value option)
       with
-      | Some (Dyn.S child_s), Some (Dyn.S name) ->
-          (match Node_id.of_string child_s with
-           | Error _ -> None
-           | Ok child_id -> Some (child_id, name))
+      | Some (Dyn.S sk), Some (Dyn.S name) ->
+          (match child_id_from_edge_sk sk with
+           | None -> None
+           | Some child_s ->
+               (match Node_id.of_string child_s with
+                | Error _ -> None
+                | Ok child_id -> Some (child_id, name)))
       | _ -> None)
-    (query_child_edges cfg parent kind_opt)
+    (query_child_edges cfg parent
+       (match kind_opt with
+        | Some (Edge_kind.Has_sensor) -> kind_opt
+        | _ -> kind_opt))
 
 let query_children cfg parent kind_opt =
   List.filter_map
     (fun kvs ->
-      match (List.assoc_opt "gsi1pk" kvs : Dyn.attribute_value option) with
-      | Some (Dyn.S child_s) ->
-          (match Node_id.of_string child_s with
-           | Error _ -> None
-           | Ok child_id -> get_item cfg child_id)
+      match (List.assoc_opt "sk" kvs : Dyn.attribute_value option) with
+      | Some (Dyn.S sk)
+        when not (String.length sk >= 11 && String.sub sk 0 11 = "has_sensor#") ->
+          (match child_id_from_edge_sk sk with
+           | None -> None
+           | Some child_s ->
+               (match Node_id.of_string child_s with
+                | Error _ -> None
+                | Ok child_id -> get_item cfg child_id))
       | _ -> None)
     (query_child_edges cfg parent kind_opt)
+
+(* ----------------------------------------------------------------------
+   Writes (non-allocating)
+   --------------------------------------------------------------------- *)
 
 let put_node cfg (nd : Node.t) =
   let input =
@@ -87,70 +290,173 @@ let put_node cfg (nd : Node.t) =
   | Ok _ -> ()
   | Error _ -> failwith "PutItem node failed"
 
-let put_edge cfg ~from_ ~to_ ~kind ~name ~created =
-  let item = Codec.edge_item ~from_ ~to_ ~kind ~name ~created in
+let put_edge_spec cfg (es : Effects.edge_spec) =
+  let item =
+    match es.self_path with
+    | Some self_path ->
+        Codec.edge_with_anchor
+          ~from_:es.from_ ~to_:es.to_ ~kind:es.kind
+          ~name:es.name ~created:es.created ~self_path
+    | None ->
+        Codec.edge_item
+          ~from_:es.from_ ~to_:es.to_ ~kind:es.kind
+          ~name:es.name ~created:es.created
+  in
   let input = Dyn.make_put_item_input ~item ~table_name:cfg.table () in
   match Dyn.PutItem.request cfg.ctx input with
   | Ok _ -> ()
   | Error _ -> failwith "PutItem edge failed"
 
-let delete_node cfg id =
-  let id_s = Node_id.to_string id in
-  let _ =
-    Dyn.DeleteItem.request cfg.ctx
-      (Dyn.make_delete_item_input ~key:(pk_key id_s) ~table_name:cfg.table ())
-  in
-  let delete_where_pk_eq ~pk_attr ~sk_attr ~index_name_opt =
+(* ----------------------------------------------------------------------
+   Delete: one GSI Query per level partition + one for sensors.
+   --------------------------------------------------------------------- *)
+
+let active_sk_prefix = "active#"
+let has_sensor_sk_prefix = "has_sensor#"
+
+(* Page through GSI partition [gsi1pk_v] picking up rows whose gsi1sk
+   begins with [path_prefix]. *)
+let query_gsi_partition cfg ~gsi1pk_v ~path_prefix =
+  let rec loop acc start_key =
     let input =
       Dyn.make_query_input
-        ~key_condition_expression:"#pk = :pk"
-        ~expression_attribute_names:[ ("#pk", pk_attr) ]
-        ~expression_attribute_values:[ (":pk", s id_s) ]
-        ?index_name:index_name_opt
+        ~key_condition_expression:"#pk = :pk AND begins_with(#sk, :sk)"
+        ~expression_attribute_names:[ ("#pk", "gsi1pk"); ("#sk", "gsi1sk") ]
+        ~expression_attribute_values:[
+          (":pk", s gsi1pk_v);
+          (":sk", s path_prefix);
+        ]
+        ~index_name:"gsi1"
+        ?exclusive_start_key:start_key
         ~table_name:cfg.table ()
     in
     match Dyn.Query.request cfg.ctx input with
-    | Error _ -> ()
-    | Ok { items = None; _ } -> ()
-    | Ok { items = Some rows; _ } ->
-        List.iter
-          (fun kvs ->
-            match List.assoc_opt pk_attr kvs, List.assoc_opt sk_attr kvs with
-            | Some pk_v, Some sk_v ->
-                let _ =
-                  Dyn.DeleteItem.request cfg.ctx
-                    (Dyn.make_delete_item_input
-                       ~key:[ ("pk", pk_v); ("sk", sk_v) ]
-                       ~table_name:cfg.table ())
-                in
-                ()
-            | _ -> ())
-          rows
+    | Error _ -> acc
+    | Ok { items; last_evaluated_key; _ } ->
+        let acc =
+          match items with
+          | None -> acc
+          | Some xs -> List.rev_append xs acc
+        in
+        match last_evaluated_key with
+        | None | Some [] -> acc
+        | Some _ as k -> loop acc k
   in
-  delete_where_pk_eq ~pk_attr:"pk" ~sk_attr:"sk" ~index_name_opt:None;
-  delete_where_pk_eq ~pk_attr:"gsi1pk" ~sk_attr:"gsi1sk" ~index_name_opt:(Some "gsi1")
+  List.rev (loop [] None)
 
-let active_sk_prefix = "active#"
-let has_sensor_sk_prefix = Edge_kind.sk_verb Edge_kind.Has_sensor ^ "#"
+(* Delete a list of (pk, sk) pairs in 25-row BatchWriteItem batches. *)
+let batch_delete cfg keys =
+  let rec chunks acc lst =
+    match lst with
+    | [] -> List.rev acc
+    | _ ->
+        let head, rest =
+          let rec take i acc = function
+            | [] -> List.rev acc, []
+            | xs when i = 0 -> List.rev acc, xs
+            | x :: xs -> take (i - 1) (x :: acc) xs
+          in
+          take 25 [] lst
+        in
+        chunks (head :: acc) rest
+  in
+  List.iter
+    (fun batch ->
+      let requests =
+        List.map
+          (fun (pk_v, sk_v) ->
+            Dyn.make_write_request
+              ~delete_request:(Dyn.make_delete_request
+                                 ~key:[ ("pk", pk_v); ("sk", sk_v) ] ())
+              ())
+          batch
+      in
+      let input =
+        Dyn.make_batch_write_item_input
+          ~request_items:[ (cfg.table, requests) ] ()
+      in
+      ignore (Dyn.BatchWriteItem.request cfg.ctx input))
+    (chunks [] keys)
 
-let put_sensor_and_edge cfg ~(sensor : Sensor.t) ~parent =
-  let active_item = Codec.sensor_to_item ~active:true sensor in
-  let edge_item =
-    Codec.sensor_edge_item ~parent ~sensor_id:sensor.Sensor.id
-      ~created:(Ptime_clock.now ())
+let levels_at_or_below lvl =
+  let rec loop d acc =
+    match Level.of_depth d with
+    | None -> List.rev acc
+    | Some l -> loop (d + 1) (l :: acc)
   in
-  let put_active = Dyn.make_put ~item:active_item ~table_name:cfg.table () in
-  let put_edge   = Dyn.make_put ~item:edge_item   ~table_name:cfg.table () in
-  let items =
-    [
-      Dyn.make_transact_write_item ~put:put_active ();
-      Dyn.make_transact_write_item ~put:put_edge ();
-    ]
-  in
-  let input = Dyn.make_transact_write_items_input ~transact_items:items () in
-  match Dyn.TransactWriteItems.request cfg.ctx input with
-  | Ok _ -> ()
-  | Error _ -> failwith "TransactWriteItems put_sensor failed"
+  loop (Level.depth lvl) []
+
+(* Delete the node at [id] and everything beneath it. Strategy:
+   - the deleted node lives in the gsi1 partition for its own level;
+     query that partition with `gsi1sk begins_with self.path` -> picks up
+     the node itself + the parent-side `has_<label>` edge that points at it.
+   - for each strictly-deeper level (down to HN9), do the same query in
+     that level's partition -> picks up descendant nodes + the edges
+     terminating at them.
+   - in the "S" partition, query `gsi1sk begins_with self.path` -> picks
+     up all sensor active/history rows + has_sensor edges in the subtree.
+   Per-level counts are decremented on count#HN<n>.live; sensor count on
+   count#S.live. *)
+let delete_subtree cfg id =
+  match get_item cfg id with
+  | None -> ()
+  | Some n ->
+      let path_prefix = n.Node.path in
+      let starting_lvl = Node_id.level n.Node.id in
+      let levels = levels_at_or_below starting_lvl in
+      let total_keys = ref [] in
+      let level_counts = Hashtbl.create 8 in
+      let sensor_count = ref 0 in
+      List.iter
+        (fun lvl ->
+          let gsi1pk_v = Codec.node_gsi1pk lvl in
+          let rows = query_gsi_partition cfg ~gsi1pk_v ~path_prefix in
+          let nodes_in_lvl = ref 0 in
+          List.iter
+            (fun kvs ->
+              (match List.assoc_opt "pk" kvs, List.assoc_opt "sk" kvs with
+               | Some pkv, Some skv ->
+                   total_keys := (pkv, skv) :: !total_keys
+               | _ -> ());
+              match (List.assoc_opt "type" kvs : Dyn.attribute_value option) with
+              | Some (Dyn.S "node") -> incr nodes_in_lvl
+              | _ -> ())
+            rows;
+          if !nodes_in_lvl > 0 then
+            Hashtbl.replace level_counts lvl !nodes_in_lvl)
+        levels;
+      let sensor_rows =
+        query_gsi_partition cfg ~gsi1pk_v:Codec.sensor_gsi1pk ~path_prefix
+      in
+      List.iter
+        (fun kvs ->
+          (match List.assoc_opt "pk" kvs, List.assoc_opt "sk" kvs with
+           | Some pkv, Some skv ->
+               total_keys := (pkv, skv) :: !total_keys
+           | _ -> ());
+          match (List.assoc_opt "type" kvs : Dyn.attribute_value option),
+                (List.assoc_opt "sk" kvs : Dyn.attribute_value option) with
+          | Some (Dyn.S "sensor"), Some (Dyn.S sk)
+            when String.length sk > String.length active_sk_prefix
+                 && String.sub sk 0 (String.length active_sk_prefix)
+                    = active_sk_prefix ->
+              incr sensor_count
+          | _ -> ())
+        sensor_rows;
+      batch_delete cfg (List.rev !total_keys);
+      Hashtbl.iter
+        (fun lvl count ->
+          bump_live cfg
+            ~pk:(Codec.counter_pk_node lvl)
+            ~delta:(-count))
+        level_counts;
+      if !sensor_count > 0 then
+        bump_live cfg ~pk:Codec.counter_pk_sensor
+          ~delta:(- !sensor_count)
+
+(* ----------------------------------------------------------------------
+   Sensor active/history reads + replace + delete
+   --------------------------------------------------------------------- *)
 
 let query_active_sensor cfg (id : Sensor_id.t) =
   let input =
@@ -187,45 +493,26 @@ let query_sensor_ids cfg parent =
   | Error _ -> []
   | Ok { items = None; _ } -> []
   | Ok { items = Some rows; _ } ->
-      (* Prefer the dedicated `sensor_id` attribute; fall back to `gsi1pk` for
-         older edges, then parse the sk suffix (has_sensor#S#<uuid>). *)
       List.filter_map
         (fun kvs ->
-          let from_attr k =
-            match (List.assoc_opt k kvs : Dyn.attribute_value option) with
-            | Some (Dyn.S s) -> Some s
-            | _ -> None
-          in
-          let from_sk () =
-            match from_attr "sk" with
-            | Some sk when
-                String.length sk > String.length has_sensor_sk_prefix
-                && String.sub sk 0 (String.length has_sensor_sk_prefix)
-                   = has_sensor_sk_prefix ->
-                Some
-                  (String.sub sk (String.length has_sensor_sk_prefix)
-                     (String.length sk - String.length has_sensor_sk_prefix))
-            | _ -> None
-          in
-          let sid_s =
-            match from_attr "sensor_id" with
-            | Some s -> Some s
-            | None ->
-                (match from_attr "gsi1pk" with
-                 | Some s -> Some s
-                 | None -> from_sk ())
-          in
-          match sid_s with
-          | Some s ->
-              (match Sensor_id.of_string s with
-               | Ok id -> Some id
-               | Error _ -> None)
-          | None -> None)
+          match (List.assoc_opt "sk" kvs : Dyn.attribute_value option) with
+          | Some (Dyn.S sk) ->
+              let plen = String.length has_sensor_sk_prefix in
+              if String.length sk > plen
+                 && String.sub sk 0 plen = has_sensor_sk_prefix
+              then
+                let rest = String.sub sk plen (String.length sk - plen) in
+                (match Sensor_id.of_string rest with
+                 | Ok id -> Some id
+                 | Error _ -> None)
+              else None
+          | _ -> None)
         rows
 
 let transact_replace cfg ~old_created ~new_sensor =
-  let old_item = Codec.sensor_to_item ~active:true
-    { new_sensor with Sensor.created = old_created }
+  let old_item =
+    Codec.sensor_to_item ~active:true
+      { new_sensor with Sensor.created = old_created }
   in
   let old_sk =
     match List.assoc_opt "sk" old_item with
@@ -298,7 +585,11 @@ let delete_sensor cfg (id : Sensor_id.t) (parent : Node_id.t) =
          ~key:[ ("pk", s (Node_id.to_string parent)); ("sk", s edge_sk) ]
          ~table_name:cfg.table ())
   in
-  ()
+  bump_live cfg ~pk:Codec.counter_pk_sensor ~delta:(-1)
+
+(* ----------------------------------------------------------------------
+   Users, blocking, administrating
+   --------------------------------------------------------------------- *)
 
 let put_user cfg (u : User.t) =
   let input =
@@ -366,11 +657,17 @@ let query_blocked_nodes cfg (user_id : User_id.t) =
   | Ok { items = Some rows; _ } ->
       List.filter_map
         (fun kvs ->
-          match (List.assoc_opt "gsi1pk" kvs : Dyn.attribute_value option) with
-          | Some (Dyn.S child_s) ->
-              (match Node_id.of_string child_s with
-               | Ok id -> Some id
-               | Error _ -> None)
+          match (List.assoc_opt "sk" kvs : Dyn.attribute_value option) with
+          | Some (Dyn.S sk) ->
+              let plen = String.length prefix in
+              if String.length sk > plen
+                 && String.sub sk 0 plen = prefix
+              then
+                let rest = String.sub sk plen (String.length sk - plen) in
+                (match Node_id.of_string rest with
+                 | Ok id -> Some id
+                 | Error _ -> None)
+              else None
           | _ -> None)
         rows
 
@@ -390,36 +687,23 @@ let query_administrated_nodes cfg (user_id : User_id.t) =
   | Ok { items = Some rows; _ } ->
       List.filter_map
         (fun kvs ->
-          let from_gsi =
-            match (List.assoc_opt "gsi1pk" kvs : Dyn.attribute_value option) with
-            | Some (Dyn.S v) -> Some v
-            | _ -> None
-          in
-          let from_sk () =
-            match (List.assoc_opt "sk" kvs : Dyn.attribute_value option) with
-            | Some (Dyn.S sk) when
-                String.length sk > String.length prefix
-                && String.sub sk 0 (String.length prefix) = prefix ->
-                Some (String.sub sk (String.length prefix)
-                        (String.length sk - String.length prefix))
-            | _ -> None
-          in
-          let nid_s =
-            match from_gsi with
-            | Some v -> Some v
-            | None -> from_sk ()
-          in
-          match nid_s with
-          | Some s ->
-              (match Node_id.of_string s with
-               | Ok id -> Some id
-               | Error _ -> None)
-          | None -> None)
+          match (List.assoc_opt "sk" kvs : Dyn.attribute_value option) with
+          | Some (Dyn.S sk) ->
+              let plen = String.length prefix in
+              if String.length sk > plen
+                 && String.sub sk 0 plen = prefix
+              then
+                let rest = String.sub sk plen (String.length sk - plen) in
+                (match Node_id.of_string rest with
+                 | Ok id -> Some id
+                 | Error _ -> None)
+              else None
+          | _ -> None)
         rows
 
 let query_blocked_users cfg (node_id : Node_id.t) =
   let pk_val = s (Node_id.to_string node_id) in
-  let prefix = Edge_kind.gsi_verb Edge_kind.Blocked ^ "#" in
+  let prefix = "blocks#" in
   let input =
     Dyn.make_query_input
       ~key_condition_expression:"#pk = :pk AND begins_with(#sk, :sk)"
@@ -452,6 +736,10 @@ let delete_edge cfg ~from_ ~to_ ~kind =
   in
   ()
 
+(* ----------------------------------------------------------------------
+   Effect handler
+   --------------------------------------------------------------------- *)
+
 let run (cfg : cfg) (f : unit -> 'a) : 'a =
   let open Effect.Deep in
   try_with f ()
@@ -459,70 +747,73 @@ let run (cfg : cfg) (f : unit -> 'a) : 'a =
       effc =
         (fun (type a) (eff : a Effect.t) ->
           match eff with
-          | Effects.Gen_uuid () ->
-              let v =
-                match Uuidm.v4_gen (Random.State.make_self_init ()) () with
-                | u -> u
-              in
-              Some (fun (k : (a, _) continuation) -> continue k v)
           | Effects.Now () ->
-              Some (fun k -> continue k (Ptime_clock.now ()))
+              Some (fun (k : (a, _) continuation) -> continue k (Ptime_clock.now ()))
           | Effects.Get_node id ->
-              Some (fun k -> continue k (get_item cfg id))
+              Some (fun (k : (a, _) continuation) -> continue k (get_item cfg id))
           | Effects.Get_schema id ->
               let schema_opt =
                 match get_item cfg id with
                 | Some n -> n.Node.schema
                 | None -> None
               in
-              Some (fun k -> continue k schema_opt)
+              Some (fun (k : (a, _) continuation) -> continue k schema_opt)
           | Effects.List_children (parent, kind_opt) ->
-              Some (fun k -> continue k (query_children cfg parent kind_opt))
+              Some (fun (k : (a, _) continuation) ->
+                continue k (query_children cfg parent kind_opt))
           | Effects.List_child_refs (parent, kind_opt) ->
-              Some (fun k -> continue k (query_child_refs cfg parent kind_opt))
+              Some (fun (k : (a, _) continuation) ->
+                continue k (query_child_refs cfg parent kind_opt))
+          | Effects.Add_node { level; build } ->
+              Some (fun (k : (a, _) continuation) ->
+                continue k (allocate_and_put_node cfg ~level ~build))
           | Effects.Put_node n ->
               put_node cfg n;
-              Some (fun k -> continue k ())
-          | Effects.Put_edge { from_; to_; kind; name; created } ->
-              put_edge cfg ~from_ ~to_ ~kind ~name ~created;
-              Some (fun k -> continue k ())
+              Some (fun (k : (a, _) continuation) -> continue k ())
+          | Effects.Put_edge es ->
+              put_edge_spec cfg es;
+              Some (fun (k : (a, _) continuation) -> continue k ())
           | Effects.Delete_node id ->
-              delete_node cfg id;
-              Some (fun k -> continue k ())
-          | Effects.Put_sensor { sensor; parent } ->
-              put_sensor_and_edge cfg ~sensor ~parent;
-              Some (fun k -> continue k ())
+              delete_subtree cfg id;
+              Some (fun (k : (a, _) continuation) -> continue k ())
+          | Effects.Add_sensor { build } ->
+              Some (fun (k : (a, _) continuation) ->
+                continue k (allocate_and_put_sensor cfg ~build))
           | Effects.Get_active_sensor id ->
-              Some (fun k -> continue k (query_active_sensor cfg id))
+              Some (fun (k : (a, _) continuation) ->
+                continue k (query_active_sensor cfg id))
           | Effects.List_sensor_ids parent ->
-              Some (fun k -> continue k (query_sensor_ids cfg parent))
+              Some (fun (k : (a, _) continuation) ->
+                continue k (query_sensor_ids cfg parent))
           | Effects.Replace_sensor_device { old_created; new_sensor } ->
               transact_replace cfg ~old_created ~new_sensor;
-              Some (fun k -> continue k ())
+              Some (fun (k : (a, _) continuation) -> continue k ())
           | Effects.Delete_sensor { sensor_id; parent } ->
               delete_sensor cfg sensor_id parent;
-              Some (fun k -> continue k ())
+              Some (fun (k : (a, _) continuation) -> continue k ())
           | Effects.Get_sensor_reading _ ->
-              (* raw readings come from the flink-optimized table, not this one *)
-              Some (fun k -> continue k None)
+              Some (fun (k : (a, _) continuation) -> continue k None)
           | Effects.Put_user u ->
               put_user cfg u;
-              Some (fun k -> continue k ())
+              Some (fun (k : (a, _) continuation) -> continue k ())
           | Effects.Get_user id ->
-              Some (fun k -> continue k (get_user cfg id))
+              Some (fun (k : (a, _) continuation) -> continue k (get_user cfg id))
           | Effects.List_users () ->
-              Some (fun k -> continue k (list_users cfg))
+              Some (fun (k : (a, _) continuation) -> continue k (list_users cfg))
           | Effects.Delete_user id ->
               delete_user cfg id;
-              Some (fun k -> continue k ())
+              Some (fun (k : (a, _) continuation) -> continue k ())
           | Effects.List_blocked_nodes id ->
-              Some (fun k -> continue k (query_blocked_nodes cfg id))
+              Some (fun (k : (a, _) continuation) ->
+                continue k (query_blocked_nodes cfg id))
           | Effects.List_blocked_users id ->
-              Some (fun k -> continue k (query_blocked_users cfg id))
+              Some (fun (k : (a, _) continuation) ->
+                continue k (query_blocked_users cfg id))
           | Effects.List_administrated_nodes id ->
-              Some (fun k -> continue k (query_administrated_nodes cfg id))
+              Some (fun (k : (a, _) continuation) ->
+                continue k (query_administrated_nodes cfg id))
           | Effects.Delete_edge { from_; to_; kind } ->
               delete_edge cfg ~from_ ~to_ ~kind;
-              Some (fun k -> continue k ())
+              Some (fun (k : (a, _) continuation) -> continue k ())
           | _ -> None);
     }

@@ -1,13 +1,16 @@
 open Ocaml_lambda_hierarchy
 
-let uuid s = Uuidm.of_string s |> Option.get
-
 let node_roundtrip_without_schema () =
-  let id = Node_id.make Level.Hn4 (uuid "4b6a6f20-0000-0000-0000-000000000001") in
-  let parent = Node_id.make Level.Hn3 (uuid "4b6a6f20-0000-0000-0000-000000000002") in
+  let parent = Node_id.make Level.Hn3 10003 in
+  let parent_path =
+    Node_id.to_string Node_id.root ^ "|"
+    ^ Node_id.to_string (Node_id.make Level.Hn1 10001) ^ "|"
+    ^ Node_id.to_string (Node_id.make Level.Hn2 10002) ^ "|"
+    ^ Node_id.to_string parent
+  in
   let n =
-    Node.make ~uuid:(Node_id.uuid id) ~level:Level.Hn4 ~name:"Building"
-      ~parent ~parent_path:(Node_id.to_string Node_id.root) ~created:(Ptime.epoch)
+    Node.make ~id:10004 ~level:Level.Hn4 ~name:"Building"
+      ~parent ~parent_path ~created:(Ptime.epoch)
       ~metadata:(`Assoc [ ("lat", `Float 55.0) ])
       ~schema:None
   in
@@ -16,71 +19,62 @@ let node_roundtrip_without_schema () =
   | Ok n2 ->
       Alcotest.(check string) "same id"
         (Node_id.to_string n.Node.id) (Node_id.to_string n2.Node.id);
-      Alcotest.(check string) "same name" n.Node.name n2.Node.name
+      Alcotest.(check string) "same name" n.Node.name n2.Node.name;
+      Alcotest.(check string) "same path" n.Node.path n2.Node.path
   | Error e -> Alcotest.failf "decode failure: %s" e
 
-let edge_item_shape () =
-  let p = Node_id.make Level.Hn3 (uuid "4b6a6f20-0000-0000-0000-000000000003") in
-  let c = Node_id.make Level.Hn4 (uuid "4b6a6f20-0000-0000-0000-000000000004") in
+let edge_with_anchor_shape () =
+  let p = Node_id.make Level.Hn3 10003 in
+  let c = Node_id.make Level.Hn4 10004 in
+  let child_path =
+    Node_id.to_string Node_id.root ^ "|HN1#10001|HN2#10002|"
+    ^ Node_id.to_string p ^ "|" ^ Node_id.to_string c
+  in
   let item =
-    Codec.edge_item
+    Codec.edge_with_anchor
       ~from_:(Node_id.to_string p)
       ~to_:(Node_id.to_string c)
       ~kind:(Edge_kind.Has_label "building")
       ~name:"Bld-1"
       ~created:Ptime.epoch
+      ~self_path:child_path
   in
-  let name =
-    match List.assoc_opt "name" item with
-    | Some (Smaws_Client_DynamoDB.S s) -> s
-    | _ -> Alcotest.fail "name missing"
+  let s_of k =
+    match List.assoc_opt k item with
+    | Some (Smaws_Client_DynamoDB.S v) -> v
+    | _ -> Alcotest.failf "missing/non-S field %s" k
   in
-  Alcotest.(check string) "name on edge" "Bld-1" name;
-  let sk =
-    let v : Smaws_Client_DynamoDB.attribute_value = List.assoc "sk" item in
-    match v with Smaws_Client_DynamoDB.S s -> s | _ -> Alcotest.fail "sk not S"
-  in
+  Alcotest.(check string) "name on edge" "Bld-1" (s_of "name");
   Alcotest.(check string) "sk"
-    ("has_building#" ^ Node_id.to_string c) sk;
-  let kind_s =
-    let v : Smaws_Client_DynamoDB.attribute_value = List.assoc "kind" item in
-    match v with Smaws_Client_DynamoDB.S s -> s | _ -> Alcotest.fail "kind not S"
-  in
-  Alcotest.(check string) "kind attribute" "has_label:building" kind_s;
-  let gsi1pk =
-    let v : Smaws_Client_DynamoDB.attribute_value = List.assoc "gsi1pk" item in
-    match v with Smaws_Client_DynamoDB.S s -> s | _ -> Alcotest.fail "gsi1pk not S"
-  in
-  Alcotest.(check string) "gsi1pk" (Node_id.to_string c) gsi1pk;
-  let gsi1sk =
-    let v : Smaws_Client_DynamoDB.attribute_value = List.assoc "gsi1sk" item in
-    match v with Smaws_Client_DynamoDB.S s -> s | _ -> Alcotest.fail "gsi1sk not S"
-  in
-  Alcotest.(check string) "gsi1sk"
-    ("parent_of#" ^ Node_id.to_string p) gsi1sk
+    ("has_building#" ^ Node_id.to_string c) (s_of "sk");
+  Alcotest.(check string) "kind attribute" "has_label:building" (s_of "kind");
+  Alcotest.(check string) "gsi1pk = child level" "HN4" (s_of "gsi1pk");
+  Alcotest.(check string) "gsi1sk = self path" child_path (s_of "gsi1sk")
 
 let sensor_round_trip () =
-  let uuid = Uuidm.of_string "11111111-2222-4333-8444-000000000001" |> Option.get in
-  let parent =
-    Node_id.make Level.Hn4
-      (Uuidm.of_string "22222222-2222-4333-8444-000000000002" |> Option.get)
-  in
+  let parent = Node_id.make Level.Hn4 10004 in
   let t = Ptime.of_rfc3339 "2026-04-18T10:00:00Z" |> Result.get_ok
           |> fun (t, _, _) -> t
   in
+  let id = Sensor_id.make 20001 in
+  let path =
+    Node_id.to_string Node_id.root
+    ^ "|HN1#10001|HN2#10002|HN3#10003|"
+    ^ Node_id.to_string parent
+    ^ "|" ^ Sensor_id.to_string id
+  in
   let s : Sensor.t =
     {
-      id = Sensor_id.make uuid;
+      id;
       created = t;
-      parent;
       daq_id = "daq:x:y:z";
-      hierarchy_path = "P#C#B";
+      path;
       purpose = "Electricity";
       meter_type = Sensor.Counter;
       unit = Some "kWh";
       formula = Formula.Expr {
         ast = Formula.Abs (Formula.Sub (Formula.Self, Formula.Ref "r"));
-        refs = [ ("r", uuid) ];
+        refs = [ ("r", id) ];
       };
     }
   in
@@ -88,23 +82,26 @@ let sensor_round_trip () =
   match Codec.sensor_of_item item with
   | Ok s2 ->
       Alcotest.(check string) "daq" s.daq_id s2.Sensor.daq_id;
+      Alcotest.(check string) "path" s.path s2.Sensor.path;
+      Alcotest.(check string) "parent_id derived"
+        (Node_id.to_string parent)
+        (Node_id.to_string (Sensor.parent_id s2));
       Alcotest.(check string) "purpose" s.purpose s2.Sensor.purpose;
       Alcotest.(check bool)   "formula kind" true
         (match s2.Sensor.formula with Formula.Expr _ -> true | _ -> false)
   | Error e -> Alcotest.failf "decode: %s" e
 
 let sensor_active_sk_prefixed () =
-  let uuid = Uuidm.of_string "11111111-2222-4333-8444-000000000001" |> Option.get in
   let t = Ptime.of_rfc3339 "2026-04-18T10:00:00Z" |> Result.get_ok
           |> fun (t, _, _) -> t
   in
+  let id = Sensor_id.make 20002 in
   let s : Sensor.t =
     {
-      id = Sensor_id.make uuid;
+      id;
       created = t;
-      parent = Node_id.root;
       daq_id = "daq";
-      hierarchy_path = "";
+      path = Node_id.to_string Node_id.root ^ "|" ^ Sensor_id.to_string id;
       purpose = "Heat";
       meter_type = Sensor.Gauge;
       unit = None;
@@ -129,11 +126,16 @@ let sensor_active_sk_prefixed () =
     "2026-04-18T10:00:00Z" sk_hist
 
 let sensor_edge_item_shape () =
-  let parent = Node_id.make Level.Hn4 (uuid "4b6a6f20-0000-0000-0000-000000000050") in
-  let sid =
-    Sensor_id.make (uuid "4b6a6f20-0000-0000-0000-000000000051")
+  let parent = Node_id.make Level.Hn4 10050 in
+  let sid = Sensor_id.make 20051 in
+  let self_path =
+    "HN0#root|HN1#10001|HN2#10002|HN3#10003|"
+    ^ Node_id.to_string parent ^ "|" ^ Sensor_id.to_string sid
   in
-  let item = Codec.sensor_edge_item ~parent ~sensor_id:sid ~created:Ptime.epoch in
+  let item =
+    Codec.sensor_edge_item ~parent ~sensor_id:sid ~created:Ptime.epoch
+      ~self_path
+  in
   let s_of k =
     match List.assoc_opt k item with
     | Some (Smaws_Client_DynamoDB.S v) -> v
@@ -144,13 +146,11 @@ let sensor_edge_item_shape () =
   Alcotest.(check string) "pk"     (Node_id.to_string parent)   (s_of "pk");
   Alcotest.(check string) "sk"
     ("has_sensor#" ^ Sensor_id.to_string sid) (s_of "sk");
-  Alcotest.(check string) "gsi1pk" (Sensor_id.to_string sid)    (s_of "gsi1pk");
-  Alcotest.(check string) "gsi1sk"
-    ("sensor_of#" ^ Node_id.to_string parent) (s_of "gsi1sk");
+  Alcotest.(check string) "gsi1pk = S" "S" (s_of "gsi1pk");
+  Alcotest.(check string) "gsi1sk = sensor path" self_path (s_of "gsi1sk");
   Alcotest.(check string) "name"   "" (s_of "name")
 
 let schema_sensors_roundtrip () =
-  let id = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-00000000dddd") in
   let sch : Schema.t =
     Schema.{
       version = 1;
@@ -159,9 +159,13 @@ let schema_sensors_roundtrip () =
       sensors = [ Level.Hn4; Level.Hn5 ];
     }
   in
+  let parent_path =
+    Node_id.to_string Node_id.root ^ "|"
+    ^ Node_id.to_string (Node_id.make Level.Hn1 10001)
+  in
   let n =
-    Node.make ~uuid:(Node_id.uuid id) ~level:Level.Hn2 ~name:"Co"
-      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
+    Node.make ~id:10002 ~level:Level.Hn2 ~name:"Co"
+      ~parent:Node_id.root ~parent_path ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some sch)
   in
   let item = Codec.node_to_item n in
@@ -205,7 +209,7 @@ let user_roundtrip () =
 let tests =
   [
     Alcotest.test_case "node roundtrip" `Quick node_roundtrip_without_schema;
-    Alcotest.test_case "edge item shape" `Quick edge_item_shape;
+    Alcotest.test_case "edge with anchor shape" `Quick edge_with_anchor_shape;
     Alcotest.test_case "sensor round trip"        `Quick sensor_round_trip;
     Alcotest.test_case "sensor sk active/history" `Quick sensor_active_sk_prefixed;
     Alcotest.test_case "sensor edge item shape"   `Quick sensor_edge_item_shape;

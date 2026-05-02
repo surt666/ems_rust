@@ -1,7 +1,5 @@
 open Ocaml_lambda_hierarchy
 
-let uuid_of s = Uuidm.of_string s |> Option.get
-
 let sample_schema () : Schema.t =
   Schema.{
     version = 1;
@@ -12,11 +10,15 @@ let sample_schema () : Schema.t =
     sensors = [ Level.Hn3 ];
   }
 
+let parent_path_for_hn2 () =
+  Node_id.to_string Node_id.root ^ "|"
+  ^ Node_id.to_string (Node_id.make Level.Hn1 10001)
+
 let seed_company st =
-  let c2 = Node_id.make Level.Hn2 (uuid_of "4b6a6f20-0000-0000-0000-00000000cccc") in
+  let c2 = Node_id.make Level.Hn2 10002 in
   let n2 =
-    Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"Acme"
-      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
+    Node.make ~id:10002 ~level:Level.Hn2 ~name:"Acme"
+      ~parent:Node_id.root ~parent_path:(parent_path_for_hn2 ()) ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some (sample_schema ()))
   in
   Memory.run st (fun () -> Effects.put_node n2);
@@ -46,7 +48,7 @@ let attach_happy () =
     | Ok s ->
         Alcotest.(check string) "daq" "daq:1" s.Sensor.daq_id;
         Alcotest.(check string) "parent wired"
-          (Node_id.to_string bldg) (Node_id.to_string s.Sensor.parent))
+          (Node_id.to_string bldg) (Node_id.to_string (Sensor.parent_id s)))
 
 let rejects_level_not_allowed () =
   let st = Memory.empty () in
@@ -106,7 +108,7 @@ let get_active_happy () =
 let get_active_unknown () =
   let st = Memory.empty () in
   Memory.run st (fun () ->
-    let id = Sensor_id.make (uuid_of "ffffffff-0000-4000-8000-000000000001") in
+    let id = Sensor_id.make 999999 in
     match Sensors.get_active id with
     | Ok _ -> Alcotest.fail "expected not found"
     | Error (Errors.Not_found _) -> ()
@@ -140,7 +142,7 @@ let replace_device_promotes_new () =
 let replace_unknown_fails () =
   let st = Memory.empty () in
   Memory.run st (fun () ->
-    let id = Sensor_id.make (uuid_of "ffffffff-0000-4000-8000-000000000002") in
+    let id = Sensor_id.make 999998 in
     match Sensors.replace_device ~sensor_id:id ~new_daq_id:"x" () with
     | Ok _ -> Alcotest.fail "expected Not_found"
     | Error (Errors.Not_found _) -> ()
@@ -163,7 +165,7 @@ let attach_detects_self_cycle () =
     let cyc =
       Formula.Expr {
         ast = Formula.Ref "self_again";
-        refs = [ ("self_again", Sensor_id.uuid s.Sensor.id) ];
+        refs = [ ("self_again", s.Sensor.id) ];
       }
     in
     match
@@ -225,7 +227,7 @@ let evaluate_composite () =
       let formula_s3 =
         Formula.Expr {
           ast = Formula.Abs (Formula.Sub (Formula.Self, Formula.Ref "s4"));
-          refs = [ ("s4", Sensor_id.uuid s4.Sensor.id) ];
+          refs = [ ("s4", s4.Sensor.id) ];
         }
       in
       let s3 =

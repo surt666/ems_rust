@@ -3,29 +3,34 @@ let ( let* ) = Result.bind
 let validation_err msg =
   Errors.Validation [ { Metadata.path = ""; message = msg } ]
 
-let rec walk_refs visited uuid =
-  if List.exists (Uuidm.equal uuid) visited then `Cycle
+let rec walk_refs visited (id : Sensor_id.t) =
+  if List.exists (Sensor_id.equal id) visited then `Cycle
   else
-    let id = Sensor_id.make uuid in
     match Effects.get_active_sensor id with
     | None -> `Ok
     | Some s ->
-        let next_uuids = Formula.referenced_uuids s.Sensor.formula in
-        let visited' = uuid :: visited in
+        let next = Formula.referenced_ids s.Sensor.formula in
+        let visited' = id :: visited in
         List.fold_left
           (fun acc u ->
             match acc with
             | `Cycle -> `Cycle
             | `Ok -> walk_refs visited' u)
-          `Ok next_uuids
+          `Ok next
 
-let has_cycle ~self_uuid formula =
-  let next = Formula.referenced_uuids formula in
+let has_cycle ~self_id formula =
+  let next = Formula.referenced_ids formula in
   List.exists
     (fun u ->
-      Uuidm.equal u self_uuid
-      || walk_refs [ self_uuid ] u = `Cycle)
+      Sensor_id.equal u self_id
+      || walk_refs [ self_id ] u = `Cycle)
     next
+
+(* Construct a Node_id whose level/depth slot is filled by the sensor's
+   numeric id. Used as a pseudo-target for Errors.Not_found when a sensor
+   is missing — the API path renders S#<id> equivalently. *)
+let sensor_not_found (id : Sensor_id.t) =
+  Errors.Not_found (Node_id.make Level.Hn9 (Sensor_id.id id))
 
 let attach ?(formula = Formula.Identity) ?unit ~parent
     ~daq_id ~purpose ~meter_type () =
@@ -42,28 +47,45 @@ let attach ?(formula = Formula.Identity) ?unit ~parent
                   (Printf.sprintf "sensors not allowed at %s"
                      (Level.to_string parent_level)))
   in
-  let uuid = Effects.gen_uuid () in
-  let* () =
-    if has_cycle ~self_uuid:uuid formula
-    then Error (validation_err "formula refs form a cycle")
-    else Ok ()
-  in
   let now = Effects.now () in
-  let sensor : Sensor.t =
-    {
-      id = Sensor_id.make uuid;
-      created = now;
-      parent;
-      daq_id;
-      hierarchy_path = Node_id.to_string parent;
-      purpose;
-      meter_type;
-      unit;
-      formula;
-    }
-  in
-  Effects.put_sensor ~sensor ~parent;
-  Ok sensor
+  Effects.add_sensor ~build:(fun ~id ->
+    let sid = Sensor_id.make id in
+    let path =
+      Sensor.child_path
+        ~parent_path:parent_node.Node.path
+        ~sensor_id_str:(Sensor_id.to_string sid)
+    in
+    let sensor : Sensor.t =
+      {
+        id = sid;
+        created = now;
+        daq_id;
+        path;
+        purpose;
+        meter_type;
+        unit;
+        formula;
+      }
+    in
+    let edge =
+      { Effects.from_ = Node_id.to_string parent;
+        to_ = Sensor_id.to_string sid;
+        kind = Edge_kind.Has_sensor;
+        name = "";
+        created = now;
+        self_path = Some path; }
+    in
+    (sensor, edge))
+  |> Result.map (fun s ->
+       (* Sensor cycle check happens after allocation: reject formulas
+          that include the freshly-allocated id. The atomic add already
+          succeeded, but we run the check post-hoc and roll back via
+          delete if it fails. *)
+       if has_cycle ~self_id:s.Sensor.id formula then begin
+         Effects.delete_sensor ~sensor_id:s.Sensor.id ~parent;
+         Error (validation_err "formula refs form a cycle")
+       end else Ok s)
+  |> Result.join
 
 let list_active ~parent =
   let ids = Effects.list_sensor_ids parent in
@@ -77,18 +99,13 @@ let list_active ~parent =
 let get_active id =
   match Effects.get_active_sensor id with
   | Some s -> Ok s
-  | None ->
-      (* Reuse Not_found by synthesizing a pseudo node-id from the sensor's uuid *)
-      Error (Errors.Not_found
-               (Node_id.make Level.Hn9 (Sensor_id.uuid id)))
+  | None -> Error (sensor_not_found id)
 
 let replace_device ~sensor_id ~new_daq_id () =
   let* old =
     match Effects.get_active_sensor sensor_id with
     | Some s -> Ok s
-    | None ->
-        Error (Errors.Not_found
-                 (Node_id.make Level.Hn9 (Sensor_id.uuid sensor_id)))
+    | None -> Error (sensor_not_found sensor_id)
   in
   let now = Effects.now () in
   let new_sensor =
@@ -103,9 +120,8 @@ let replace_device ~sensor_id ~new_daq_id () =
 
 let set_formula ~sensor_id ~formula () =
   let* old = get_active sensor_id in
-  let self_uuid = Sensor_id.uuid sensor_id in
   let* () =
-    if has_cycle ~self_uuid formula
+    if has_cycle ~self_id:sensor_id formula
     then Error (validation_err "formula refs form a cycle")
     else Ok ()
   in
@@ -122,7 +138,7 @@ let rec evaluate id =
   let reading () =
     match Effects.get_sensor_reading id with
     | Some v -> Ok v
-    | None -> Error (Errors.Not_found (Node_id.make Level.Hn9 (Sensor_id.uuid id)))
+    | None -> Error (sensor_not_found id)
   in
   match s.Sensor.formula with
   | Formula.Zero     -> Ok 0.
@@ -131,8 +147,8 @@ let rec evaluate id =
       let* self_reading = reading () in
       let rec resolve_all acc = function
         | [] -> Ok (List.rev acc)
-        | (alias, uuid) :: rest ->
-            let* v = evaluate (Sensor_id.make uuid) in
+        | (alias, sid) :: rest ->
+            let* v = evaluate sid in
             resolve_all ((alias, v) :: acc) rest
       in
       let* resolved = resolve_all [] refs in

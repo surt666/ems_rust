@@ -1,7 +1,7 @@
 open Ocaml_lambda_hierarchy
 
-let uuid_a = Uuidm.of_string "00000000-0000-4000-8000-000000000001" |> Option.get
-let uuid_b = Uuidm.of_string "00000000-0000-4000-8000-000000000002" |> Option.get
+let id_a = Sensor_id.make 10001
+let id_b = Sensor_id.make 10002
 
 let identity_constructs () =
   let f = Formula.Identity in
@@ -11,13 +11,13 @@ let identity_constructs () =
 
 let expr_has_refs () =
   let ast = Formula.Abs (Formula.Sub (Formula.Self, Formula.Ref "S1")) in
-  let f = Formula.Expr { ast; refs = [ ("S1", uuid_a) ] } in
+  let f = Formula.Expr { ast; refs = [ ("S1", id_a) ] } in
   match f with
   | Formula.Expr { refs; _ } ->
       Alcotest.(check int) "one ref" 1 (List.length refs);
-      let alias, u = List.hd refs in
+      let alias, sid = List.hd refs in
       Alcotest.(check string) "alias" "S1" alias;
-      Alcotest.(check bool) "uuid equal" true (Uuidm.equal u uuid_a)
+      Alcotest.(check bool) "id equal" true (Sensor_id.equal sid id_a)
   | _ -> Alcotest.fail "expected Expr"
 
 let deeply_nested_expr () =
@@ -27,7 +27,7 @@ let deeply_nested_expr () =
          (Formula.Sub (Formula.Self, Formula.Ref "S4"),
           Formula.Ref "S5"))
   in
-  let _ = Formula.Expr { ast; refs = [ ("S4", uuid_a); ("S5", uuid_b) ] } in
+  let _ = Formula.Expr { ast; refs = [ ("S4", id_a); ("S5", id_b) ] } in
   Alcotest.(check pass) "compiles" () ()
 
 let eval_identity () =
@@ -41,7 +41,7 @@ let eval_arithmetic () =
   let ast =
     Formula.Sub (Formula.Self, Formula.Add (Formula.Ref "S1", Formula.Ref "S2"))
   in
-  let f = Formula.Expr { ast; refs = [ ("S1", uuid_a); ("S2", uuid_b) ] } in
+  let f = Formula.Expr { ast; refs = [ ("S1", id_a); ("S2", id_b) ] } in
   let resolve alias =
     match alias with
     | "S1" -> 3.0
@@ -53,7 +53,7 @@ let eval_arithmetic () =
 
 let eval_abs_flips_negative () =
   let ast = Formula.Abs (Formula.Sub (Formula.Self, Formula.Ref "S1")) in
-  let f = Formula.Expr { ast; refs = [ ("S1", uuid_a) ] } in
+  let f = Formula.Expr { ast; refs = [ ("S1", id_a) ] } in
   let resolve _ = 12.0 in
   let v = Formula.eval ~self:5.0 ~resolve f in
   Alcotest.(check (float 1e-9)) "|5 - 12| = 7" 7.0 v
@@ -79,7 +79,7 @@ let eval_unknown_ref_raises () =
    with Formula.Unknown_ref "missing" -> ())
 
 let collect_refs_identity_empty () =
-  let xs = Formula.referenced_uuids Formula.Identity in
+  let xs = Formula.referenced_ids Formula.Identity in
   Alcotest.(check int) "none" 0 (List.length xs)
 
 let eval_zero_returns_zero () =
@@ -89,18 +89,19 @@ let eval_zero_returns_zero () =
   in
   Alcotest.(check (float 0.0)) "0" 0.0 v
 
-let referenced_uuids_zero_empty () =
-  let xs = Formula.referenced_uuids Formula.Zero in
+let referenced_ids_zero_empty () =
+  let xs = Formula.referenced_ids Formula.Zero in
   Alcotest.(check int) "none" 0 (List.length xs)
 
 let collect_refs_of_expr () =
   let ast = Formula.Sub (Formula.Ref "S1", Formula.Ref "S2") in
-  let f = Formula.Expr { ast; refs = [ ("S1", uuid_a); ("S2", uuid_b) ] } in
-  let xs = Formula.referenced_uuids f |> List.sort Uuidm.compare in
-  let expected = List.sort Uuidm.compare [ uuid_a; uuid_b ] in
+  let f = Formula.Expr { ast; refs = [ ("S1", id_a); ("S2", id_b) ] } in
+  let xs =
+    Formula.referenced_ids f
+    |> List.map Sensor_id.id |> List.sort Int.compare
+  in
   Alcotest.(check int) "two" 2 (List.length xs);
-  Alcotest.(check bool) "set equal" true
-    (List.for_all2 Uuidm.equal xs expected)
+  Alcotest.(check (list int)) "set equal" [ 10001; 10002 ] xs
 
 let tests =
   [
@@ -113,8 +114,8 @@ let tests =
     Alcotest.test_case "eval multiplier"             `Quick eval_multiplier;
     Alcotest.test_case "eval div by zero = infinity" `Quick eval_div_by_zero_is_infinity;
     Alcotest.test_case "eval unknown ref raises"     `Quick eval_unknown_ref_raises;
-    Alcotest.test_case "referenced_uuids identity" `Quick collect_refs_identity_empty;
-    Alcotest.test_case "referenced_uuids expr"     `Quick collect_refs_of_expr;
-    Alcotest.test_case "eval Zero = 0"             `Quick eval_zero_returns_zero;
-    Alcotest.test_case "referenced_uuids zero"     `Quick referenced_uuids_zero_empty;
+    Alcotest.test_case "referenced_ids identity"     `Quick collect_refs_identity_empty;
+    Alcotest.test_case "referenced_ids expr"         `Quick collect_refs_of_expr;
+    Alcotest.test_case "eval Zero = 0"               `Quick eval_zero_returns_zero;
+    Alcotest.test_case "referenced_ids zero"         `Quick referenced_ids_zero_empty;
   ]

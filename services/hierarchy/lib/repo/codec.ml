@@ -93,6 +93,13 @@ let schema_to_attr (sch : Schema.t) : Dyn.attribute_value =
     ("sensors", sensors_l);
   ]
 
+(* gsi1pk for an item at level [lvl] is just "HN<n>" — a per-level
+   partition key. With this, "list every HN<n> in the system" is one
+   GSI Query, and "delete this subtree" is one Query per level under
+   the subtree root. Sensor items use "S". *)
+let node_gsi1pk (lvl : Level.t) = Printf.sprintf "HN%d" (Level.depth lvl)
+let sensor_gsi1pk = "S"
+
 let node_to_item (nd : Node.t) : (string * Dyn.attribute_value) list =
   let id = Node_id.to_string nd.Node.id in
   let base =
@@ -103,19 +110,51 @@ let node_to_item (nd : Node.t) : (string * Dyn.attribute_value) list =
       ("name", s nd.Node.name);
       ("created", s (Ptime.to_rfc3339 ~tz_offset_s:0 nd.Node.created));
       ("metadata", json_to_attr nd.Node.metadata);
+      ("gsi1pk", s (node_gsi1pk (Node.level nd)));
+      ("gsi1sk", s nd.Node.path);
     ]
   in
-  let with_path = ("path", s nd.Node.path) :: base in
-  let with_parent =
-    match nd.Node.parent with
-    | Some p -> ("parent", s (Node_id.to_string p)) :: with_path
-    | None -> with_path
-  in
   match nd.Node.schema with
-  | Some sch -> ("schema", schema_to_attr sch) :: with_parent
-  | None -> with_parent
+  | Some sch -> ("schema", schema_to_attr sch) :: base
+  | None -> base
 
+(* Generic edge codec used for user→node edges (Blocked, Administrates).
+   gsi1pk/gsi1sk encode the reverse direction so user→node lookups can go
+   either way via the index. HN-side edges go through edge_with_anchor. *)
 let edge_item ~from_ ~to_ ~kind ~name ~created =
+  let base =
+    [
+      ("pk", s from_);
+      ("sk", s (Printf.sprintf "%s#%s" (Edge_kind.sk_verb kind) to_));
+      ("type", s "edge");
+      ("kind", s (Edge_kind.to_string kind));
+      ("name", s name);
+      ("created", s (Ptime.to_rfc3339 ~tz_offset_s:0 created));
+    ]
+  in
+  match Edge_kind.gsi_verb kind with
+  | Some verb ->
+      ("gsi1pk", s to_)
+      :: ("gsi1sk", s (Printf.sprintf "%s#%s" verb from_))
+      :: base
+  | None -> base
+
+(* HN-side edges (Has_label and Has_sensor) live under the parent's pk
+   and are indexed by the child's level partition + the child's path.
+   `gsi1pk` is taken from the child's id: `HN<n>` for Has_label, `S` for
+   Has_sensor. `gsi1sk` is the child / sensor path so subtree sweeps
+   work via begins_with. *)
+let edge_with_anchor ~from_ ~to_ ~kind ~name ~created ~self_path =
+  let gsi1pk_v =
+    match kind with
+    | Edge_kind.Has_sensor -> sensor_gsi1pk
+    | Edge_kind.Has_label _ ->
+        (match Node_id.of_string to_ with
+         | Ok id -> node_gsi1pk (Node_id.level id)
+         | Error _ ->
+             failwith (Printf.sprintf "edge_with_anchor: bad to_ %S" to_))
+    | _ -> failwith "edge_with_anchor: only HN-side edges"
+  in
   [
     ("pk", s from_);
     ("sk", s (Printf.sprintf "%s#%s" (Edge_kind.sk_verb kind) to_));
@@ -123,8 +162,8 @@ let edge_item ~from_ ~to_ ~kind ~name ~created =
     ("kind", s (Edge_kind.to_string kind));
     ("name", s name);
     ("created", s (Ptime.to_rfc3339 ~tz_offset_s:0 created));
-    ("gsi1pk", s to_);
-    ("gsi1sk", s (Printf.sprintf "%s#%s" (Edge_kind.gsi_verb kind) from_));
+    ("gsi1pk", s gsi1pk_v);
+    ("gsi1sk", s self_path);
   ]
 
 let ( let* ) = Result.bind
@@ -345,7 +384,7 @@ let formula_to_attr (f : Formula.t) : Dyn.attribute_value =
   | Formula.Zero     -> Dyn.M [ ("kind", s "zero") ]
   | Formula.Expr { ast; refs } ->
       let refs_m =
-        List.map (fun (a, u) -> (a, s (Uuidm.to_string u))) refs
+        List.map (fun (a, sid) -> (a, n (string_of_int (Sensor_id.id sid)))) refs
       in
       Dyn.M [
         ("kind", s "expr");
@@ -367,12 +406,14 @@ let formula_of_attr (v : Dyn.attribute_value) : (Formula.t, string) result =
       let* refs_m = as_map refs_v in
       let* refs =
         List.fold_left
-          (fun acc (a, v) ->
+          (fun acc (a, (v : Dyn.attribute_value)) ->
             let* acc = acc in
-            let* u_s = as_string v in
-            match Uuidm.of_string u_s with
-            | Some u -> Ok ((a, u) :: acc)
-            | None -> Error (Printf.sprintf "bad ref uuid %S" u_s))
+            match v with
+            | Dyn.N str ->
+                (match int_of_string_opt str with
+                 | Some i -> Ok ((a, Sensor_id.make i) :: acc)
+                 | None -> Error (Printf.sprintf "bad ref id %S" str))
+            | _ -> Error "expr ref must be N")
           (Ok []) refs_m
       in
       Ok (Formula.Expr { ast; refs = List.rev refs })
@@ -390,9 +431,9 @@ let sensor_to_item ~active (sn : Sensor.t) : (string * Dyn.attribute_value) list
       ("pk", s pk);
       ("sk", s (Sensor_sk.to_string sk_t));
       ("type", s "sensor");
-      ("parent", s (Node_id.to_string sn.Sensor.parent));
       ("daq_id", s sn.Sensor.daq_id);
-      ("hierarchy_path", s sn.Sensor.hierarchy_path);
+      ("gsi1pk", s sensor_gsi1pk);
+      ("gsi1sk", s sn.Sensor.path);
       ("purpose", s sn.Sensor.purpose);
       ("meter_type", s (Sensor.meter_type_to_string sn.Sensor.meter_type));
       ("formula", formula_to_attr sn.Sensor.formula);
@@ -403,25 +444,23 @@ let sensor_to_item ~active (sn : Sensor.t) : (string * Dyn.attribute_value) list
   | Some u -> ("unit", s u) :: base
   | None -> base
 
-let sensor_edge_item ~parent ~sensor_id ~created =
-  edge_item
+let sensor_edge_item ~parent ~sensor_id ~created ~self_path =
+  edge_with_anchor
     ~from_:(Node_id.to_string parent)
     ~to_:(Sensor_id.to_string sensor_id)
     ~kind:Edge_kind.Has_sensor
     ~name:""
     ~created
+    ~self_path
 
 let sensor_of_item kvs : (Sensor.t, string) result =
   let* pk = field kvs "pk" in
   let* pk_s = as_string pk in
   let* id = Sensor_id.of_string pk_s in
-  let* parent_v = field kvs "parent" in
-  let* parent_s = as_string parent_v in
-  let* parent = Node_id.of_string parent_s in
   let* daq_v = field kvs "daq_id" in
   let* daq_id = as_string daq_v in
-  let* hp_v = field kvs "hierarchy_path" in
-  let* hierarchy_path = as_string hp_v in
+  let* path_v = field kvs "gsi1sk" in
+  let* path = as_string path_v in
   let* purpose_v = field kvs "purpose" in
   let* purpose = as_string purpose_v in
   let* mt_v = field kvs "meter_type" in
@@ -445,9 +484,18 @@ let sensor_of_item kvs : (Sensor.t, string) result =
     | None -> Ok Formula.Identity
   in
   Ok Sensor.{
-    id; created; parent; daq_id; hierarchy_path;
+    id; created; daq_id; path;
     purpose; meter_type; unit; formula;
   }
+
+(* Walk path string, return the second-to-last node-id segment as the
+   parent, if any. Last segment is self. *)
+let parent_from_path path =
+  let parts = String.split_on_char '|' path |> List.filter (fun s -> s <> "") in
+  match List.rev parts with
+  | _self :: par :: _ ->
+      (match Node_id.of_string par with Ok p -> Some p | Error _ -> None)
+  | _ -> None
 
 let node_of_item kvs =
   let* pk = field kvs "pk" in
@@ -461,12 +509,6 @@ let node_of_item kvs =
     match Ptime.of_rfc3339 created_s with
     | Ok (t, _, _) -> t
     | Error _ -> Ptime.epoch
-  in
-  let parent =
-    match List.assoc_opt "parent" kvs with
-    | Some (Dyn.S v) ->
-        (match Node_id.of_string v with Ok p -> Some p | Error _ -> None)
-    | _ -> None
   in
   let metadata =
     match List.assoc_opt "metadata" kvs with
@@ -482,10 +524,11 @@ let node_of_item kvs =
          | Error _ -> None)
   in
   let* path =
-    match List.assoc_opt "path" kvs with
+    match List.assoc_opt "gsi1sk" kvs with
     | Some (Dyn.S v) -> Ok v
-    | _ -> Error (Printf.sprintf "node %s missing path" (Node_id.to_string id))
+    | _ -> Error (Printf.sprintf "node %s missing gsi1sk/path" (Node_id.to_string id))
   in
+  let parent = parent_from_path path in
   Ok {
     Node.id;
     name;
@@ -544,3 +587,19 @@ let user_of_item kvs : (User.t, string) result =
     | Error _ -> Ptime.epoch
   in
   Ok { User.id; name; cognito_group; language; currency; created }
+
+(* Counter rows: one per HN level (and one for sensors).
+   pk = "count#HN3" / sk = "count" / n = next-id allocator (monotonic),
+   live = current cardinality. *)
+let counter_pk_node level = Printf.sprintf "count#HN%d" (Level.depth level)
+let counter_pk_sensor = "count#S"
+let counter_sk = "count"
+
+let counter_seed_item ~pk ~initial_n =
+  [
+    ("pk", s pk);
+    ("sk", s counter_sk);
+    ("type", s "counter");
+    ("n", n (string_of_int initial_n));
+    ("live", n "0");
+  ]

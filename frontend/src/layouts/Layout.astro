@@ -130,4 +130,7 @@ import "../styles/global.css";
 		setupLogout();
 		applyTranslations();
 	});
+
+	// Re-translate any HTMX-swapped fragment.
+	document.body.addEventListener('htmx:afterSwap', () => applyTranslations());
 </script>

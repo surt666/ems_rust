@@ -266,14 +266,13 @@ let node_to_json (n : Node.t) : Yojson.Safe.t =
 let sensor_to_json (s : Sensor.t) : Yojson.Safe.t =
   let unit_json = match s.unit with Some u -> `String u | None -> `Null in
   `Assoc [
-    ("id",             `String (Sensor_id.to_string s.id));
-    ("created",        `String (Ptime.to_rfc3339 ~tz_offset_s:0 s.created));
-    ("parent",         `String (Node_id.to_string s.parent));
-    ("daq_id",    `String s.daq_id);
-    ("hierarchy_path", `String s.hierarchy_path);
-    ("purpose",        `String s.purpose);
-    ("meter_type",     `String (Sensor.meter_type_to_string s.meter_type));
-    ("unit",           unit_json);
+    ("id",         `String (Sensor_id.to_string s.id));
+    ("created",    `String (Ptime.to_rfc3339 ~tz_offset_s:0 s.created));
+    ("daq_id",     `String s.daq_id);
+    ("path",       `String s.path);
+    ("purpose",    `String s.purpose);
+    ("meter_type", `String (Sensor.meter_type_to_string s.meter_type));
+    ("unit",       unit_json);
   ]
 
 let user_to_json (u : User.t) : Yojson.Safe.t =

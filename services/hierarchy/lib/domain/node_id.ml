@@ -1,24 +1,24 @@
 type t =
-  | Node of { level : Level.t; uuid : Uuidm.t }
+  | Node of { level : Level.t; id : int }
   | Root
 
 let root = Root
 let is_root = function Root -> true | Node _ -> false
 
-let make level uuid = Node { level; uuid }
+let make level id = Node { level; id }
 
 let level = function
   | Root -> Level.Hn0
   | Node { level; _ } -> level
 
-let uuid = function
-  | Root -> failwith "Node_id.uuid: root has no uuid"
-  | Node { uuid; _ } -> uuid
+let id = function
+  | Root -> failwith "Node_id.id: root has no id"
+  | Node { id; _ } -> id
 
 let to_string = function
   | Root -> "HN0#root"
-  | Node { level; uuid } ->
-      Printf.sprintf "HN%d#%s" (Level.depth level) (Uuidm.to_string uuid)
+  | Node { level; id } ->
+      Printf.sprintf "HN%d#%d" (Level.depth level) id
 
 let of_string s =
   if s = "HN0#root" then Ok Root
@@ -38,14 +38,14 @@ let of_string s =
               (match Level.of_depth d with
                | None -> Error (Printf.sprintf "bad level in %S" s)
                | Some level ->
-                   (match Uuidm.of_string rest with
-                    | None -> Error (Printf.sprintf "bad uuid in %S" s)
-                    | Some uuid -> Ok (Node { level; uuid })))
+                   (match int_of_string_opt rest with
+                    | Some id -> Ok (Node { level; id })
+                    | None -> Error (Printf.sprintf "bad id in %S" s)))
           | _ -> Error (Printf.sprintf "bad level in %S" s)
 
 let equal a b =
   match a, b with
   | Root, Root -> true
-  | Node { level = la; uuid = ua }, Node { level = lb; uuid = ub } ->
-      Level.depth la = Level.depth lb && Uuidm.equal ua ub
+  | Node { level = la; id = ia }, Node { level = lb; id = ib } ->
+      Level.depth la = Level.depth lb && ia = ib
   | _ -> false

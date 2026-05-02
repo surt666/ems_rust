@@ -1,10 +1,8 @@
 open Ocaml_lambda_hierarchy
 
-let uuid s = Uuidm.of_string s |> Option.get
-
 let seed () =
   let st = Memory.empty () in
-  let c2 = Node_id.make Level.Hn2 (uuid "4b6a6f20-0000-0000-0000-00000000dddd") in
+  let c2 = Node_id.make Level.Hn2 10002 in
   let schema : Schema.t =
     Schema.{
       version = 1;
@@ -15,9 +13,13 @@ let seed () =
       sensors = [];
     }
   in
+  let parent_path =
+    Node_id.to_string Node_id.root ^ "|"
+    ^ Node_id.to_string (Node_id.make Level.Hn1 10001)
+  in
   let n2 =
-    Node.make ~uuid:(Node_id.uuid c2) ~level:Level.Hn2 ~name:"Acme"
-      ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
+    Node.make ~id:10002 ~level:Level.Hn2 ~name:"Acme"
+      ~parent:Node_id.root ~parent_path ~created:Ptime.epoch
       ~metadata:(`Assoc []) ~schema:(Some schema)
   in
   Memory.run st (fun () -> Effects.put_node n2);
@@ -68,7 +70,6 @@ let attach_sensor_happy () =
   let st = Memory.empty () in
   let c2 =
     Memory.run st (fun () ->
-      let u = Uuidm.of_string "44444444-0000-4000-8000-000000000001" |> Option.get in
       let sch : Schema.t =
         Schema.{
           version = 1;
@@ -79,11 +80,15 @@ let attach_sensor_happy () =
           sensors = [ Level.Hn3 ];
         }
       in
-      let n2 = Node.make ~uuid:u ~level:Level.Hn2 ~name:"Co"
-                 ~parent:Node_id.root ~parent_path:(Node_id.to_string Node_id.root) ~created:Ptime.epoch
+      let parent_path =
+        Node_id.to_string Node_id.root ^ "|"
+        ^ Node_id.to_string (Node_id.make Level.Hn1 10001)
+      in
+      let n2 = Node.make ~id:10002 ~level:Level.Hn2 ~name:"Co"
+                 ~parent:Node_id.root ~parent_path ~created:Ptime.epoch
                  ~metadata:(`Assoc []) ~schema:(Some sch) in
       Effects.put_node n2;
-      Node_id.make Level.Hn2 u)
+      Node_id.make Level.Hn2 10002)
   in
   let bldg =
     Memory.run st (fun () ->

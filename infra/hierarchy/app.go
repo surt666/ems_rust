@@ -90,7 +90,7 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 		Handler:      jsii.String("bootstrap"),
 		Code:         awslambda.Code_FromAsset(jsii.String("../../services/hierarchy/ocaml-lambda-hierarchy.zip"), nil),
 		Role:         lambdaRole,
-		Architecture: awslambda.Architecture_ARM_64(),
+		Architecture: awslambda.Architecture_X86_64(),
 		Timeout:      awscdk.Duration_Seconds(jsii.Number(30)),
 		MemorySize:   jsii.Number(512),
 		Environment: &map[string]*string{

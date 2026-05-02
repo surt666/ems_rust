@@ -1,19 +1,19 @@
 # ocaml-lambda-hierarchy — Build
 #
 # Targets:
-#   make build             Build a deploy-ready zip for Lambda (Docker, static, arm64)
+#   make build             Build a deploy-ready zip for Lambda (Docker, static, x86_64)
 #   make build-local       Build a local-only zip (not static, host arch — for dev)
 #   make clean             Remove all build artifacts and zips
 #
 # Variables:
 #   NAME=ocaml-lambda-hierarchy        Artifact base name (default: ocaml-lambda-hierarchy)
-#   PLATFORM=linux/arm64          Docker platform target (default: linux/arm64)
+#   PLATFORM=linux/amd64          Docker platform target (default: linux/amd64)
 #
 # Deploy:
 #   aws lambda create-function \
 #     --function-name my-fn \
 #     --runtime provided.al2023 \
-#     --architectures arm64 \
+#     --architectures x86_64 \
 #     --handler bootstrap \
 #     --role arn:aws:iam::ACCOUNT:role/lambda-role \
 #     --zip-file fileb://ocaml-lambda-hierarchy.zip
@@ -21,7 +21,7 @@
 .PHONY: build build-local clean
 
 NAME ?= ocaml-lambda-hierarchy
-PLATFORM ?= linux/arm64
+PLATFORM ?= linux/amd64
 
 build: $(NAME).zip
 

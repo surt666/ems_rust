@@ -5,21 +5,24 @@ type t =
   | Administrates
 
 let sk_verb = function
-  | Has_label l  -> "has_" ^ l
-  | Has_sensor   -> "has_sensor"
-  | Blocked      -> "blocked"
+  | Has_label l   -> "has_" ^ l
+  | Has_sensor    -> "has_sensor"
+  | Blocked       -> "blocked"
   | Administrates -> "administrates"
 
+(* Reverse-direction verb used on user-edge gsi1sk so a user→node lookup
+   can travel either direction through the index. HN-side edges
+   (Has_label, Has_sensor) no longer use a verb — their gsi1sk is the
+   child/sensor path, which carries direction structurally. *)
 let gsi_verb = function
-  | Has_label _  -> "parent_of"
-  | Has_sensor   -> "sensor_of"
-  | Blocked      -> "blocks"
-  | Administrates -> "administrators"
+  | Blocked       -> Some "blocks"
+  | Administrates -> Some "administrators"
+  | Has_label _ | Has_sensor -> None
 
 let to_string = function
-  | Has_label l  -> "has_label:" ^ l
-  | Has_sensor   -> "has_sensor"
-  | Blocked      -> "blocked"
+  | Has_label l   -> "has_label:" ^ l
+  | Has_sensor    -> "has_sensor"
+  | Blocked       -> "blocked"
   | Administrates -> "administrates"
 
 let of_string s =

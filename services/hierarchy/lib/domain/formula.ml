@@ -11,7 +11,7 @@ type expr =
 type t =
   | Identity
   | Zero
-  | Expr of { ast : expr; refs : (string * Uuidm.t) list }
+  | Expr of { ast : expr; refs : (string * Sensor_id.t) list }
 
 exception Unknown_ref of string
 
@@ -36,6 +36,6 @@ let eval ~self ~resolve = function
       in
       eval_expr ~self ~resolve:lookup ast
 
-let referenced_uuids = function
+let referenced_ids = function
   | Identity | Zero -> []
   | Expr { refs; _ } -> List.map snd refs

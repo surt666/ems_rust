@@ -22,6 +22,7 @@ depends: [
   "eio"
   "eio_main"
   "smaws-clients"
+  "pure-html"
   "alcotest" {with-test}
   "base_quickcheck" {with-test}
   "ppx_jane" {with-test}

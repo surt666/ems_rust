@@ -64,14 +64,31 @@ if [ "$batch_count" -gt 0 ]; then
 fi
 echo "wiped"
 
+section "Seed counters at n=10000, live=0"
+# Per-level id allocator + cardinality counter. Pre-seed once so id
+# allocation starts above the PostgreSQL id range. Idempotent: condition
+# fails silently if the row already exists (preserves any drift).
+for L in HN1 HN2 HN3 HN4 HN5 HN6 HN7 HN8 HN9 S; do
+  aws dynamodb put-item --region "$REGION" --table-name "$TABLE" \
+    --condition-expression "attribute_not_exists(pk)" \
+    --item '{
+      "pk":   {"S":"count#'"$L"'"},
+      "sk":   {"S":"count"},
+      "type": {"S":"counter"},
+      "n":    {"N":"10000"},
+      "live": {"N":"0"}
+    }' >/dev/null 2>&1 || true
+done
+echo "counters seeded"
+
 section "Seed root via AWS CLI"
-# path on the root is the root id itself (every node's path is self-inclusive).
+# Root has gsi1sk = its own id (path) but no gsi1pk (HN0/HN1 aren't indexed).
 aws dynamodb put-item --region "$REGION" --table-name "$TABLE" --item '{
   "pk":       {"S":"HN0#root"},
   "sk":       {"S":"HN0#root"},
   "type":     {"S":"node"},
   "name":     {"S":"root"},
-  "path":     {"S":"HN0#root"},
+  "gsi1sk":   {"S":"HN0#root"},
   "created":  {"S":"1970-01-01T00:00:00Z"},
   "metadata": {"M":{}}
 }' >/dev/null
@@ -348,6 +365,47 @@ done
 section "Bulk seed: counts from DynamoDB"
 aws dynamodb scan --region "$REGION" --table-name "$TABLE" \
     --select COUNT --output json | jq '{count: .Count, scanned: .ScannedCount}'
+
+section "Verify item shape (new id scheme + GSI layout)"
+# A sensor item's gsi1pk is the HN2 anchor of its tree, gsi1sk is the
+# sensor's full path including the sensor id at the tail. The legacy
+# attributes (`path`, `parent`, `hierarchy_path`, the parent_of/sensor_of
+# verbs) must not appear.
+aws dynamodb scan --region "$REGION" --table-name "$TABLE" \
+  --filter-expression "#t = :s AND begins_with(sk, :a)" \
+  --expression-attribute-names '{"#t":"type"}' \
+  --expression-attribute-values '{":s":{"S":"sensor"},":a":{"S":"active#"}}' \
+  --max-items 1 --output json \
+  | jq '.Items[0] | {
+      pk:.pk.S,
+      gsi1pk:.gsi1pk.S,
+      gsi1sk:.gsi1sk.S,
+      legacy_path:(has("path")),
+      legacy_parent:(has("parent")),
+      legacy_hierarchy_path:(has("hierarchy_path"))
+    }'
+
+# A node item: gsi1sk is its own path, gsi1pk is HN2 anchor (or absent for
+# HN0/HN1).
+aws dynamodb scan --region "$REGION" --table-name "$TABLE" \
+  --filter-expression "#t = :s AND begins_with(pk, :p)" \
+  --expression-attribute-names '{"#t":"type"}' \
+  --expression-attribute-values '{":s":{"S":"node"},":p":{"S":"HN3#"}}' \
+  --max-items 1 --output json \
+  | jq '.Items[0] | {
+      pk:.pk.S,
+      gsi1pk:.gsi1pk.S,
+      gsi1sk:.gsi1sk.S,
+      legacy_path:(has("path"))
+    }'
+
+# Counters
+section "Counter snapshot"
+for L in HN1 HN2 HN3 HN4 HN5 S; do
+  aws dynamodb get-item --region "$REGION" --table-name "$TABLE" \
+    --key '{"pk":{"S":"count#'"$L"'"},"sk":{"S":"count"}}' \
+    --output json | jq -r --arg lvl "$L" '.Item // {} | "\($lvl): n=\(.n.N) live=\(.live.N)"'
+done
 
 section "Seed admin user + root grant"
 cmd '{"action":"create_user","email":"steen666@gmail.com","name":"Steen Larsen","cognito_group":"admin"}'

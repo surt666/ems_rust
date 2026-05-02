@@ -3,4 +3,4 @@
 (library
  (name ocaml_lambda_hierarchy)
  (libraries lambda-runtime lambda-runtime-api-gateway yojson uuidm ptime
-   ptime.clock.os smaws-clients smaws-lib eio eio_main base64))
+   ptime.clock.os smaws-clients smaws-lib eio eio_main base64 pure-html))

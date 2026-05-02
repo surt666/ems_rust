@@ -3,20 +3,29 @@ open Ocaml_lambda_hierarchy
 let has_label_verbs () =
   let k = Edge_kind.Has_label "building" in
   Alcotest.(check string) "sk verb" "has_building" (Edge_kind.sk_verb k);
-  Alcotest.(check string) "gsi verb" "parent_of"  (Edge_kind.gsi_verb k)
+  Alcotest.(check (option string)) "no gsi verb" None (Edge_kind.gsi_verb k)
 
 let has_sensor_verbs () =
   let k = Edge_kind.Has_sensor in
   Alcotest.(check string) "sk verb"  "has_sensor"   (Edge_kind.sk_verb k);
-  Alcotest.(check string) "gsi verb" "sensor_of"    (Edge_kind.gsi_verb k)
+  Alcotest.(check (option string)) "no gsi verb" None (Edge_kind.gsi_verb k)
 
 let blocked_verbs () =
   let k = Edge_kind.Blocked in
   Alcotest.(check string) "sk verb"  "blocked" (Edge_kind.sk_verb k);
-  Alcotest.(check string) "gsi verb" "blocks"  (Edge_kind.gsi_verb k)
+  Alcotest.(check (option string)) "gsi verb" (Some "blocks") (Edge_kind.gsi_verb k)
+
+let administrates_verbs () =
+  let k = Edge_kind.Administrates in
+  Alcotest.(check string) "sk verb"  "administrates" (Edge_kind.sk_verb k);
+  Alcotest.(check (option string)) "gsi verb" (Some "administrators")
+    (Edge_kind.gsi_verb k)
 
 let roundtrip_to_string () =
-  let xs = [ Edge_kind.Has_label "b"; Edge_kind.Has_sensor; Edge_kind.Blocked ] in
+  let xs =
+    [ Edge_kind.Has_label "b"; Edge_kind.Has_sensor; Edge_kind.Blocked;
+      Edge_kind.Administrates ]
+  in
   List.iter (fun k ->
     let s = Edge_kind.to_string k in
     match Edge_kind.of_string s with
@@ -24,8 +33,9 @@ let roundtrip_to_string () =
     | Error e -> Alcotest.failf "of_string %S: %s" s e) xs
 
 let tests =
-  [ Alcotest.test_case "Has_label verbs"  `Quick has_label_verbs
-  ; Alcotest.test_case "Has_sensor verbs" `Quick has_sensor_verbs
-  ; Alcotest.test_case "Blocked verbs"    `Quick blocked_verbs
-  ; Alcotest.test_case "to/of_string rt"  `Quick roundtrip_to_string
+  [ Alcotest.test_case "Has_label verbs"   `Quick has_label_verbs
+  ; Alcotest.test_case "Has_sensor verbs"  `Quick has_sensor_verbs
+  ; Alcotest.test_case "Blocked verbs"     `Quick blocked_verbs
+  ; Alcotest.test_case "Administrates verbs" `Quick administrates_verbs
+  ; Alcotest.test_case "to/of_string rt"   `Quick roundtrip_to_string
   ]
