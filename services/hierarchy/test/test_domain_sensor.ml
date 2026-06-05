@@ -17,6 +17,7 @@ let make_sample () : Sensor.t =
     meter_type = Sensor.Counter;
     unit = Some "kWh";
     formula = Formula.Identity;
+    binning = Some 15;
   }
 
 let fields_preserved () =

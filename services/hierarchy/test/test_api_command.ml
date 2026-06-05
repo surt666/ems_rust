@@ -100,7 +100,7 @@ let attach_sensor_happy () =
   Memory.run st (fun () ->
     let body =
       Printf.sprintf
-        {|{"action":"attach_sensor","parent_id":%S,"daq_id":"daq:1","purpose":"Electricity","meter_type":"counter","unit":"kWh"}|}
+        {|{"action":"attach_sensor","parent_id":%S,"daq_id":"daq:1","purpose":"Electricity","meter_type":"counter","unit":"kWh","binning":15}|}
         (Node_id.to_string bldg)
     in
     let resp = Api_command.dispatch ~body in
@@ -108,6 +108,57 @@ let attach_sensor_happy () =
       Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int)
     in
     Alcotest.(check int) "200" 200 status)
+
+let attach_sensor_binning_from_string () =
+  (* The HTML form posts binning as a string ("data.binning=15" → `String "15"),
+     and an empty number input posts "". run_attach_sensor must coerce a numeric
+     string to Some, and treat "" / absent as unset (graceful Null). *)
+  let st = Memory.empty () in
+  let bldg =
+    Memory.run st (fun () ->
+      let sch : Schema.t =
+        Schema.{
+          version = 1;
+          edges = [
+            (Level.Hn2, [ (Level.Hn3, [ { label = "building"; min = None; max = None } ]) ]);
+          ];
+          metadata = [];
+          sensors = [ Level.Hn3 ];
+        }
+      in
+      let parent_path =
+        Node_id.to_string Node_id.root ^ "|"
+        ^ Node_id.to_string (Node_id.make Level.Hn1 10001)
+      in
+      let n2 = Node.make ~id:10002 ~level:Level.Hn2 ~name:"Co"
+                 ~parent:Node_id.root ~parent_path ~created:Ptime.epoch
+                 ~metadata:(`Assoc []) ~schema:(Some sch) in
+      Effects.put_node n2;
+      match Hierarchy.add_node ~parent:(Node_id.make Level.Hn2 10002)
+              ~level:Level.Hn3 ~name:"B" ~metadata:(`Assoc []) () with
+      | Ok b -> b.Node.id
+      | Error e -> Alcotest.failf "seed: %s" (Errors.message e))
+  in
+  let binning_of resp =
+    Yojson.Safe.Util.(
+      Yojson.Safe.from_string resp
+      |> member "body" |> to_string
+      |> Yojson.Safe.from_string
+      |> member "binning")
+  in
+  Memory.run st (fun () ->
+    let body daq bn =
+      Printf.sprintf
+        {|{"action":"attach_sensor","parent_id":%S,"daq_id":%S,"purpose":"Electricity","meter_type":"counter","binning":%s}|}
+        (Node_id.to_string bldg) daq bn
+    in
+    let resp = Api_command.dispatch ~body:(body "daq:str" {|"15"|}) in
+    Alcotest.(check (option int)) "numeric-string binning coerced to 15"
+      (Some 15)
+      (match binning_of resp with `Int i -> Some i | _ -> None);
+    let resp2 = Api_command.dispatch ~body:(body "daq:empty" {|""|}) in
+    Alcotest.(check bool) "empty-string binning is unset (null)" true
+      (match binning_of resp2 with `Null -> true | _ -> false))
 
 let create_user_happy () =
   let resp =
@@ -196,6 +247,7 @@ let tests =
     Alcotest.test_case "delete roundtrip" `Quick delete_node_roundtrip;
     Alcotest.test_case "invalid json -> 400" `Quick invalid_json_is_400;
     Alcotest.test_case "attach_sensor happy" `Quick attach_sensor_happy;
+    Alcotest.test_case "attach_sensor binning from string" `Quick attach_sensor_binning_from_string;
     Alcotest.test_case "create_user happy" `Quick create_user_happy;
     Alcotest.test_case "delete_user roundtrip" `Quick delete_user_roundtrip;
     Alcotest.test_case "block_user happy" `Quick block_user_happy;

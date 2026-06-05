@@ -1,0 +1,90 @@
+[
+  {
+    "updated_at": {
+      "S": "2026-03-28T12:00:00Z"
+    },
+    "meter_type": {
+      "S": "gauge"
+    },
+    "sk": {
+      "S": "daq:adeunis_pu_v1:123:0018b210000191c7:counter_a"
+    },
+    "pk": {
+      "S": "09826"
+    },
+    "hierarchy_path": {
+      "S": "P1#C1#PR1#B2"
+    },
+    "logical_id": {
+      "B": {
+        "__b64__": "tjrM38B0S3agQ7+veTHJxg=="
+      }
+    }
+  },
+  {
+    "updated_at": {
+      "S": "2026-03-28T12:00:00Z"
+    },
+    "meter_type": {
+      "S": "gauge"
+    },
+    "sk": {
+      "S": "daq:adeunis_pu_v1:123:0018b210000191c7:counter_b"
+    },
+    "pk": {
+      "S": "09826"
+    },
+    "hierarchy_path": {
+      "S": "P1#C1#PR1#B2"
+    },
+    "logical_id": {
+      "B": {
+        "__b64__": "1vTUCjekTfi2WQmN1Gil0Q=="
+      }
+    }
+  },
+  {
+    "updated_at": {
+      "S": "2026-03-27T22:58:00Z"
+    },
+    "meter_type": {
+      "S": "counter"
+    },
+    "sk": {
+      "S": "daq:flowiq2200_v1:123:0013ea010337c072:volume"
+    },
+    "hierarchy_path": {
+      "S": "P1#C1#PR1#B1"
+    },
+    "pk": {
+      "S": "09826"
+    },
+    "logical_id": {
+      "B": {
+        "__b64__": "FyrlwjOMSG2L9ebC7CiwvQ=="
+      }
+    }
+  },
+  {
+    "updated_at": {
+      "S": "2026-03-28T12:30:00Z"
+    },
+    "meter_type": {
+      "S": "counter"
+    },
+    "sk": {
+      "S": "daq:std_json_v1:countertest:test_counter_001:volume"
+    },
+    "pk": {
+      "S": "09826"
+    },
+    "hierarchy_path": {
+      "S": "P1#C1#PR1#B2"
+    },
+    "logical_id": {
+      "B": {
+        "__b64__": "k+oW5v7MQvqtVv88wrMfDA=="
+      }
+    }
+  }
+]

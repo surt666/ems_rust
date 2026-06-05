@@ -134,7 +134,7 @@ let attach_list_replace cfg =
     let s =
       match Sensors.attach ~parent:bldg.Node.id
               ~daq_id:"daq:itest:old" ~purpose:"Electricity"
-              ~meter_type:Sensor.Counter ~unit:"kWh" () with
+              ~meter_type:Sensor.Counter ~unit:"kWh" ~binning:15 () with
       | Ok s -> s | Error e -> bail "attach" e
     in
     (match Sensors.list_active ~parent:bldg.Node.id with

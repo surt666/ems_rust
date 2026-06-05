@@ -249,12 +249,14 @@ api_add_node_id() {
 }
 
 api_attach_sensor() {
-  # args: parent daq purpose meter_type
-  local parent="$1" daq="$2" purpose="$3" mt="$4"
+  # args: parent daq purpose meter_type binning_minutes
+  local parent="$1" daq="$2" purpose="$3" mt="$4" bin="${5:-15}"
   local payload
   payload=$(jq -n \
     --arg p "$parent" --arg d "$daq" --arg pu "$purpose" --arg mt "$mt" \
-    '{action:"attach_sensor", parent_id:$p, daq_id:$d, purpose:$pu, meter_type:$mt}')
+    --argjson bn "$bin" \
+    '{action:"attach_sensor", parent_id:$p, daq_id:$d, purpose:$pu,
+      meter_type:$mt, binning:$bn}')
   local resp
   resp=$(post_command_with_retry "$payload")
   if ! echo "$resp" | jq -e '.id' >/dev/null 2>&1; then
@@ -318,9 +320,10 @@ build_one_company() {
       fi
 
       # Emit N sensor jobs to a temp file then xargs them in parallel.
+      # Binning rotates over a small set of typical aggregation windows.
       local jobs
       jobs=$(mktemp)
-      local i parent_for
+      local i parent_for binnings=(5 15 60)
       for i in $(seq 1 "$SCALE_SENSORS"); do
         local mt
         mt=$(meter_type_for_index "$i")
@@ -332,13 +335,14 @@ build_one_company() {
         else
           parent_for="$bld_id"
         fi
-        local daq
+        local daq bin
         daq=$(printf 'daq:%s:%02d:%02d:%02d' "$co_name" "$p_idx" "$b_idx" "$i")
-        printf '%s\t%s\t%s\t%s\n' "$parent_for" "$daq" "s$i" "$mt" >> "$jobs"
+        bin="${binnings[$(( (i - 1) % ${#binnings[@]} ))]}"
+        printf '%s\t%s\t%s\t%s\t%s\n' "$parent_for" "$daq" "s$i" "$mt" "$bin" >> "$jobs"
       done
 
       xargs -P "$PARALLEL" -a "$jobs" -I{} bash -c \
-        'IFS=$'"'"'\t'"'"' read -r a b c d <<<"{}"; api_attach_sensor "$a" "$b" "$c" "$d"'
+        'IFS=$'"'"'\t'"'"' read -r a b c d e <<<"{}"; api_attach_sensor "$a" "$b" "$c" "$d" "$e"'
       rm -f "$jobs"
     done
   done
@@ -380,6 +384,7 @@ aws dynamodb scan --region "$REGION" --table-name "$TABLE" \
       pk:.pk.S,
       gsi1pk:.gsi1pk.S,
       gsi1sk:.gsi1sk.S,
+      binning:(.binning.N | tonumber),
       legacy_path:(has("path")),
       legacy_parent:(has("parent")),
       legacy_hierarchy_path:(has("hierarchy_path"))

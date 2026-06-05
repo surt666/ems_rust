@@ -1,0 +1,57 @@
+# SBT specific
+target/
+project/target/
+project/project/
+.lib/
+dist/
+lib_managed/
+src_managed/
+project/boot/
+project/plugins/project/
+
+# Scala-IDE specific
+.scala_dependencies
+.worksheet
+.cache
+.cache-main
+.cache-tests
+
+# IntelliJ IDEA
+.idea/
+.idea_modules/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Eclipse
+.classpath
+.project
+.settings/
+bin/
+
+# VSCode
+.vscode/
+.metals/
+.bloop/
+project/.bloop/
+.bsp/
+
+# Mac
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.swp
+*.swo
+*~
+
+# Assembly output
+assembly/
+
+# Test results
+test-output/
+.scoverage/

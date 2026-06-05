@@ -22,5 +22,3 @@ let of_string s =
          | Some t -> Ok t
          | None -> Error (Printf.sprintf "bad level %S" s))
     | _ -> Error (Printf.sprintf "bad level %S" s)
-
-let compare_depth a b = Int.compare (depth a) (depth b)

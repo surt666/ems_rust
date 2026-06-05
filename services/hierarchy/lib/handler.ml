@@ -4,9 +4,8 @@ let v2_path req = req.Api_gateway.V2.raw_path
 let v2_method req = req.Api_gateway.V2.request_context.http.method_
 
 let strip_prefix p s =
-  let lp = String.length p and ls = String.length s in
-  if ls >= lp && String.sub s 0 lp = p
-  then Some (String.sub s lp (ls - lp))
+  if String.starts_with ~prefix:p s
+  then Some (String.sub s (String.length p) (String.length s - String.length p))
   else None
 
 (* Decode application/x-www-form-urlencoded body into params list. *)
@@ -93,9 +92,7 @@ let form_to_command_json fields =
 let content_type (req : Api_gateway.V2.request) =
   match List.assoc_opt "content-type" req.headers with
   | Some v -> v
-  | None ->
-      (match List.assoc_opt "Content-Type" req.headers with
-       | Some v -> v | None -> "")
+  | None -> Option.value ~default:"" (List.assoc_opt "Content-Type" req.headers)
 
 let lower s = String.lowercase_ascii s
 
@@ -118,9 +115,7 @@ let handle_command (req : Api_gateway.V2.request) =
   let raw = if req.is_base64_encoded then b64_decode raw0 else raw0 in
   let ct = lower (content_type req) in
   let is_form_ct =
-    let needle = "application/x-www-form-urlencoded" in
-    String.length ct >= String.length needle
-    && String.sub ct 0 (String.length needle) = needle
+    String.starts_with ~prefix:"application/x-www-form-urlencoded" ct
   in
   (* HTMX defaults to text/plain for programmatic submits — sniff the body
      when the content-type is unhelpful. *)

@@ -17,7 +17,6 @@ type _ Effect.t +=
   | Get_node       : Node_id.t -> Node.t option Effect.t
   | List_children  : Node_id.t * Edge_kind.t option -> Node.t list Effect.t
   | List_child_refs : Node_id.t * Edge_kind.t option -> (Node_id.t * string) list Effect.t
-  | Get_schema     : Node_id.t -> Schema.t option Effect.t
 
   (* Atomic add: allocate next id at [level] and persist node + parent_of
      edge + counter bump in one TransactWriteItems. Retries on counter
@@ -53,7 +52,6 @@ let get_node id                 = Effect.perform (Get_node id)
 let list_children ?kind parent = Effect.perform (List_children (parent, kind))
 let list_child_refs ?kind parent =
   Effect.perform (List_child_refs (parent, kind))
-let get_schema id               = Effect.perform (Get_schema id)
 let add_node ~level ~build      = Effect.perform (Add_node { level; build })
 let put_node n                  = Effect.perform (Put_node n)
 let delete_node id              = Effect.perform (Delete_node id)

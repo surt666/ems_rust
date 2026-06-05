@@ -219,7 +219,7 @@ let render_nodes ~params =
   | Ok parent_id ->
       (* The frontend passes either "U#<email>" or a bare email from login. *)
       let normalized =
-        if String.length user_s >= 2 && String.sub user_s 0 2 = "U#" then user_s
+        if String.starts_with ~prefix:"U#" user_s then user_s
         else if user_s = "" then ""
         else "U#" ^ user_s
       in
@@ -349,7 +349,13 @@ let sensor_dialog ~nid_str =
                   span [ class_ "required" ] [ txt "*" ] ];
               div [ class_ "form-row" ]
                 [ label [ class_ "form-label" ] [ txt "Unit" ];
-                  input [ type_ "text"; name "data.unit"; class_ "form-input" ] ] ] ];
+                  input [ type_ "text"; name "data.unit"; class_ "form-input" ] ];
+              div [ class_ "form-row" ]
+                [ label [ class_ "form-label" ] [ txt "Binning (min)" ];
+                  input
+                    [ type_ "number"; name "data.binning";
+                      string_attr "min" "1"; string_attr "step" "1";
+                      class_ "form-input" ] ] ] ];
       div [ class_ "dialog-footer" ]
         [ button
             [ type_ "submit"; string_attr "form" "add-sensor-form";

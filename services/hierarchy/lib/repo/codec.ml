@@ -440,9 +440,14 @@ let sensor_to_item ~active (sn : Sensor.t) : (string * Dyn.attribute_value) list
       ("created", s (Ptime.to_rfc3339 ~tz_offset_s:0 sn.Sensor.created));
     ]
   in
+  let with_binning =
+    match sn.Sensor.binning with
+    | Some b -> ("binning", n (string_of_int b)) :: base
+    | None -> base
+  in
   match sn.Sensor.unit with
-  | Some u -> ("unit", s u) :: base
-  | None -> base
+  | Some u -> ("unit", s u) :: with_binning
+  | None -> with_binning
 
 let sensor_edge_item ~parent ~sensor_id ~created ~self_path =
   edge_with_anchor
@@ -483,9 +488,10 @@ let sensor_of_item kvs : (Sensor.t, string) result =
     | Some v -> formula_of_attr v
     | None -> Ok Formula.Identity
   in
+  let binning = opt_int_of_n (List.assoc_opt "binning" kvs) in
   Ok Sensor.{
     id; created; daq_id; path;
-    purpose; meter_type; unit; formula;
+    purpose; meter_type; unit; formula; binning;
   }
 
 (* Walk path string, return the second-to-last node-id segment as the

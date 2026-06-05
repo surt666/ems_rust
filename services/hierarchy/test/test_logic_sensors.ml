@@ -41,7 +41,7 @@ let attach_happy () =
     match
       Sensors.attach
         ~parent:bldg ~daq_id:"daq:1"
-        ~purpose:"Electricity" ~meter_type:Sensor.Counter ~unit:"kWh"
+        ~purpose:"Electricity" ~meter_type:Sensor.Counter ~unit:"kWh" ~binning:15
         ~formula:Formula.Identity ()
     with
     | Error e -> Alcotest.failf "attach: %s" (Errors.message e)
@@ -57,7 +57,7 @@ let rejects_level_not_allowed () =
     match
       Sensors.attach
         ~parent:c2 ~daq_id:"daq:2"
-        ~purpose:"Electricity" ~meter_type:Sensor.Counter ()
+        ~purpose:"Electricity" ~meter_type:Sensor.Counter ~binning:15 ()
     with
     | Ok _ -> Alcotest.fail "expected Validation at disallowed level"
     | Error (Errors.Validation _) -> ()
@@ -70,7 +70,7 @@ let list_active_returns_attached () =
   Memory.run st (fun () ->
     let _ = Sensors.attach ~parent:bldg
               ~daq_id:"daq:1" ~purpose:"Electricity"
-              ~meter_type:Sensor.Counter () in
+              ~meter_type:Sensor.Counter ~binning:15 () in
     match Sensors.list_active ~parent:bldg with
     | Error e -> Alcotest.failf "list: %s" (Errors.message e)
     | Ok xs ->
@@ -96,7 +96,7 @@ let get_active_happy () =
       match
         Sensors.attach ~parent:bldg
           ~daq_id:"daq:k" ~purpose:"Electricity"
-          ~meter_type:Sensor.Counter ()
+          ~meter_type:Sensor.Counter ~binning:15 ()
       with
       | Ok x -> x
       | Error e -> Alcotest.failf "attach: %s" (Errors.message e)
@@ -123,7 +123,7 @@ let replace_device_promotes_new () =
       match
         Sensors.attach ~parent:bldg
           ~daq_id:"daq:old" ~purpose:"Electricity"
-          ~meter_type:Sensor.Counter ()
+          ~meter_type:Sensor.Counter ~binning:15 ()
       with
       | Ok x -> x
       | Error e -> Alcotest.failf "attach: %s" (Errors.message e)
@@ -157,7 +157,7 @@ let attach_detects_self_cycle () =
       match
         Sensors.attach ~parent:bldg
           ~daq_id:"daq:1" ~purpose:"Electricity"
-          ~meter_type:Sensor.Counter ()
+          ~meter_type:Sensor.Counter ~binning:15 ()
       with
       | Ok x -> x
       | Error e -> Alcotest.failf "attach: %s" (Errors.message e)
@@ -198,7 +198,7 @@ let evaluate_identity () =
       match
         Sensors.attach ~parent:bldg
           ~daq_id:"daq:1" ~purpose:"Electricity"
-          ~meter_type:Sensor.Counter ()
+          ~meter_type:Sensor.Counter ~binning:15 ()
       with
       | Ok x -> x
       | Error e -> Alcotest.failf "attach: %s" (Errors.message e))
@@ -219,7 +219,7 @@ let evaluate_composite () =
         match
           Sensors.attach ~parent:bldg
             ~daq_id:"daq:4" ~purpose:"Electricity"
-            ~meter_type:Sensor.Counter ()
+            ~meter_type:Sensor.Counter ~binning:15 ()
         with
         | Ok x -> x
         | Error e -> Alcotest.failf "attach s4: %s" (Errors.message e)
@@ -234,7 +234,7 @@ let evaluate_composite () =
         match
           Sensors.attach ~parent:bldg
             ~daq_id:"daq:3" ~purpose:"Electricity"
-            ~meter_type:Sensor.Counter ~formula:formula_s3 ()
+            ~meter_type:Sensor.Counter ~binning:15 ~formula:formula_s3 ()
         with
         | Ok x -> x
         | Error e -> Alcotest.failf "attach s3: %s" (Errors.message e)
@@ -262,7 +262,7 @@ let evaluate_zero_short_circuits_reading () =
       match
         Sensors.attach ~parent:bldg
           ~daq_id:"daq:z" ~purpose:"Electricity"
-          ~meter_type:Sensor.Counter ~formula:Formula.Zero ()
+          ~meter_type:Sensor.Counter ~binning:15 ~formula:Formula.Zero ()
       with
       | Ok x -> x
       | Error e -> Alcotest.failf "attach: %s" (Errors.message e))

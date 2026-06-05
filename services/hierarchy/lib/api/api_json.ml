@@ -265,6 +265,7 @@ let node_to_json (n : Node.t) : Yojson.Safe.t =
 
 let sensor_to_json (s : Sensor.t) : Yojson.Safe.t =
   let unit_json = match s.unit with Some u -> `String u | None -> `Null in
+  let binning_json = match s.binning with Some b -> `Int b | None -> `Null in
   `Assoc [
     ("id",         `String (Sensor_id.to_string s.id));
     ("created",    `String (Ptime.to_rfc3339 ~tz_offset_s:0 s.created));
@@ -273,6 +274,7 @@ let sensor_to_json (s : Sensor.t) : Yojson.Safe.t =
     ("purpose",    `String s.purpose);
     ("meter_type", `String (Sensor.meter_type_to_string s.meter_type));
     ("unit",       unit_json);
+    ("binning",    binning_json);
   ]
 
 let user_to_json (u : User.t) : Yojson.Safe.t =

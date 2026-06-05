@@ -2,5 +2,5 @@
 
 (library
  (name ocaml_lambda_hierarchy)
- (libraries lambda-runtime lambda-runtime-api-gateway yojson uuidm ptime
+ (libraries lambda-runtime lambda-runtime-api-gateway yojson ptime
    ptime.clock.os smaws-clients smaws-lib eio eio_main base64 pure-html))

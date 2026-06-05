@@ -1,0 +1,3 @@
+.cdk.staging
+cdk.out
+data_pipeline

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Console appender with reduced verbosity for tests -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Set ERROR level for the ProcessUtils logger to reduce noise in tests -->
+    <!-- This suppresses the intentional error logging from error handling tests -->
+    <logger name="com.enity.flink.utils.ProcessUtils" level="OFF"/>
+
+    <!-- Root logger -->
+    <root level="WARN">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>

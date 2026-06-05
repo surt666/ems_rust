@@ -66,9 +66,20 @@ let run_attach_sensor json =
     | Some (`String u) -> Some u
     | _ -> None
   in
+  (* binning is optional. JSON callers send a number; the HTML form posts it
+     as a string ("15"), and an empty number input posts "". Accept both and
+     treat empty/absent as unset. Out-of-range values (<= 0) are rejected
+     downstream in Sensors.attach. *)
+  let binning =
+    match field json "binning" with
+    | Some (`Int i) -> Some i
+    | Some (`String s) -> int_of_string_opt (String.trim s)
+    | _ -> None
+  in
   let* parent     = Node_id.of_string parent_s in
   let* meter_type = Sensor.meter_type_of_string mt_s in
-  match Sensors.attach ~parent ~daq_id:daq ~purpose ~meter_type ?unit () with
+  match Sensors.attach ~parent ~daq_id:daq ~purpose ~meter_type ?binning
+          ?unit () with
   | Ok s -> Ok (Api_json.ok_response (Api_json.sensor_to_json s))
   | Error e -> Ok (Api_json.error_response e)
 

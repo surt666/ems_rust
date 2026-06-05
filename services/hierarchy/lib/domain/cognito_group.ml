@@ -8,6 +8,3 @@ let of_string = function
   | "writer" -> Ok Writer
   | "admin"  -> Ok Admin
   | s -> Error (Printf.sprintf "bad cognito group %S" s)
-
-(* capability ordering: admin > writer > reader *)
-let rank = function Reader -> 0 | Writer -> 1 | Admin -> 2

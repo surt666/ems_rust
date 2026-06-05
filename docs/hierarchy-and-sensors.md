@@ -14,14 +14,14 @@ A tree of typed nodes rooted at a singleton.
 
 | Level | Role              | Notes                                                |
 |-------|-------------------|------------------------------------------------------|
-| hn0   | root              | singleton, id = `HN0#<nil-uuid>` (`Node_id.root`)    |
+| hn0   | root              | singleton, id = literal `HN0#root` (`Node_id.root`)  |
 | hn1   | partner           | business tenant, e.g. "Acme Partner"                 |
 | hn2   | company           | **owns a schema** that shapes everything below it    |
 | hn3…9 | schema-defined    | meaning is whatever the owning hn2 schema declares   |
 
 Every node carries:
 
-- `id` — `HN<n>#<uuid>`
+- `id` — `HN<n>#<int>` (integer allocated by a per-level counter; root is the literal `HN0#root`)
 - `level` — derived from `id` (not stored separately)
 - `name` — human label
 - `parent` — parent node id (root has `None`)
@@ -162,22 +162,19 @@ a role on Acme Co; the dashed `blocked` edge **revokes** that on HQ
 Building B and everything below it. Both follow the single-table
 edge shape — `pk = U#<email>`, node id on the sk side:
 
-- grant:  `sk = administrates#HN2#<acme-uuid>`
-- block:  `sk = blocked#HN4#<b-uuid>`
+- grant:  `sk = administrates#HN2#102`
+- block:  `sk = blocked#HN4#10044`
 
-Three forward verbs are reserved for grants — `administrates` /
-`writes` / `reads` — one per cognito tier. Grants and blocks both
-propagate down through the ancestor chain; `effective_permission`
-returns the nearest granting ancestor's role unless a block on that
-chain kills it first.
-
-Only the `Blocked` half is live in the code today (`Edge_kind.t =
-Has_label | Has_sensor | Blocked`). The three grant variants are the
-designed-but-not-yet-built next step, shaped identically to blocks
-and evaluated on the same ancestor walk. The `cognito_group` on the
-user record is an overarching bucket above this — aspirational, not
-wired to per-node enforcement. See `docs/architecture.md` §8 for the
-full row layout and the `effective_permission` algorithm.
+Both `Administrates` (grant) and `Blocked` edges are **live**
+(`Edge_kind.t = Has_label | Has_sensor | Blocked | Administrates`).
+There is no `writes`/`reads` edge kind. Grants and blocks both
+propagate down the ancestor chain, but through **two separate**
+mechanisms: `Access.has_admin_access` (grant-driven) decides UI tree
+visibility, while `Access.effective_permission` (block-driven) returns
+the user's `cognito_group` unless a block on the chain nulls it. The
+`cognito_group` on the user record is an overarching ceiling above
+both. See `docs/architecture.md` §8 for the full row layout and the
+algorithms.
 
 ---
 
@@ -204,68 +201,74 @@ full row layout and the `effective_permission` algorithm.
 type meter_type = Counter | Gauge
 
 type t = {
-  id             : Sensor_id.t;     (* logical identity, stable across replacements *)
-  created        : Ptime.t;         (* when the current device became active *)
-  parent         : Node_id.t;
-  daq_id         : string;          (* physical data-acquisition id *)
-  hierarchy_path : string;          (* denormalized for read paths *)
-  purpose        : string;          (* "Electricity", "Heat", … *)
-  meter_type     : meter_type;
-  unit           : string option;
-  formula        : Formula.t;
+  id         : Sensor_id.t;     (* logical identity, stable across replacements *)
+  created    : Ptime.t;         (* when the current device became active *)
+  daq_id     : string;          (* physical data-acquisition id *)
+  path       : string;          (* pipe-separated ancestry incl. self; stored as gsi1sk *)
+  purpose    : string;          (* "Electricity", "Heat", … *)
+  meter_type : meter_type;
+  unit       : string option;
+  formula    : Formula.t;
+  binning    : int option;      (* aggregation bin size in minutes (> 0); None = unbinned *)
 }
 ```
 
-`Sensor_id.t` is `S#<uuid>`. The sensor's logical identity is the uuid;
-physical devices change over time, tracked by promotion/demotion rows.
+`Sensor_id.t` is `S#<int>`. The sensor's logical identity is the integer id;
+physical devices change over time, tracked by promotion/demotion rows. The
+parent node is recovered from `path` (`Sensor.parent_id`), not a stored field.
 
 ### 5.2 DynamoDB layout
 
-One partition per sensor (`pk = S#<uuid>`). Active row uses a prefixed sort
+One partition per sensor (`pk = S#<int>`). Active row uses a prefixed sort
 key so it's distinguishable from history without a filter.
 
-| Attribute        | Active row                      | History row           |
-|------------------|---------------------------------|-----------------------|
-| `pk`             | `S#<uuid>`                      | `S#<uuid>`            |
-| `sk`             | `active#<ISO8601 created>`      | `<ISO8601 created>`   |
-| `daq_id`         | current device                  | frozen historical     |
-| `hierarchy_path` | cached path                     | cached path           |
-| `purpose`, `meter_type`, `unit`, `formula` | current | snapshot at demotion time |
+| Attribute     | Active row                      | History row           |
+|---------------|---------------------------------|-----------------------|
+| `pk`          | `S#<int>`                       | `S#<int>`             |
+| `sk`          | `active#<ISO8601 created>`      | `<ISO8601 created>`   |
+| `gsi1pk`      | `S`                             | `S`                   |
+| `gsi1sk`      | sensor `path`                   | sensor `path`         |
+| `daq_id`      | current device                  | frozen historical     |
+| `purpose`, `meter_type`, `unit`, `formula`, `binning` | current | snapshot at demotion time |
 
-The sensor edge row (in the parent node's partition) is written once at
-attach time and survives device replacements:
+`binning` (and `unit`) are only written when set. The sensor edge row (in the
+parent node's partition) is written once at attach time and survives device
+replacements:
 
 | Attribute | Value                   |
 |-----------|-------------------------|
 | `pk`      | `<parent_pk>`           |
-| `sk`      | `has_sensor#S#<uuid>`   |
+| `sk`      | `has_sensor#S#<int>`    |
+| `gsi1pk`  | `S`                     |
+| `gsi1sk`  | sensor `path`           |
 | `name`    | `""` (edge only — sensor name lives on the sensor row if/when added) |
 
-No GSI on sensor rows. Listing sensors for a node is `Query pk=<parent>,
-sk begins_with has_sensor#`, then one `GetItem pk=S#<uuid>, sk begins_with
-active#` per sensor (see `Sensors.list_active`).
+Listing sensors for a node is `Query pk=<parent>, sk begins_with has_sensor#`,
+then one `Query pk=S#<int>, sk begins_with active#` per sensor (see
+`Sensors.list_active` / `dynamo.query_sensor_ids`).
 
 ### 5.3 Attach — atomic
 
-`Sensors.attach` performs a single `TransactWriteItems` with two `Put`s:
+`Sensors.attach` → `Effects.Add_sensor`, a single `TransactWriteItems` that
+allocates the sensor's int id from the `count#S` counter and writes three rows:
 
-1. active sensor row (`pk=S#<uuid>, sk=active#<now>`)
-2. sensor edge row (`pk=<parent>, sk=has_sensor#S#<uuid>`)
+1. active sensor row (`pk=S#<int>, sk=active#<now>`)
+2. sensor edge row (`pk=<parent>, sk=has_sensor#S#<int>`)
+3. the `count#S` counter bump (conditional → concurrent attaches retry)
 
-This is a single effect (`Put_sensor`) that atomically writes both. Before
-this became transactional, orphan sensor/edge pairs appeared under load — see
-commit `665c959 feat(repo/dynamo): sensor ops with TransactWriteItems-backed
-replace`.
+`Add_sensor` writes them atomically. Before this became transactional, orphan
+sensor/edge pairs appeared under load — see commit `665c959 feat(repo/dynamo):
+sensor ops with TransactWriteItems-backed replace`.
 
 ### 5.4 Replace device — atomic
 
 A sensor's `sk` includes its `created` timestamp, so updating in place is not
 possible. `Sensors.replace_device` issues a three-op transaction:
 
-1. **Delete** `{pk: S#uuid, sk: active#<old-created>}`
-2. **Put** `{pk: S#uuid, sk: <old-created>, …}` — demotes the old device to
+1. **Delete** `{pk: S#<int>, sk: active#<old-created>}`
+2. **Put** `{pk: S#<int>, sk: <old-created>, …}` — demotes the old device to
    history (plain timestamp, no `active#` prefix)
-3. **Put** `{pk: S#uuid, sk: active#<now>, daq_id: <new>, …}` — new active row
+3. **Put** `{pk: S#<int>, sk: active#<now>, daq_id: <new>, …}` — new active row
 
 History rows therefore form a timeline: each plain-timestamp row records when
 that device *was* active from, up until the next replacement.
@@ -279,7 +282,7 @@ sensor edge. No soft-delete.
 
 Every sensor produces a computed value (`S'`) that is always non-negative.
 Default formula is `Identity` (`S' = Self`). Composite formulas reference other
-sensors' computed values by uuid.
+sensors' computed values by sensor id.
 
 ```ocaml
 (* lib/domain/formula.ml *)
@@ -288,7 +291,7 @@ type formula =
   | Zero                                   (* S' = 0     (exclude from aggregations) *)
   | Expr of {
       ast  : expr;
-      refs : (string * Uuidm.t) list;      (* alias -> sensor uuid *)
+      refs : (string * Sensor_id.t) list;  (* alias -> sensor id *)
     }
 
 and expr =
@@ -356,7 +359,7 @@ AST for S3:
 
 ```ocaml
 Expr { ast  = Abs (Sub (Sub (Self, Ref "S4"), Ref "S5"));
-       refs = [("S4", uuid4); ("S5", uuid5)] }
+       refs = [("S4", Sensor_id.make 4); ("S5", Sensor_id.make 5)] }
 ```
 
 Total building consumption = `S1' + S2' + S3' + S4' + S5'`. Each sensor
@@ -419,56 +422,60 @@ Table name in `$ITEST_DYNAMO_TABLE` (prod: `hierarchy_new`).
 
 ### 6.1 Hierarchy
 
-| Attribute | Node row           | Edge row                                     |
+| Attribute | Node row           | User-side edge row (Blocked / Administrates) |
 |-----------|--------------------|----------------------------------------------|
-| `pk`      | `HN<n>#<uuid>`     | `<from_pk>`                                  |
-| `sk`      | `HN<n>#<uuid>`     | `<Edge_kind.sk_verb kind>#<to_pk>`           |
+| `pk`      | `HN<n>#<int>` (= `sk`) | `<from_pk>`                              |
+| `sk`      | `HN<n>#<int>` (= `pk`) | `<Edge_kind.sk_verb kind>#<to_pk>`       |
 | `type`    | `node`             | `edge`                                       |
 | `kind`    | —                  | `Edge_kind.to_string kind`                   |
 | `name`    | human label        | **stored on edge** (enables id+name listing without GetItem) |
-| `parent`  | parent pk          | —                                            |
 | `created` | RFC 3339           | RFC 3339                                     |
 | `metadata`| JSON map           | —                                            |
 | `schema`  | hn2 only           | —                                            |
-| `gsi1pk`  | —                  | `<to_pk>`                                    |
-| `gsi1sk`  | —                  | `<Edge_kind.gsi_verb kind>#<from_pk>`        |
+| `gsi1pk`  | `HN<n>` (level anchor) | `<to_pk>`                                |
+| `gsi1sk`  | node `path`        | `<Edge_kind.gsi_verb kind>#<from_pk>`        |
 
-`kind` is one of `Has_label <label> | Has_sensor | Blocked` — source of
-truth is `lib/domain/edge_kind.ml`. The forward `sk` prefix comes from
-`Edge_kind.sk_verb`; the inverse GSI1 prefix comes from `Edge_kind.gsi_verb`.
-For a `Has_label "building"` edge the row is the familiar
-`has_building#<child_pk>` — that's the `Has_label` case of the general shape.
+`kind` is one of `Has_label <label> | Has_sensor | Blocked | Administrates` —
+source of truth is `lib/domain/edge_kind.ml`. The forward `sk` prefix comes
+from `Edge_kind.sk_verb`. **HN-side** edges (`Has_label`, `Has_sensor`) have
+**no** gsi verb — their `gsi1pk` is the child's level anchor / `S` and `gsi1sk`
+is the child/sensor `path` (direction is carried structurally by the path).
+Only **user-side** edges (`Blocked` → `blocks`, `Administrates` →
+`administrators`) put a `gsi_verb` in `gsi1sk`. For a `Has_label "building"`
+edge the sk is the familiar `has_building#<child_pk>`.
 
 #### Worked example — a block edge
 
-`block_user { user_id = "U#alice@acme.test"; node_id = "HN4#bb..." }`
+`block_user { user_id = "U#alice@acme.test"; node_id = "HN4#10044" }`
 writes one edge row with `kind = Blocked`:
 
 | Attribute | Value                                        | Where it comes from             |
 |-----------|----------------------------------------------|---------------------------------|
 | `pk`      | `U#alice@acme.test`                          | `from_` side of the edge        |
-| `sk`      | `blocked#HN4#bb...`                          | `sk_verb Blocked = "blocked"`   |
+| `sk`      | `blocked#HN4#10044`                          | `sk_verb Blocked = "blocked"`   |
 | `type`    | `edge`                                       | constant                        |
 | `kind`    | `blocked`                                    | `Edge_kind.to_string Blocked`   |
-| `gsi1pk`  | `HN4#bb...`                                  | `to_` side of the edge          |
+| `gsi1pk`  | `HN4#10044`                                  | `to_` side of the edge          |
 | `gsi1sk`  | `blocks#U#alice@acme.test`                   | `gsi_verb Blocked = "blocks"`   |
 
 "Nodes Alice is blocked on" is `Query pk=U#alice@acme.test,
-sk begins_with blocked#`. "Users blocked on HN4#bb..." is the
-mirror image on GSI1: `Query gsi1pk=HN4#bb..., gsi1sk begins_with
-blocks#`. A hierarchy edge or sensor edge would use the same shape
-with the `Has_label`/`Has_sensor` sk/gsi verbs instead — the GSI
-inversion is uniform across kinds.
+sk begins_with blocked#`. "Users blocked on HN4#10044" is the
+mirror image on GSI1: `Query gsi1pk=HN4#10044, gsi1sk begins_with
+blocks#`. An `Administrates` grant uses the same shape with the
+`administrates`/`administrators` verbs. HN-side hierarchy/sensor edges
+invert differently — `gsi1pk` is the level anchor and `gsi1sk` is the
+child path, not a verb-prefixed reverse pointer.
 
 ### 6.2 Sensors — see §5.2.
 
 ### 6.3 Query patterns
 
-Prefixes below are built from `Edge_kind.sk_verb` on the pk side and
-`Edge_kind.gsi_verb` on the gsi1 side — not free-form strings. `has_`,
-`has_<label>#`, `has_sensor#`, and `blocked#` are just the concrete rendering
-of `sk_verb` for each `Edge_kind.t` case; `parent_of#`, `sensor_of#`, and
-`blocks#` are the corresponding `gsi_verb` renderings.
+Prefixes below are built from `Edge_kind.sk_verb` on the pk side — not
+free-form strings. `has_<label>#`, `has_sensor#`, `blocked#`, and
+`administrates#` are the concrete `sk_verb` renderings for each `Edge_kind.t`
+case. Only user-side edges have a `gsi_verb`: `blocks#` (Blocked) and
+`administrators#` (Administrates). HN-side edges instead index by level anchor
+(`gsi1pk`) + child `path` (`gsi1sk`).
 
 | Use case                                  | Query                                                                     |
 |-------------------------------------------|---------------------------------------------------------------------------|
@@ -478,7 +485,7 @@ of `sk_verb` for each `Edge_kind.t` case; `parent_of#`, `sensor_of#`, and
 | Children of a specific label              | `Query pk=parent, sk begins_with has_<label>#`                            |
 | Reverse lookup — who points at Y          | `Query gsi1pk=Y`                                                          |
 | Active sensors on a node                  | `Query pk=parent, sk begins_with has_sensor#` → ids, then one Query each  |
-| Full history for a sensor                 | `Query pk=S#<uuid>` — returns active + all history rows, sorted by `sk`   |
+| Full history for a sensor                 | `Query pk=S#<int>` — returns active + all history rows, sorted by `sk`    |
 | Nodes a user is blocked from              | `Query pk=U#<email>, sk begins_with blocked#`                             |
 | Users blocked from a node                 | `Query gsi1pk=<node_id>, gsi1sk begins_with blocks#` (index `gsi1`)       |
 
@@ -501,15 +508,15 @@ and every edge. Sensor partitions under deleted nodes are also wiped (via
 | File                          | Role                                                  |
 |-------------------------------|-------------------------------------------------------|
 | `lib/domain/level.ml`         | hn0..hn9 enum + depth                                 |
-| `lib/domain/node_id.ml`       | `HN<n>#<uuid>` parser/printer                         |
+| `lib/domain/node_id.ml`       | `HN<n>#<int>` parser/printer (root = `HN0#root`)      |
 | `lib/domain/node.ml`          | node record                                           |
 | `lib/domain/schema.ml`        | schema type + `validate` + `edges_between`            |
 | `lib/domain/metadata.ml`      | field spec + validation                               |
-| `lib/domain/sensor_id.ml`     | `S#<uuid>` parser/printer                             |
+| `lib/domain/sensor_id.ml`     | `S#<int>` parser/printer                              |
 | `lib/domain/sensor_sk.ml`     | `active#<ts>` / plain-ts sort-key codec               |
 | `lib/domain/sensor.ml`        | sensor record + meter type                            |
 | `lib/domain/formula.ml`       | formula AST + eval                                    |
-| `lib/domain/edge_kind.ml`     | `Has_label | Has_sensor | Blocked` + `sk_verb` / `gsi_verb` |
+| `lib/domain/edge_kind.ml`     | `Has_label | Has_sensor | Blocked | Administrates` + `sk_verb` / `gsi_verb` |
 | `lib/domain/user_id.ml`       | `U#<email>` parser/printer                            |
 | `lib/domain/user.ml`          | user record                                           |
 | `lib/domain/cognito_group.ml` | `Reader | Writer | Admin` capability ceiling          |
@@ -521,7 +528,7 @@ and every edge. Sensor partitions under deleted nodes are also wiped (via
 | `lib/logic/schema_check.ml`   | `find_for` — walk up to the hn2 schema                |
 | `lib/logic/sensors.ml`        | `attach`, `list_active`, `get_active`, `replace_device`, `set_formula`, `evaluate` |
 | `lib/logic/users.ml`          | `create`, `get`, `update`, `delete`, `list`           |
-| `lib/logic/access.ml`         | `block`, `unblock`, `effective_permission`, blocked-list queries |
+| `lib/logic/access.ml`         | `block`, `unblock`, `effective_permission`, `grant_administrates`, `has_admin_access`, blocked/administrated-list queries |
 | `lib/repo/codec.ml`           | node/edge/sensor/user ↔ DynamoDB attribute map        |
 | `lib/repo/dynamo.ml`          | Eio-based effect handler over smaws                   |
 | `lib/repo/memory.ml`          | in-memory handler for unit tests                      |

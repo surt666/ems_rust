@@ -40,9 +40,4 @@ let level t = Node_id.level t.id
 let segment_at_level ~path ~lvl =
   let parts = String.split_on_char '|' path |> List.filter (fun s -> s <> "") in
   let prefix = Printf.sprintf "HN%d#" (Level.depth lvl) in
-  let plen = String.length prefix in
-  List.find_map
-    (fun seg ->
-      if String.length seg >= plen && String.sub seg 0 plen = prefix
-      then Some seg else None)
-    parts
+  List.find_opt (String.starts_with ~prefix) parts

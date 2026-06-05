@@ -106,6 +106,7 @@ let mk_sensor ~sensor_id ~parent ~created ~daq : Sensor.t =
     meter_type = Sensor.Counter;
     unit = Some "kWh";
     formula = Formula.Identity;
+    binning = Some 15;
   }
 
 (* For low-level tests we synthesize sensor rows directly into the in-memory

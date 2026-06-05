@@ -1,6 +1,6 @@
 # API Reference
 
-Base URL: `https://vp9p5wrn6f.execute-api.eu-central-1.amazonaws.com`
+Base URL: `https://doztw28ic6.execute-api.eu-central-1.amazonaws.com`
 
 Two endpoints:
 
@@ -17,12 +17,14 @@ Status code is derived from the error (`400`, `404`, etc.).
 
 ## URL encoding
 
-Node, sensor, and user ids all contain `#` (e.g. `HN2#2ab951b2-...`,
-`S#ff0863e0-...`, `U#alice@example.com`). `curl` strips everything after `#`
-before sending — encode it as `%23`, or use `--data-urlencode`:
+Node, sensor, and user ids all contain `#` (e.g. `HN2#102`, `S#42`,
+`U#alice@example.com`). Node and sensor ids are `<prefix>#<integer>` — the
+integer is allocated by a per-level counter, not a uuid. `curl` strips
+everything after `#` before sending — encode it as `%23`, or use
+`--data-urlencode`:
 
 ```sh
-curl -G "$BASE/query/get_node" --data-urlencode "id=HN2#2ab951b2-e31c-4049-9dbb-ad82b196b901"
+curl -G "$BASE/query/get_node" --data-urlencode "id=HN2#102"
 curl -G "$BASE/query/get_user" --data-urlencode "id=U#alice@example.com"
 ```
 
@@ -40,31 +42,31 @@ curl -X POST "$BASE/command" -d '{
 }'
 # → { "id": "U#alice@acme.test", … }
 
-# 2. create the partner (hn1) under the implicit root hn0
+# 2. create the partner (hn1) under the implicit root HN0#root
 curl -X POST "$BASE/command" -d '{
-  "action": "add_node", "parent_id": "<hn0-root>",
+  "action": "add_node", "parent_id": "HN0#root",
   "name": "Acme Partner"
 }'
-# → { "id": "HN1#0c5a…", … }
+# → { "id": "HN1#11", … }
 
 # 3. create the company (hn2) — schema lives here
 curl -X POST "$BASE/command" -d '{
-  "action": "add_node", "parent_id": "HN1#0c5a…",
+  "action": "add_node", "parent_id": "HN1#11",
   "name": "Acme Co",
   "schema": { "version": 1, "edges": { … }, "sensors": ["hn6"] }
 }'
-# → { "id": "HN2#2ab9…", … }
+# → { "id": "HN2#102", … }
 
 # 4. block Alice from a sub-tree (descendants inherit the block)
 curl -X POST "$BASE/command" -d '{
   "action": "block_user",
-  "user_id": "U#alice@acme.test", "node_id": "HN2#2ab9…"
+  "user_id": "U#alice@acme.test", "node_id": "HN2#102"
 }'
 
 # 5. ask for the effective capability at a descendant node
 curl -G "$BASE/query/effective_permission" \
   --data-urlencode "user=U#alice@acme.test" \
-  --data-urlencode "node=HN3#aa…"
+  --data-urlencode "node=HN3#1003"
 # → { "capability": null, "reason": "blocked" }
 ```
 
@@ -86,7 +88,7 @@ Request:
 ```json
 {
   "action": "add_node",
-  "parent_id": "HN1#0c5a...-...",
+  "parent_id": "HN1#11",
   "name": "Building A",
   "label": "building",
   "metadata": { "floor_count": 5 }
@@ -97,7 +99,7 @@ Fields:
 
 | field       | required        | notes                                                |
 |-------------|-----------------|------------------------------------------------------|
-| parent_id   | yes             | `HN<n>#<uuid>`                                       |
+| parent_id   | yes             | `HN<n>#<int>`                                        |
 | name        | yes             |                                                      |
 | label       | no              | if given, resolves the child level from the schema   |
 | level       | no              | `hn1` .. `hn9`; override the inferred level          |
@@ -117,9 +119,9 @@ Response — the newly created node:
 
 ```json
 {
-  "id": "HN3#aa...-...",
+  "id": "HN4#10044",
   "name": "Building A",
-  "parent": "HN1#0c5a...-...",
+  "parent": "HN1#11",
   "created": "2026-04-18T10:22:14Z",
   "metadata": { "floor_count": 5 }
 }
@@ -148,13 +150,13 @@ Response — the newly created node:
 ### delete_node
 
 ```json
-{ "action": "delete_node", "id": "HN3#aa...-..." }
+{ "action": "delete_node", "id": "HN4#10044" }
 ```
 
 Response:
 
 ```json
-{ "deleted": "HN3#aa...-..." }
+{ "deleted": "HN4#10044" }
 ```
 
 ### attach_sensor
@@ -165,34 +167,38 @@ in the owning `hn2`'s `schema.sensors`.
 ```json
 {
   "action": "attach_sensor",
-  "parent_id": "HN6#bb...-...",
+  "parent_id": "HN6#600",
   "daq_id": "meter-0042",
   "purpose": "electricity",
   "meter_type": "counter",
-  "unit": "kWh"
+  "unit": "kWh",
+  "binning": 15
 }
 ```
 
-| field       | required | notes                     |
-|-------------|----------|---------------------------|
-| parent_id   | yes      | `HN<n>#<uuid>`            |
-| daq_id      | yes      | data-acquisition id       |
-| purpose     | yes      |                           |
-| meter_type  | yes      | `counter` or `gauge`      |
-| unit        | no       |                           |
+| field       | required | notes                                              |
+|-------------|----------|----------------------------------------------------|
+| parent_id   | yes      | `HN<n>#<int>`                                      |
+| daq_id      | yes      | data-acquisition id                                |
+| purpose     | yes      |                                                    |
+| meter_type  | yes      | `counter` or `gauge`                               |
+| unit        | no       |                                                    |
+| binning     | no       | aggregation bin size in minutes, `> 0`; accepts an int or a numeric string |
 
-Response — the created sensor:
+Response — the created sensor (mirrors `Api_json.sensor_to_json`). `path` is
+the pipe-separated ancestry ending in the sensor id; `unit`/`binning` are
+`null` when unset:
 
 ```json
 {
-  "id": "S#ff08...-...",
+  "id": "S#42",
   "created": "2026-04-18T10:22:14Z",
-  "parent": "HN6#bb...-...",
   "daq_id": "meter-0042",
-  "hierarchy_path": "Partner/Company/.../Building A/...",
+  "path": "HN0#root|HN1#11|HN2#102|HN6#600|S#42",
   "purpose": "electricity",
   "meter_type": "counter",
-  "unit": "kWh"
+  "unit": "kWh",
+  "binning": 15
 }
 ```
 
@@ -205,7 +211,7 @@ a single `TransactWriteItems`.
 ```json
 {
   "action": "replace_sensor_device",
-  "sensor_id": "S#ff08...-...",
+  "sensor_id": "S#42",
   "daq_id": "meter-0099"
 }
 ```
@@ -302,14 +308,14 @@ every descendant of `node_id`.
 {
   "action": "block_user",
   "user_id": "U#alice@example.com",
-  "node_id": "HN4#bb...-..."
+  "node_id": "HN4#10044"
 }
 ```
 
 | field   | required | notes                        |
 |---------|----------|------------------------------|
 | user_id | yes      | `U#<email>`                  |
-| node_id | yes      | `HN<n>#<uuid>`               |
+| node_id | yes      | `HN<n>#<int>`                |
 
 Response:
 
@@ -326,9 +332,33 @@ returns `{"ok": true}`.
 {
   "action": "unblock_user",
   "user_id": "U#alice@example.com",
-  "node_id": "HN4#bb...-..."
+  "node_id": "HN4#10044"
 }
 ```
+
+```json
+{ "ok": true }
+```
+
+### grant_administrates
+
+Attach an `Administrates` (grant) edge from the user to the node. The grant
+covers `node_id` and every descendant, and is what the HTML/UI layer uses to
+decide tree visibility (`Access.has_admin_access`). The seeded admin holds a
+grant on `HN0#root`.
+
+```json
+{
+  "action": "grant_administrates",
+  "user_id": "U#alice@example.com",
+  "node_id": "HN2#102"
+}
+```
+
+| field   | required | notes                                  |
+|---------|----------|----------------------------------------|
+| user_id | yes      | `U#<email>`                            |
+| node_id | yes      | `HN<n>#<int>` (or `HN0#root`)          |
 
 ```json
 { "ok": true }
@@ -341,16 +371,16 @@ returns `{"ok": true}`.
 ### get_node
 
 ```
-GET /query/get_node?id=HN2%232ab951b2-e31c-4049-9dbb-ad82b196b901
+GET /query/get_node?id=HN2%23102
 ```
 
 Response:
 
 ```json
 {
-  "id": "HN2#2ab951b2-e31c-4049-9dbb-ad82b196b901",
+  "id": "HN2#102",
   "name": "Acme Co",
-  "parent": "HN1#0c5a...-...",
+  "parent": "HN1#11",
   "created": "2026-04-18T09:00:00Z",
   "metadata": {},
   "schema": { "version": 1, "edges": { ... }, "metadata": { ... }, "sensors": [ ... ] }
@@ -365,14 +395,14 @@ Default mode returns edge rows only — `{id, name}` per child, one DynamoDB
 `Query` call:
 
 ```
-GET /query/list_children?parent=HN2%232ab951b2-...&label=building
+GET /query/list_children?parent=HN2%23102&label=building
 ```
 
 ```json
 {
   "children": [
-    { "id": "HN3#aa...-...", "name": "Building A" },
-    { "id": "HN3#bb...-...", "name": "Building B" }
+    { "id": "HN3#1003", "name": "Building A" },
+    { "id": "HN3#1004", "name": "Building B" }
   ]
 }
 ```
@@ -381,16 +411,16 @@ Add `full=true` (or `full=1`) to dereference each edge into the full node —
 one extra `GetItem` per child:
 
 ```
-GET /query/list_children?parent=HN2%232ab951b2-...&label=building&full=true
+GET /query/list_children?parent=HN2%23102&label=building&full=true
 ```
 
 ```json
 {
   "children": [
     {
-      "id": "HN3#aa...-...",
+      "id": "HN3#1003",
       "name": "Building A",
-      "parent": "HN2#2ab951b2-...",
+      "parent": "HN2#102",
       "created": "2026-04-18T09:01:00Z",
       "metadata": { "floor_count": 5 }
     }
@@ -407,21 +437,21 @@ GET /query/list_children?parent=HN2%232ab951b2-...&label=building&full=true
 ### list_sensors
 
 ```
-GET /query/list_sensors?parent=HN6%23bb...-...
+GET /query/list_sensors?parent=HN6%23600
 ```
 
 ```json
 {
   "sensors": [
     {
-      "id": "S#ff08...-...",
+      "id": "S#42",
       "created": "2026-04-18T10:22:14Z",
-      "parent": "HN6#bb...-...",
       "daq_id": "meter-0042",
-      "hierarchy_path": "Partner/.../Building A/...",
+      "path": "HN0#root|HN1#11|HN2#102|HN6#600|S#42",
       "purpose": "electricity",
       "meter_type": "counter",
-      "unit": "kWh"
+      "unit": "kWh",
+      "binning": 15
     }
   ]
 }
@@ -430,7 +460,7 @@ GET /query/list_sensors?parent=HN6%23bb...-...
 ### get_sensor
 
 ```
-GET /query/get_sensor?id=S%23ff08...-...
+GET /query/get_sensor?id=S%2342
 ```
 
 Response — same shape as a single entry in `list_sensors`.
@@ -476,7 +506,7 @@ GET /query/list_blocked_nodes?user=U%23alice@example.com
 ```
 
 ```json
-{ "nodes": [ "HN4#bb...-...", "HN3#cc...-..." ] }
+{ "nodes": [ "HN4#10044", "HN3#1003" ] }
 ```
 
 ### list_blocked_users
@@ -484,7 +514,7 @@ GET /query/list_blocked_nodes?user=U%23alice@example.com
 Inverse of `list_blocked_nodes`: users directly blocked on the given node.
 
 ```
-GET /query/list_blocked_users?node=HN4%23bb...-...
+GET /query/list_blocked_users?node=HN4%2310044
 ```
 
 ```json
@@ -498,7 +528,7 @@ Resolves `(user, node)` through the block chain. Returns the user's
 ancestor. Capability group is a ceiling — enforcement is upstream.
 
 ```
-GET /query/effective_permission?user=U%23alice@example.com&node=HN4%23bb...-...
+GET /query/effective_permission?user=U%23alice@example.com&node=HN4%2310044
 ```
 
 Allowed:
@@ -516,4 +546,4 @@ Blocked:
 | param | required | notes              |
 |-------|----------|--------------------|
 | user  | yes      | `U#<email>`        |
-| node  | yes      | `HN<n>#<uuid>`     |
+| node  | yes      | `HN<n>#<int>`      |

@@ -107,9 +107,6 @@ let run (st : state) (f : unit -> 'a) : 'a =
           | Effects.Now () ->
               Some (fun (k : (a, _) continuation) ->
                 continue k (st.clock ()))
-          | Effects.Get_schema id ->
-              let schema = Option.bind (find_node st id) (fun n -> n.Node.schema) in
-              Some (fun k -> continue k schema)
           | Effects.List_children (parent, kind_opt) ->
               let matches = edge_matches st parent kind_opt in
               let children =

@@ -26,15 +26,15 @@ Onion, four layers plus a thin composition root. The core principle:
 lib/
   domain/                    # pure types — no effects, no IO
     level.ml                 # Hn0..Hn9 + depth
-    node_id.ml               # HN<n>#<uuid>
+    node_id.ml               # HN<n>#<int>  (root = literal HN0#root)
     node.ml                  # node record
     schema.ml                # edges + metadata + sensors + validate
     metadata.ml              # field_type, field_spec, value validator
-    sensor_id.ml             # S#<uuid>
+    sensor_id.ml             # S#<int>
     sensor_sk.ml             # active#<ts> / <ts> sort-key codec
     sensor.ml                # sensor record + meter_type
-    formula.ml               # AST + eval + referenced_uuids
-    edge_kind.ml             # Has_label | Has_sensor | Blocked + sk/gsi verbs
+    formula.ml               # AST + eval + referenced_ids (Sensor_id, not uuid)
+    edge_kind.ml             # Has_label | Has_sensor | Blocked | Administrates + sk/gsi verbs
     user_id.ml               # U#<email>
     user.ml                  # user record
     cognito_group.ml         # Reader | Writer | Admin (capability ceiling)
@@ -52,21 +52,28 @@ lib/
                              #   set_formula, evaluate
     users.ml                 # create, get, update, delete, list
     access.ml                # block, unblock, effective_permission,
-                             #   list_blocked_nodes, list_blocked_users
+                             #   list_blocked_nodes, list_blocked_users,
+                             #   grant_administrates, list_administrated_nodes,
+                             #   has_admin_access
 
   repo/                      # effect handlers
     memory.ml                # in-memory handler (tests)
     dynamo.ml                # smaws-clients / Eio handler
     codec.ml                 # node/edge/sensor <-> DynamoDB item maps
 
-  api/                       # CQRS dispatch + JSON envelope
+  api/                       # CQRS dispatch + JSON / HTML rendering
     api_command.ml           # POST /command dispatcher
-    api_query.ml             # GET  /query/<action> dispatcher
+    api_query.ml             # GET  /query/<action> dispatcher (JSON)
     api_json.ml              # API Gateway v2 envelope + error formatting
+    api_html.ml              # GET /hierarchy/query/* HTMX HTML fragments
+                             #   (pure-html eDSL; Hx.* attrs, auto-escaping)
+
+  handler.ml                 # HTTP routing: method+path -> command/query/html;
+                             #   form-urlencoded + base64 body decoding
 
 bin/
   main.ml                    # Lambda_runtime.start; Eio env + smaws client;
-                             #   Repo.Dynamo.run wraps Api dispatch
+                             #   Repo.Dynamo.run wraps Handler dispatch
 
 test/                        # pure + memory-handler tests (alcotest)
 itest/                       # real-table integration tests
@@ -76,7 +83,7 @@ itest/                       # real-table integration tests
 
 | Layer     | May depend on                      |
 |-----------|------------------------------------|
-| `domain`  | stdlib, `uuidm`, `ptime`, `yojson` |
+| `domain`  | stdlib, `ptime`, `yojson`          |
 | `effects` | `domain`                           |
 | `logic`   | `domain`, `effects`                |
 | `repo`    | `domain`, `effects`, `smaws-*`     |
@@ -106,23 +113,22 @@ type _ Effect.t +=
                        (Node_id.t * string) list Effect.t
   | Get_schema     : Node_id.t -> Schema.t option Effect.t
 
-  (* writes *)
-  | Put_node       : Node.t -> unit Effect.t
-  | Put_edge       : { from_   : string;
-                       to_     : string;
-                       kind    : Edge_kind.t;
-                       name    : string;
-                       created : Ptime.t } -> unit Effect.t
-  | Delete_node    : Node_id.t -> unit Effect.t
+  (* atomic add: allocate the next int id at [level] and write
+     node + parent edge + counter bump in one TransactWriteItems *)
+  | Add_node       : { level : Level.t;
+                       build : id:int -> Node.t * edge_spec }
+                       -> (Node.t, Errors.t) result Effect.t
 
-  (* determinism helpers *)
-  | Gen_uuid       : unit -> Uuidm.t Effect.t
+  | Put_node       : Node.t -> unit Effect.t   (* root + tests only *)
+  | Delete_node    : Node_id.t -> unit Effect.t
   | Now            : unit -> Ptime.t Effect.t
 
 (* sensor effects *)
 type _ Effect.t +=
-  | Put_sensor            : { sensor : Sensor.t; parent : Node_id.t }
-                              -> unit Effect.t
+  (* atomic add: allocate the next sensor int id and write the active row
+     + has_sensor edge + counter bump in one TransactWriteItems *)
+  | Add_sensor            : { build : id:int -> Sensor.t * edge_spec }
+                              -> (Sensor.t, Errors.t) result Effect.t
   | Get_active_sensor     : Sensor_id.t -> Sensor.t option Effect.t
   | List_sensor_ids       : Node_id.t -> Sensor_id.t list Effect.t
   | Replace_sensor_device : { old_created : Ptime.t; new_sensor : Sensor.t }
@@ -138,21 +144,29 @@ type _ Effect.t +=
   | List_users  : unit -> User.t list Effect.t
   | Delete_user : User_id.t -> unit Effect.t
 
-(* permission / edge-admin effects *)
+(* edge / permission effects *)
 type _ Effect.t +=
-  | List_blocked_nodes : User_id.t -> Node_id.t list Effect.t
-  | List_blocked_users : Node_id.t -> User_id.t list Effect.t
-  | Delete_edge        : { from_ : string; to_ : string; kind : Edge_kind.t }
-                          -> unit Effect.t
+  | Put_edge                 : edge_spec -> unit Effect.t
+  | List_blocked_nodes       : User_id.t -> Node_id.t list Effect.t
+  | List_blocked_users       : Node_id.t -> User_id.t list Effect.t
+  | List_administrated_nodes : User_id.t -> Node_id.t list Effect.t
+  | Delete_edge              : { from_ : string; to_ : string; kind : Edge_kind.t }
+                                -> unit Effect.t
 ```
 
-`Put_edge` carries the edge `name`. This is denormalized onto the edge row so
-that `list_child_refs` can return `(id, name)` from a single `Query` without
+`edge_spec` is a record (`{ from_; to_; kind; name; created; self_path }`)
+carried by both `Add_node`/`Add_sensor` (the edge written alongside the new
+vertex) and the standalone `Put_edge`. The edge `name` is denormalized onto
+the row so `list_child_refs` returns `(id, name)` from a single `Query` without
 N round-trips. `kind : Edge_kind.t` (not a free-form string) supplies both the
 forward `sk` verb and the inverse GSI1 verb — see `lib/domain/edge_kind.ml`.
 
-`Put_sensor` atomically writes both the active sensor row and the parent's
-sensor edge row — see `docs/hierarchy-and-sensors.md` §5.3.
+There is **no** `Gen_uuid` effect: ids are integers allocated by a monotonic
+`count#…` counter row bumped inside the same transaction as the vertex
+(`Add_node` / `Add_sensor`). `Put_node` is reserved for the root and tests.
+
+`Add_sensor` atomically writes both the active sensor row and the parent's
+`has_sensor` edge row — see `docs/hierarchy-and-sensors.md` §5.3.
 
 `Replace_sensor_device` atomically deletes the old `active#…` row, re-puts it
 under a plain timestamp (history), and puts the new `active#…` row — see §5.4.
@@ -167,9 +181,11 @@ for the single top-level handler wiring.
 
 ## 4. Storage model
 
-Single DynamoDB table, four item shapes distinguished by the `sk` prefix and a
-`type` attribute — `node`, `edge`, `sensor`, `user`. `GSI1` inverts edges so
-"who points at Y" is one query for any edge kind (hierarchy, sensor, or block).
+Single DynamoDB table, five item shapes distinguished by the `type` attribute
+(and `sk` shape) — `node`, `edge`, `sensor`, `user`, `counter`. `GSI1` inverts
+edges so "who points at Y" is one query for any edge kind (hierarchy, sensor,
+or block). `counter` rows (`pk = count#HN<n>` / `count#S`, `sk = count`) hold
+the monotonic `n` allocator and `live` cardinality per level.
 
 ```
 Table: hierarchy_new  (or $ITEST_DYNAMO_TABLE)
@@ -184,9 +200,12 @@ Vertex, edge, and sensor row shapes are documented in
 `docs/hierarchy-and-sensors.md` §6. Key distinctions from the original spec:
 
 - Edges carry the child **name** (for lazy listing).
-- Sensor rows live in their own `S#<uuid>` partition; there is no generic
+- Sensor rows live in their own `S#<int>` partition; there is no generic
   vertex row for a sensor.
 - `Level` is derived from `pk` and not stored as a separate attribute.
+- node/user rows use `sk == pk` (no literal `"node"`/`"user"` sort key); a
+  sensor's history row uses a bare RFC3339 `sk`, only the active row carries
+  the `active#` prefix.
 
 ## 5. Validation flow for `add_node`
 
@@ -211,9 +230,12 @@ Input: `{ parent_id; level?; label?; name; metadata; schema? }`.
       constraint checks. All failures collected, not just the first.
    d. `list_children` (filtered by `has_<label>#`) to count existing. Enforce
       `max` cardinality.
-5. `perform Gen_uuid` → child uuid. `perform Now` → created.
-6. `perform Put_node child` + `perform Put_edge { from_; to_; label; name }`.
-   The Dynamo handler batches these into a single `TransactWriteItems`.
+5. `perform Now` → created.
+6. `perform Add_node { level; build }`. The handler allocates the next int id
+   from the `count#HN<n>` counter and writes the node row, the parent
+   `has_<label>` edge row, and the counter bump in a single
+   `TransactWriteItems` (conditional on the counter, so concurrent adds retry
+   rather than collide). `build ~id` constructs the `Node.t` + `edge_spec`.
 7. Return the new node.
 
 ## 5.1 Walking a request — `create_user`
@@ -267,6 +289,7 @@ POST /command
 { "action": "delete_user",           … }
 { "action": "block_user",            … }
 { "action": "unblock_user",          … }
+{ "action": "grant_administrates",   … }
 ```
 
 ### Queries
@@ -341,71 +364,69 @@ type t = {
 }
 ```
 
-`User_id.t` is `U#<email>`; the uuid-ish opaque id used for nodes and sensors
+`User_id.t` is `U#<email>`; the integer id scheme used for nodes and sensors
 does not apply here — the email itself is the logical identity.
 
 ### Capability ceiling — upstream enforcement
 
 `Cognito_group.t = Reader | Writer | Admin`. These are **overarching
-buckets** — an aspirational capability ceiling, not an actual enforcement
-mechanism. The groups are not yet wired to per-node behavior; at the
-DynamoDB level the only edges that modify access today are `Blocked`.
-Upstream (the frontend and the API Gateway Cognito authorizer) decides
-what the caller is allowed to do; this Lambda stores the group and
-reports it back. `admin > writer > reader` by `Cognito_group.rank`, and
-any future per-node role grants will take the same edge-based shape as
-`Blocked` does today.
+buckets** — a capability ceiling, not a per-node enforcement mechanism.
+`admin > writer > reader` by `Cognito_group.rank`. Upstream (the frontend and
+the API Gateway Cognito authorizer) decides what the caller may do; this
+Lambda stores the group and reports it back via `effective_permission`.
 
 ### Permission edges
 
-Two edge families point from a user row into the hierarchy: **grant
-edges** (positive, per-node role) and **block edges** (negative,
-per-node carve-out). Both share the single-table shape; they differ
-only in the verb embedded in `sk` / `gsi1sk`.
+Two edge families point from a user row into the hierarchy, both sharing the
+single-table shape and differing only in the verb embedded in `sk` / `gsi1sk`:
 
-**Grant edges — planned, one per cognito tier:**
+**Administrates (grant) edges — live.** Written by the `grant_administrates`
+command (`Access.grant_administrates`), read by `Access.list_administrated_nodes`:
 
-| Role          | `pk`          | `sk`                          | `gsi1pk`    | `gsi1sk`                          |
-|---------------|---------------|-------------------------------|-------------|-----------------------------------|
-| admin-level   | `U#<email>`   | `administrates#HN<n>#<uuid>`  | `<node_id>` | `administrators#U#<email>`        |
-| writer-level  | `U#<email>`   | `writes#HN<n>#<uuid>`         | `<node_id>` | `writers#U#<email>`               |
-| reader-level  | `U#<email>`   | `reads#HN<n>#<uuid>`          | `<node_id>` | `readers#U#<email>`               |
+| Attribute | Value                                              |
+|-----------|----------------------------------------------------|
+| `pk`      | `U#<email>`                                        |
+| `sk`      | `administrates#<node_id>`  (`sk_verb Administrates`)|
+| `gsi1pk`  | `<node_id>`                                        |
+| `gsi1sk`  | `administrators#<user_id>` (`gsi_verb Administrates`)|
 
-The three forward verbs (`administrates` / `writes` / `reads`) line up
-with `Cognito_group.t = Admin | Writer | Reader`. A grant on an
-ancestor propagates down through the subtree the same way a block
-does: `effective_permission` returns the role from the nearest
-granting ancestor on the walk.
+**Block edges — live.** Written by `block_user`, removed by `unblock_user`:
 
-**Block edges — live today:**
+| Attribute | Value                                              |
+|-----------|----------------------------------------------------|
+| `pk`      | `U#<email>`                                        |
+| `sk`      | `blocked#<node_id>`        (`sk_verb Blocked`)      |
+| `gsi1pk`  | `<node_id>`                                        |
+| `gsi1sk`  | `blocks#<user_id>`         (`gsi_verb Blocked`)     |
 
-| Attribute | Value                                               |
-|-----------|-----------------------------------------------------|
-| `pk`      | `U#<email>`                                         |
-| `sk`      | `Edge_kind.sk_verb Blocked ^ "#" ^ <node_id>`       |
-| `gsi1pk` | `<node_id>`                                          |
-| `gsi1sk` | `Edge_kind.gsi_verb Blocked ^ "#" ^ <user_id>`       |
+`Edge_kind.t = Has_label of string | Has_sensor | Blocked | Administrates`.
+There is no `Writes`/`Reads` edge kind — `Cognito_group` is the only
+writer/reader distinction and it lives on the user row, not on edges.
 
-`sk_verb Blocked = "blocked"`, `gsi_verb Blocked = "blocks"`. Default
-is **allow**: any user touches everything not transitively blocked.
-Blocking an ancestor propagates down — every descendant is blocked
-too.
+### Two evaluation paths
 
-Today `Edge_kind.t = Has_label | Has_sensor | Blocked`; the three
-grant variants (`Administrates | Writes | Reads`) are the
-designed-but-not-yet-built extension. When they land, the only
-additions are three cases in `Edge_kind` and a small rewrite of
-`Access.effective_permission` to pick up the nearest-ancestor grant
-on the walk.
+Grants and blocks are consumed by **two separate** mechanisms today:
 
-#### Worked example — company access with a carve-out
+1. **Visibility (UI), grant-driven** — `Access.has_admin_access ~user_id
+   ~node_id` is true iff the user has an `Administrates` edge to `node_id`
+   or any ancestor (including `HN0#root`). `api_html.render_nodes` returns an
+   empty body when the caller has no user param or no grant on the requested
+   parent/ancestors, so a no-grant user sees an empty tree. The seeded admin
+   has an `Administrates` grant on `HN0#root`, which makes the whole tree
+   visible.
+2. **Block checks, block-driven** — `Access.effective_permission` walks the
+   node + ancestors (read once from the stored path) and returns `Ok None`
+   if any is blocked, else `Ok (Some cognito_group)`. It does **not** consult
+   `Administrates` grants — the capability it returns on an allowed node is
+   the user's global `cognito_group`.
 
-Alice is granted `admin` on Acme Co — a per-node role grant on the
-company node. That grant propagates down through the subtree, so she
-can touch every descendant. Building B houses a top-secret research
-lab only a few people are cleared for; a `Blocked` edge on **that
-one building** carves its subtree back out of her reach without
-disturbing anything else.
+#### Worked example — visibility grant with a block carve-out
+
+Alice has an `Administrates` grant on Acme Co (a per-node grant on the company
+node). `has_admin_access` therefore returns true for Acme Co and every
+descendant, so the whole subtree renders for her. A `Blocked` edge on Building
+B carves that one subtree out of `effective_permission` without disturbing the
+rest.
 
 ```mermaid
 graph TD
@@ -419,33 +440,25 @@ graph TD
   U -.->|blocked| B2
 ```
 
-Two edges, two directions. The thick `administrates` edge from Alice
-to Acme Co is a **grant** (`pk=U#alice@acme.test,
-sk=administrates#HN2#<acme-uuid>`); the dashed edge onto Building B
-is a **revocation** that shadows it. `Access.effective_permission`
-walks from the target node up through `parent` refs: the first
-matching block on the chain wins; otherwise the nearest granting
-ancestor's role is returned.
+The thick `administrates` edge (`pk=U#alice@acme.test,
+sk=administrates#HN2#<acme-int-id>`) grants visibility; the dashed `blocked`
+edge on Building B shadows it for block checks. `effective_permission` walks
+from the target up the stored path; the first matching block wins:
 
-| Target node              | Ancestors walked          | Result                                        |
+| Target node              | Ancestors walked          | `effective_permission`                        |
 |--------------------------|---------------------------|-----------------------------------------------|
-| `Acme Co`                | —                         | `{"capability": "admin"}`                     |
-| `HQ`                     | Acme Co                   | `{"capability": "admin"}`                     |
-| `Building A`             | HQ, Acme Co               | `{"capability": "admin"}`                     |
+| `Acme Co`                | —                         | `{"capability": "<alice's group>"}`           |
+| `Building A`             | HQ, Acme Co               | `{"capability": "<alice's group>"}`           |
 | `Building B`             | HQ, Acme Co               | `{"capability": null, "reason": "blocked"}`   |
 | `Floor 1` (under B)      | Building B, HQ, Acme Co   | `{"capability": null, "reason": "blocked"}`   |
 
-The floor inherits the block from its ancestor, and the grant
-likewise inherits from Acme Co — there is no need to rewrite either
-on every descendant. One `unblock_user` on Building B restores access
-to the subtree atomically.
+The floor inherits the block from its ancestor. One `unblock_user` on Building
+B restores the subtree atomically.
 
-**Status.** Only the `Blocked` half of this picture is live in code
-today (`Edge_kind.t = Has_label | Has_sensor | Blocked`); the capability
-returned on an allowed node is the user's global `cognito_group`. The
-per-node role grant — the thick `admin` edge in the diagram — is the
-designed-but-not-yet-built next step, shaped identically to a block
-edge and evaluated along the same ancestor walk.
+**Status.** Both `Administrates` (visibility) and `Blocked` are live. What is
+*not* built: folding grants into `effective_permission` so the returned
+capability reflects a per-node role rather than the user's global
+`cognito_group`. That remains a drop-in behind the single function below.
 
 ### `Access.effective_permission` — the delegation point
 
@@ -513,11 +526,13 @@ Non-transactional today.
 
 ## 11. Deploy
 
-- `make build` — Docker-driven static-pie musl arm64 build, output
-  `ocaml-lambda-hierarchy.zip`.
+- `make build` — Docker-driven static **x86_64** musl build (Alpine, `-static
+  -no-pie`; PROVIDED_AL2023), output `ocaml-lambda-hierarchy.zip`.
 - `make build-local` — host-arch development build.
-- Deploy:
-  `aws lambda update-function-code --function-name <fn> --zip-file fileb://ocaml-lambda-hierarchy.zip --region eu-central-1`.
+- Deploy: normally `cd infra/hierarchy && cdk deploy` (CDK owns the function,
+  API Gateway, DynamoDB stream + cross-account bridge). For a code-only push:
+  `aws lambda update-function-code --function-name ocaml-lambda-hierarchy --zip-file fileb://ocaml-lambda-hierarchy.zip --region eu-central-1`.
 
-The production HTTP API Gateway (`vp9p5wrn6f`) routes `POST /command` and
-`GET /query/{action}` to a Lambda function running this binary.
+The production HTTP API Gateway (`doztw28ic6`) routes `POST /command`,
+`GET /query/{action}`, and `/hierarchy/{proxy+}` to the Lambda running this
+binary.

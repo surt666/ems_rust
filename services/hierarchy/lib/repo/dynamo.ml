@@ -267,7 +267,7 @@ let query_children cfg parent kind_opt =
     (fun kvs ->
       match (List.assoc_opt "sk" kvs : Dyn.attribute_value option) with
       | Some (Dyn.S sk)
-        when not (String.length sk >= 11 && String.sub sk 0 11 = "has_sensor#") ->
+        when not (String.starts_with ~prefix:"has_sensor#" sk) ->
           (match child_id_from_edge_sk sk with
            | None -> None
            | Some child_s ->
@@ -437,9 +437,7 @@ let delete_subtree cfg id =
           match (List.assoc_opt "type" kvs : Dyn.attribute_value option),
                 (List.assoc_opt "sk" kvs : Dyn.attribute_value option) with
           | Some (Dyn.S "sensor"), Some (Dyn.S sk)
-            when String.length sk > String.length active_sk_prefix
-                 && String.sub sk 0 (String.length active_sk_prefix)
-                    = active_sk_prefix ->
+            when String.starts_with ~prefix:active_sk_prefix sk ->
               incr sensor_count
           | _ -> ())
         sensor_rows;
@@ -498,8 +496,7 @@ let query_sensor_ids cfg parent =
           match (List.assoc_opt "sk" kvs : Dyn.attribute_value option) with
           | Some (Dyn.S sk) ->
               let plen = String.length has_sensor_sk_prefix in
-              if String.length sk > plen
-                 && String.sub sk 0 plen = has_sensor_sk_prefix
+              if String.starts_with ~prefix:has_sensor_sk_prefix sk
               then
                 let rest = String.sub sk plen (String.length sk - plen) in
                 (match Sensor_id.of_string rest with
@@ -660,8 +657,7 @@ let query_blocked_nodes cfg (user_id : User_id.t) =
           match (List.assoc_opt "sk" kvs : Dyn.attribute_value option) with
           | Some (Dyn.S sk) ->
               let plen = String.length prefix in
-              if String.length sk > plen
-                 && String.sub sk 0 plen = prefix
+              if String.starts_with ~prefix sk
               then
                 let rest = String.sub sk plen (String.length sk - plen) in
                 (match Node_id.of_string rest with
@@ -690,8 +686,7 @@ let query_administrated_nodes cfg (user_id : User_id.t) =
           match (List.assoc_opt "sk" kvs : Dyn.attribute_value option) with
           | Some (Dyn.S sk) ->
               let plen = String.length prefix in
-              if String.length sk > plen
-                 && String.sub sk 0 plen = prefix
+              if String.starts_with ~prefix sk
               then
                 let rest = String.sub sk plen (String.length sk - plen) in
                 (match Node_id.of_string rest with
@@ -751,13 +746,6 @@ let run (cfg : cfg) (f : unit -> 'a) : 'a =
               Some (fun (k : (a, _) continuation) -> continue k (Ptime_clock.now ()))
           | Effects.Get_node id ->
               Some (fun (k : (a, _) continuation) -> continue k (get_item cfg id))
-          | Effects.Get_schema id ->
-              let schema_opt =
-                match get_item cfg id with
-                | Some n -> n.Node.schema
-                | None -> None
-              in
-              Some (fun (k : (a, _) continuation) -> continue k schema_opt)
           | Effects.List_children (parent, kind_opt) ->
               Some (fun (k : (a, _) continuation) ->
                 continue k (query_children cfg parent kind_opt))

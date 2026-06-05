@@ -16,10 +16,9 @@ let parse_ts s =
   | Error _ -> Error (Printf.sprintf "bad timestamp %S" s)
 
 let of_string s =
-  let len = String.length s in
   let plen = String.length active_prefix in
-  if len > plen && String.sub s 0 plen = active_prefix then
-    let rest = String.sub s plen (len - plen) in
+  if String.starts_with ~prefix:active_prefix s then
+    let rest = String.sub s plen (String.length s - plen) in
     match parse_ts rest with
     | Ok t -> Ok (Active t)
     | Error e -> Error e
