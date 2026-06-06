@@ -263,6 +263,81 @@ let node_to_json (n : Node.t) : Yojson.Safe.t =
   in
   `Assoc with_schema
 
+let formula_to_json (f : Formula.t) : Yojson.Safe.t =
+  match f with
+  | Formula.Identity -> `Assoc [ ("kind", `String "identity") ]
+  | Formula.Zero -> `Assoc [ ("kind", `String "zero") ]
+  | Formula.Expr { ast; refs } ->
+      `Assoc [
+        ("kind", `String "expr");
+        ("expr", `String (Formula.expr_to_string ast));
+        ("refs", `Assoc (List.map
+                  (fun (a, id) -> (a, `String (Sensor_id.to_string id))) refs));
+      ]
+
+let parse_refs_json (v : Yojson.Safe.t) : ((string * Sensor_id.t) list, string) result =
+  let* kvs =
+    match v with
+    | `Assoc kvs -> Ok kvs
+    | `Null -> Ok []
+    | `String s ->
+        (match Yojson.Safe.from_string s with
+         | `Assoc kvs -> Ok kvs
+         | _ -> Error "formula.refs string must encode a JSON object"
+         | exception _ -> Error "formula.refs is not valid JSON")
+    | _ -> Error "formula.refs must be an object"
+  in
+  List.fold_left
+    (fun acc (alias, idv) ->
+      let* acc = acc in
+      match idv with
+      | `String s ->
+          (match Sensor_id.of_string s with
+           | Ok id -> Ok ((alias, id) :: acc)
+           | Error e -> Error (Printf.sprintf "bad sensor id for alias %S: %s" alias e))
+      | _ -> Error (Printf.sprintf "ref for alias %S must be a string sensor id" alias))
+    (Ok []) kvs
+  |> Result.map List.rev
+
+let formula_of_json (v : Yojson.Safe.t option) : (Formula.t, string) result =
+  match v with
+  | None | Some `Null -> Ok Formula.Identity
+  | Some (`String "identity") -> Ok Formula.Identity
+  | Some (`String "zero") -> Ok Formula.Zero
+  | Some (`Assoc _ as obj) ->
+      let kind =
+        match Yojson.Safe.Util.member "kind" obj with `String k -> Some k | _ -> None
+      in
+      let has_expr =
+        match Yojson.Safe.Util.member "expr" obj with `String _ -> true | _ -> false
+      in
+      let want_expr = kind = Some "expr" || (kind = None && has_expr) in
+      (match kind with
+       | Some "identity" -> Ok Formula.Identity
+       | Some "zero" -> Ok Formula.Zero
+       | _ when want_expr ->
+           let* expr_s =
+             match Yojson.Safe.Util.member "expr" obj with
+             | `String s -> Ok s
+             | _ -> Error "formula.expr must be a string"
+           in
+           let* ast = Formula_parser.parse expr_s in
+           let* refs = parse_refs_json (Yojson.Safe.Util.member "refs" obj) in
+           let aliases = Formula.expr_aliases ast in
+           let* () =
+             match List.find_opt (fun a -> not (List.mem_assoc a refs)) aliases with
+             | Some a -> Error (Printf.sprintf "formula references unbound alias %S" a)
+             | None -> Ok ()
+           in
+           let* () =
+             match List.find_opt (fun (a, _) -> not (List.mem a aliases)) refs with
+             | Some (a, _) -> Error (Printf.sprintf "formula.refs has unused alias %S" a)
+             | None -> Ok ()
+           in
+           Ok (Formula.Expr { ast; refs })
+       | _ -> Error "formula object must have a \"kind\" field (identity|zero|expr)")
+  | Some _ -> Error "formula must be an object or string"
+
 let sensor_to_json (s : Sensor.t) : Yojson.Safe.t =
   let unit_json = match s.unit with Some u -> `String u | None -> `Null in
   let resample_json = match s.resample_minutes with Some b -> `Int b | None -> `Null in
@@ -275,6 +350,7 @@ let sensor_to_json (s : Sensor.t) : Yojson.Safe.t =
     ("meter_type", `String (Sensor.meter_type_to_string s.meter_type));
     ("unit",       unit_json);
     ("resample_minutes", resample_json);
+    ("formula",    formula_to_json s.formula);
   ]
 
 let user_to_json (u : User.t) : Yojson.Safe.t =
