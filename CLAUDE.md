@@ -2,11 +2,14 @@
 
 Project-level guidance for working in `ems_ocaml`. Read before building/deploying.
 
-## Branching
+## Branching & pushing
 
 Work directly on `main`. Don't spin up feature/temporary branches by default — `main`
-is the single source of truth and production deploys from it. When finishing work, fold
-it into `main` and push, rather than leaving a branch/PR open (unless explicitly asked).
+is the single source of truth and production deploys from it.
+
+**Do not `git push`.** Commit to `main` locally, but leave pushing to the remote to the
+user — they decide when `main` is published. Never run `git push` (or delete/replace remote
+refs) unless the user explicitly asks for it in the moment.
 
 ## Deployment policy
 
