@@ -103,6 +103,18 @@ let collect_refs_of_expr () =
   Alcotest.(check int) "two" 2 (List.length xs);
   Alcotest.(check (list int)) "set equal" [ 10001; 10002 ] xs
 
+let expr_aliases_distinct_in_order () =
+  let open Ocaml_lambda_hierarchy.Formula in
+  let e = Abs (Sub (Sub (Self, Ref "a"), Add (Ref "b", Ref "a"))) in
+  Alcotest.(check (list string)) "distinct aliases, first-seen order"
+    [ "a"; "b" ] (expr_aliases e)
+
+let to_string_renders_minimal_parens () =
+  let open Ocaml_lambda_hierarchy.Formula in
+  let e = Abs (Sub (Sub (Self, Ref "a"), Ref "b")) in
+  Alcotest.(check string) "renders with minimal parens"
+    "abs(self - a - b)" (expr_to_string e)
+
 let tests =
   [
     Alcotest.test_case "Identity constructs"    `Quick identity_constructs;
@@ -118,4 +130,6 @@ let tests =
     Alcotest.test_case "referenced_ids expr"         `Quick collect_refs_of_expr;
     Alcotest.test_case "eval Zero = 0"               `Quick eval_zero_returns_zero;
     Alcotest.test_case "referenced_ids zero"         `Quick referenced_ids_zero_empty;
+    Alcotest.test_case "expr_aliases distinct/in order" `Quick expr_aliases_distinct_in_order;
+    Alcotest.test_case "expr_to_string renders minimal parens" `Quick to_string_renders_minimal_parens;
   ]
