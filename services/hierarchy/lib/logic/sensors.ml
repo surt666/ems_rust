@@ -140,6 +140,33 @@ let set_formula ~sensor_id ~formula () =
     ~old_created:old.Sensor.created ~new_sensor;
   Ok new_sensor
 
+(* Prefix of [path] up to and including its HN2 (company) segment, with a
+   trailing path separator so "HN2#1|" does not also match "HN2#10|...".
+   None when the path has no HN2 ancestor. *)
+let company_prefix_of_path path =
+  let segs = String.split_on_char '|' path in
+  let rec take acc = function
+    | [] -> None
+    | seg :: rest ->
+        let acc = seg :: acc in
+        (* acc holds segments in reverse; stop at the first (outermost) HN2 *)
+        (match Node_id.of_string seg with
+         | Ok nid when Node_id.level nid = Level.Hn2 ->
+             Some (String.concat "|" (List.rev acc) ^ "|")
+         | _ -> take acc rest)
+  in
+  take [] segs
+
+(* Active sensors in the same HN2 company subtree as [parent]. Used to populate
+   the formula reference picker. *)
+let list_under_company ~parent =
+  match Effects.get_node parent with
+  | None -> Error (Errors.Not_found parent)
+  | Some n ->
+      (match company_prefix_of_path n.Node.path with
+       | None -> Ok []
+       | Some prefix -> Ok (Effects.list_sensors_under_path prefix))
+
 let rec evaluate id =
   let* s = get_active id in
   let reading () =

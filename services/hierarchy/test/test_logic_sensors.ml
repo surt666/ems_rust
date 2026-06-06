@@ -273,6 +273,37 @@ let evaluate_zero_short_circuits_reading () =
     | Ok v -> Alcotest.(check (float 0.0)) "0" 0.0 v
     | Error e -> Alcotest.failf "eval: %s" (Errors.message e))
 
+let list_under_company_scopes_to_hn2 () =
+  let st = Memory.empty () in
+  let seed (s : Sensor.t) =
+    Memory.run st (fun () ->
+      Effects.add_sensor ~build:(fun ~id:_ ->
+        (s, { Effects.from_ = "HN0#root"; to_ = Sensor_id.to_string s.Sensor.id;
+              kind = Edge_kind.Has_sensor; name = ""; created = Ptime.epoch;
+              self_path = Some s.Sensor.path }))
+      |> Result.get_ok |> ignore)
+  in
+  let mk id path = Sensor.{
+    id = Sensor_id.make id; created = Ptime.epoch; daq_id = Printf.sprintf "d%d" id;
+    path; purpose = "E"; meter_type = Sensor.Counter; unit = None;
+    formula = Formula.Identity; resample_minutes = None } in
+  seed (mk 1 "HN0#root|HN1#10|HN2#200|HN3#1|S#1");
+  seed (mk 2 "HN0#root|HN1#10|HN2#999|HN3#9|S#2");
+  let parent = Node_id.make Level.Hn3 1 in
+  Memory.run st (fun () ->
+    Effects.put_node (Node.make ~id:1 ~level:Level.Hn3 ~name:"b"
+      ~parent:(Node_id.make Level.Hn2 200)
+      ~parent_path:"HN0#root|HN1#10|HN2#200" ~created:Ptime.epoch
+      ~metadata:(`Assoc []) ~schema:None));
+  let got =
+    Memory.run st (fun () ->
+      match Sensors.list_under_company ~parent with Ok xs -> xs | Error _ -> [])
+  in
+  Alcotest.(check int) "only company HN2#200 sensors" 1 (List.length got);
+  Alcotest.(check bool) "all results are under HN2#200" true
+    (List.for_all (fun (s : Sensor.t) ->
+       String.starts_with ~prefix:"HN0#root|HN1#10|HN2#200|" s.Sensor.path) got)
+
 let tests =
   [
     Alcotest.test_case "attach happy path"       `Quick attach_happy;
@@ -288,4 +319,5 @@ let tests =
     Alcotest.test_case "evaluate composite" `Quick evaluate_composite;
     Alcotest.test_case "evaluate Zero short-circuits reading" `Quick
       evaluate_zero_short_circuits_reading;
+    Alcotest.test_case "list_under_company scopes to HN2" `Quick list_under_company_scopes_to_hn2;
   ]
