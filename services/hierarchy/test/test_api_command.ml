@@ -1,5 +1,10 @@
 open Ocaml_lambda_hierarchy
 
+let contains hay needle =
+  let nh = String.length needle and hh = String.length hay in
+  let rec go i = i + nh <= hh && (String.sub hay i nh = needle || go (i + 1)) in
+  nh = 0 || go 0
+
 let seed () =
   let st = Memory.empty () in
   let c2 = Node_id.make Level.Hn2 10002 in
@@ -256,12 +261,37 @@ let attach_sensor_unbound_alias_400 () =
     let status = Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int) in
     Alcotest.(check int) "400 on unbound alias" 400 status;
     let body = Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "body" |> to_string) in
-    let contains hay needle =
-      let nh = String.length needle and hh = String.length hay in
-      let rec go i = i + nh <= hh && (String.sub hay i nh = needle || go (i + 1)) in
-      nh = 0 || go 0
-    in
     Alcotest.(check bool) "mentions unbound alias" true (contains body "unbound alias"))
+
+let company_sensors_fragment_lists_options () =
+  let st = Memory.empty () in
+  let bldg = seed_building st in
+  let sid =
+    Memory.run st (fun () ->
+      let resp = Api_command.dispatch ~body:(Printf.sprintf
+        {|{"action":"attach_sensor","parent_id":%S,"daq_id":"daq:opt","purpose":"Electricity","meter_type":"counter"}|}
+        (Node_id.to_string bldg)) in
+      Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "body" |> to_string
+        |> Yojson.Safe.from_string |> member "id" |> to_string))
+  in
+  let bldg_path =
+    Memory.run st (fun () ->
+      match Effects.get_node bldg with Some n -> n.Node.path | None -> "")
+  in
+  let resp =
+    Memory.run st (fun () ->
+      Api_html.dispatch ~action:"company_sensors" ~params:[ ("nodepath", bldg_path) ])
+  in
+  let body = Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "body" |> to_string) in
+  Alcotest.(check bool) "fragment renders an option" true (contains body "<option");
+  Alcotest.(check bool) "fragment lists the company sensor by id" true (contains body sid)
+
+let company_sensors_missing_nodepath_400 () =
+  let resp =
+    Memory.run (Memory.empty ()) (fun () ->
+      Api_html.dispatch ~action:"company_sensors" ~params:[]) in
+  let status = Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int) in
+  Alcotest.(check int) "400 when nodepath missing" 400 status
 
 let tests =
   [
@@ -276,4 +306,6 @@ let tests =
     Alcotest.test_case "delete_user roundtrip" `Quick delete_user_roundtrip;
     Alcotest.test_case "block_user happy" `Quick block_user_happy;
     Alcotest.test_case "unblock_user roundtrip" `Quick unblock_user_roundtrip;
+    Alcotest.test_case "company_sensors fragment lists options" `Quick company_sensors_fragment_lists_options;
+    Alcotest.test_case "company_sensors missing nodepath -> 400" `Quick company_sensors_missing_nodepath_400;
   ]

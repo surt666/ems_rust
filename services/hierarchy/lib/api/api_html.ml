@@ -517,6 +517,22 @@ let render_node ~params =
                 in
                 respond html))
 
+(* Extract the last "HN{n}#<id>" segment of a pipe-separated node path.
+   The path is the full ancestor chain; the leaf is the rightmost "HN…" segment.
+   When no '#' is present the path is already a bare node-id string. *)
+let leaf_node_id (nodepath : string) : string =
+  match String.rindex_opt nodepath '#' with
+  | None -> nodepath
+  | Some _ ->
+      let rec go i =
+        if i < 0 then nodepath
+        else match nodepath.[i] with
+          | 'H' when i + 1 < String.length nodepath && nodepath.[i + 1] = 'N' ->
+              String.sub nodepath i (String.length nodepath - i)
+          | _ -> go (i - 1)
+      in
+      go (String.length nodepath - 1)
+
 (* /hierarchy/query/sensors?nodepath=<path> *)
 let render_sensors ~params =
   match List.assoc_opt "nodepath" params with
@@ -524,21 +540,7 @@ let render_sensors ~params =
   | Some nodepath ->
       (* nodepath is the concatenated hierarchy path; the leaf id is the last
          "HN{n}#..." segment. *)
-      let last =
-        match String.rindex_opt nodepath '#' with
-        | Some _ ->
-            let rec last_node_id i =
-              if i < 0 then nodepath
-              else
-                match nodepath.[i] with
-                | 'H' when i + 1 < String.length nodepath
-                           && nodepath.[i + 1] = 'N' ->
-                    String.sub nodepath i (String.length nodepath - i)
-                | _ -> last_node_id (i - 1)
-            in
-            last_node_id (String.length nodepath - 1)
-        | None -> nodepath
-      in
+      let last = leaf_node_id nodepath in
       (match Node_id.of_string last with
        | Error e -> respond_error e
        | Ok nid ->
@@ -558,6 +560,32 @@ let render_sensors ~params =
                       [ txt "%s (%s)" s.Sensor.daq_id s.Sensor.purpose ]) ss
                 in
                 respond (null items)))
+
+(* /hierarchy/query/company_sensors?nodepath=<path>
+   <option> list of active sensors in the parent's HN2 company subtree,
+   for the formula reference picker. *)
+let render_company_sensors ~params =
+  match List.assoc_opt "nodepath" params with
+  | None -> respond_error "missing nodepath"
+  | Some nodepath ->
+      let last = leaf_node_id nodepath in
+      (match Node_id.of_string last with
+       | Error e -> respond_error e
+       | Ok nid ->
+           (match Sensors.list_under_company ~parent:nid with
+            | Error err ->
+                respond_error ~status:(Errors.http_status err) (Errors.message err)
+            (* This fragment is a hidden <option> source the form clones into
+               each reference row, so an empty company correctly yields no
+               options (unlike render_sensors which shows a "none" message). *)
+            | Ok ss ->
+                let opts =
+                  List.map (fun (s : Sensor.t) ->
+                    option [ value "%s" (Sensor_id.to_string s.Sensor.id) ]
+                      "%s (%s)" (Sensor_id.to_string s.Sensor.id) s.Sensor.purpose)
+                    ss
+                in
+                respond (null opts)))
 
 (* /hierarchy/query/users — <tr> rows *)
 let render_users () =
@@ -817,6 +845,7 @@ let dispatch ~action ~params =
   | "nodes"     -> render_nodes ~params
   | "node"      -> render_node  ~params
   | "sensors"   -> render_sensors ~params
+  | "company_sensors" -> render_company_sensors ~params
   | "users"     -> render_users ()
   | "add_child_form" -> render_add_child_form ~params
   | other       -> respond_error ~status:400
