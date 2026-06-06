@@ -34,6 +34,14 @@ Depth must **strictly** increase from parent to child. Cross-level shortcuts
 edge. The actual edge pair stored is `(parent_level, child_level)`, not a hop
 chain.
 
+**Ids are unique per level, not globally.** Each level has its own monotonic
+counter (`count#HN<n>`, see §6.2), so the integer in `HN<n>#<int>` is only
+unique within that level — identity is the `(level, int)` pair, which is why
+the id always carries the `HN<n>#` prefix. The same integer routinely appears
+at several levels (each level's first node is `…#10001`), so a path like
+`HN0#root|HN1#10001|HN2#10003|HN3#10004|HN4#10001` is valid: `HN1#10001` and
+`HN4#10001` are different nodes. Nothing keys a node by the bare integer.
+
 ---
 
 ## 2. Per-company schema
@@ -466,9 +474,27 @@ blocks#`. An `Administrates` grant uses the same shape with the
 invert differently — `gsi1pk` is the level anchor and `gsi1sk` is the
 child path, not a verb-prefixed reverse pointer.
 
-### 6.2 Sensors — see §5.2.
+### 6.2 Counters
 
-### 6.3 Query patterns
+One counter row per level (and one for sensors) backs the monotonic id
+allocator. `Add_node` / `Add_sensor` read-and-bump the matching row inside the
+same `TransactWriteItems` that writes the vertex, with a `ConditionExpression`
+so concurrent adds retry instead of colliding.
+
+| Attribute | Value                                                         |
+|-----------|---------------------------------------------------------------|
+| `pk`      | `count#HN<n>` (one per level) or `count#S` (sensors)          |
+| `sk`      | `count`                                                       |
+| `type`    | `counter`                                                     |
+| `n`       | next-id allocator — last value handed out (monotonic)        |
+| `live`    | current cardinality at that level (bumped down on delete)    |
+
+Because the allocator is per level, the integer in `HN<n>#<int>` is unique only
+within a level — see §1.
+
+### 6.3 Sensors — see §5.2.
+
+### 6.4 Query patterns
 
 Prefixes below are built from `Edge_kind.sk_verb` on the pk side — not
 free-form strings. `has_<label>#`, `has_sensor#`, `blocked#`, and
@@ -493,7 +519,7 @@ case. Only user-side edges have a `gsi_verb`: `blocks#` (Blocked) and
 dense subtrees. `?full=true` opts into it when the caller actually needs node
 metadata.
 
-### 6.4 Cascade delete
+### 6.5 Cascade delete
 
 `delete_node` cascades: walks the subtree via edge rows and removes every node
 and every edge. Sensor partitions under deleted nodes are also wiped (via
