@@ -293,6 +293,17 @@ let company_sensors_missing_nodepath_400 () =
   let status = Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int) in
   Alcotest.(check int) "400 when nodepath missing" 400 status
 
+let add_sensor_form_has_formula_controls () =
+  let st = Memory.empty () in
+  let bldg = seed_building st in
+  let resp =
+    Memory.run st (fun () ->
+      Api_html.dispatch ~action:"node" ~params:[ ("id", Node_id.to_string bldg) ])
+  in
+  let body = Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "body" |> to_string) in
+  Alcotest.(check bool) "has formula.kind hidden field" true (contains body "data.formula.kind");
+  Alcotest.(check bool) "has formula dialog" true (contains body "formula-dialog")
+
 let tests =
   [
     Alcotest.test_case "add_node happy path" `Quick add_node_happy_path;
@@ -308,4 +319,5 @@ let tests =
     Alcotest.test_case "unblock_user roundtrip" `Quick unblock_user_roundtrip;
     Alcotest.test_case "company_sensors fragment lists options" `Quick company_sensors_fragment_lists_options;
     Alcotest.test_case "company_sensors missing nodepath -> 400" `Quick company_sensors_missing_nodepath_400;
+    Alcotest.test_case "add-sensor form has formula controls" `Quick add_sensor_form_has_formula_controls;
   ]

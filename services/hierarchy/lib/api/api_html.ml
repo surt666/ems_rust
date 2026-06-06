@@ -32,6 +32,87 @@ let pct s =
 
 let hx_get fmt = string_attr "data-hx-get" fmt
 
+(* Vanilla, event-delegated JS for the formula builder dialog. Delegated so it
+   keeps working for the server-rendered fragment (the dialog can be re-inserted
+   by HTMX). Reads the chosen kind/expr/refs and writes them into the hidden
+   [data.formula.*] inputs of #add-sensor-form before the form is submitted. *)
+let formula_dialog_js = {js|
+(function () {
+  function $(id){ return document.getElementById(id); }
+  function addRefRow(alias, sensorId) {
+    var rows = $('formula-refs-rows');
+    var src = $('ref-sensor-options-src');
+    var row = document.createElement('div');
+    row.className = 'form-row formula-ref-row';
+    var a = document.createElement('input');
+    a.type = 'text'; a.className = 'form-input formula-ref-alias';
+    a.placeholder = 'alias (e.g. a)'; a.style.maxWidth = '8rem';
+    a.value = alias || '';
+    var sel = document.createElement('select');
+    sel.className = 'form-select formula-ref-sensor';
+    sel.innerHTML = src ? src.innerHTML : '';
+    if (sensorId) sel.value = sensorId;
+    row.appendChild(a);
+    row.appendChild(document.createTextNode(' → '));
+    row.appendChild(sel);
+    rows.appendChild(row);
+  }
+  document.addEventListener('change', function (e) {
+    if (e.target && e.target.id === 'formula-kind-select') {
+      var sec = $('formula-expr-section');
+      if (sec) sec.style.display = (e.target.value === 'expr') ? '' : 'none';
+    }
+  });
+  document.addEventListener('click', function (e) {
+    if (!e.target) return;
+    if (e.target.id === 'formula-edit') {
+      var committed = $('formula-kind').value || 'identity';
+      $('formula-dialog-error').style.display = 'none';
+      $('formula-dialog-error').textContent = '';
+      $('formula-kind-select').value = committed;
+      $('formula-expr-section').style.display = (committed === 'expr') ? '' : 'none';
+      $('formula-refs-rows').innerHTML = '';
+      $('formula-expr-input').value = (committed === 'expr') ? ($('formula-expr-field').value || '') : '';
+      if (committed === 'expr') {
+        try {
+          var refs = JSON.parse($('formula-refs-field').value || '{}');
+          Object.keys(refs).forEach(function (k) { addRefRow(k, refs[k]); });
+        } catch (e2) {}
+      }
+      $('formula-dialog').showModal();
+      return;
+    }
+    if (e.target.id === 'formula-add-ref') { addRefRow('', ''); return; }
+    if (e.target.id === 'formula-apply') {
+      var err = $('formula-dialog-error');
+      err.style.display = 'none'; err.textContent = '';
+      var kind = $('formula-kind-select').value;
+      $('formula-kind').value = kind;
+      if (kind !== 'expr') {
+        $('formula-expr-field').value = '';
+        $('formula-refs-field').value = '';
+        $('formula-summary').textContent = (kind === 'zero') ? 'Zero' : 'Identity (default)';
+        $('formula-dialog').close();
+        return;
+      }
+      var expr = ($('formula-expr-input').value || '').trim();
+      if (!expr) { err.textContent = 'Expression is required.'; err.style.display = ''; return; }
+      var refs = {};
+      var rws = document.querySelectorAll('#formula-refs-rows .formula-ref-row');
+      for (var i = 0; i < rws.length; i++) {
+        var al = rws[i].querySelector('.formula-ref-alias').value.trim();
+        var sv = rws[i].querySelector('.formula-ref-sensor').value;
+        if (al) refs[al] = sv;
+      }
+      $('formula-expr-field').value = expr;
+      $('formula-refs-field').value = JSON.stringify(refs);
+      $('formula-summary').textContent = expr;
+      $('formula-dialog').close();
+    }
+  });
+})();
+|js}
+
 let respond ?(status = 200) (n : node) : string =
   let open Lambda_runtime_api_gateway in
   let headers = [ ("content-type", "text/html; charset=utf-8") ] in
@@ -297,8 +378,9 @@ let rec metadata_rows (j : Yojson.Safe.t) : node =
 let hx_on_after_request js =
   string_attr ~raw:true "hx-on::after-request" "%s" js
 
-let sensor_dialog ~nid_str =
-  dialog
+let sensor_dialog ~nid_str ~parent_str =
+  null
+  [ dialog
     [ id "add-sensor-dialog";
       Hx.__ "on click if event.target == me then call me.close()" ]
     [ div [ class_ "dialog-header" ]
@@ -355,7 +437,18 @@ let sensor_dialog ~nid_str =
                   input
                     [ type_ "number"; name "data.resample_minutes";
                       string_attr "min" "1"; string_attr "step" "1";
-                      class_ "form-input" ] ] ] ];
+                      class_ "form-input" ] ];
+              div [ class_ "form-row" ]
+                [ label [ class_ "form-label" ] [ txt "Formula" ];
+                  div [ class_ "form-inline" ]
+                    [ span [ id "formula-summary"; class_ "form-summary" ]
+                        [ txt "Identity (default)" ];
+                      button
+                        [ type_ "button"; class_ "btn-secondary"; id "formula-edit" ]
+                        [ txt "Edit formula…" ] ] ];
+              input [ type_ "hidden"; name "data.formula.kind"; id "formula-kind"; value "identity" ];
+              input [ type_ "hidden"; name "data.formula.expr"; id "formula-expr-field"; value "" ];
+              input [ type_ "hidden"; name "data.formula.refs"; id "formula-refs-field"; value "" ] ] ];
       div [ class_ "dialog-footer" ]
         [ button
             [ type_ "submit"; string_attr "form" "add-sensor-form";
@@ -367,6 +460,40 @@ let sensor_dialog ~nid_str =
               Hx.__ "on click call #add-sensor-dialog.close()";
               i18n "common.close" ]
             [ txt "Close" ] ] ]
+  ; dialog [ id "formula-dialog"; class_ "dialog" ]
+      [ div [ class_ "dialog-content" ]
+          [ h2 [] [ txt "Build formula" ]
+          ; div [ class_ "form-row" ]
+              [ label [ class_ "form-label" ] [ txt "Kind" ]
+              ; select [ id "formula-kind-select"; class_ "form-select" ]
+                  [ option [ value "identity" ] "Identity (default)"
+                  ; option [ value "zero" ] "Zero"
+                  ; option [ value "expr" ] "Expression" ] ]
+          ; div [ id "formula-expr-section"; style_ "display:none;" ]
+              [ div [ class_ "form-row" ]
+                  [ label [ class_ "form-label" ] [ txt "Expression" ]
+                  ; input [ type_ "text"; id "formula-expr-input"; class_ "form-input";
+                            string_attr "placeholder" "abs(self - a - b)" ] ]
+              ; div [ class_ "form-hint" ]
+                  [ txt "Use self, numbers, + - * /, abs(), and aliases bound below. \
+                         Aliases cannot be named self or abs." ]
+              ; div [ id "formula-refs-rows" ] []
+              ; button [ type_ "button"; class_ "btn-secondary"; id "formula-add-ref" ]
+                  [ txt "+ Add reference" ] ]
+          ; div [ id "formula-dialog-error"; class_ "login-error"; style_ "display:none;" ] []
+          ; div [ class_ "dialog-footer" ]
+              [ button [ type_ "button"; class_ "btn-warning"; id "formula-apply" ] [ txt "Apply" ]
+              ; button [ type_ "button"; Hx.__ "on click call #formula-dialog.close()" ]
+                  [ txt "Cancel" ] ] ]
+      (* Hidden <option> source for ref dropdowns; loaded once via htmx. nodepath
+         is passed via Hx.vals (not the URL) to avoid '#'-encoding problems. *)
+      ; select [ id "ref-sensor-options-src"; style_ "display:none;";
+                 Hx.get "/hierarchy/query/company_sensors";
+                 Hx.vals {|{"nodepath": "%s"}|} parent_str;
+                 Hx.trigger "load"; Hx.target "#ref-sensor-options-src";
+                 Hx.swap "innerHTML"; Hx.request {|{"noHeaders": true}|} ]
+          [] ]
+  ; script [] "%s" formula_dialog_js ]
 
 let sensor_block ~nid_str ~parent_str =
   div [ style_ "margin-top: 2rem;" ]
@@ -389,7 +516,7 @@ let sensor_block ~nid_str ~parent_str =
               Hx.__ "on click call #add-sensor-dialog.showModal()";
               i18n "node.add_sensor" ]
             [ txt "Add sensor" ] ];
-      sensor_dialog ~nid_str;
+      sensor_dialog ~nid_str ~parent_str;
       ul
         [ id "sensor-list"; style_ "display: grid; gap: 8px;";
           Hx.get "/hierarchy/query/sensors";
@@ -449,6 +576,22 @@ let add_child_block ~parent_id_str =
                   Hx.__ "on click call #add-child-dialog.close()";
                   i18n "common.close" ]
                 [ txt "Close" ] ] ] ]
+
+(* Extract the last "HN{n}#<id>" segment of a pipe-separated node path.
+   The path is the full ancestor chain; the leaf is the rightmost "HN…" segment.
+   When no '#' is present the path is already a bare node-id string. *)
+let leaf_node_id (nodepath : string) : string =
+  match String.rindex_opt nodepath '#' with
+  | None -> nodepath
+  | Some _ ->
+      let rec go i =
+        if i < 0 then nodepath
+        else match nodepath.[i] with
+          | 'H' when i + 1 < String.length nodepath && nodepath.[i + 1] = 'N' ->
+              String.sub nodepath i (String.length nodepath - i)
+          | _ -> go (i - 1)
+      in
+      go (String.length nodepath - 1)
 
 (* /hierarchy/query/node — node detail page *)
 let render_node ~params =
@@ -516,22 +659,6 @@ let render_node ~params =
                               else null [] ] ] ]
                 in
                 respond html))
-
-(* Extract the last "HN{n}#<id>" segment of a pipe-separated node path.
-   The path is the full ancestor chain; the leaf is the rightmost "HN…" segment.
-   When no '#' is present the path is already a bare node-id string. *)
-let leaf_node_id (nodepath : string) : string =
-  match String.rindex_opt nodepath '#' with
-  | None -> nodepath
-  | Some _ ->
-      let rec go i =
-        if i < 0 then nodepath
-        else match nodepath.[i] with
-          | 'H' when i + 1 < String.length nodepath && nodepath.[i + 1] = 'N' ->
-              String.sub nodepath i (String.length nodepath - i)
-          | _ -> go (i - 1)
-      in
-      go (String.length nodepath - 1)
 
 (* /hierarchy/query/sensors?nodepath=<path> *)
 let render_sensors ~params =
