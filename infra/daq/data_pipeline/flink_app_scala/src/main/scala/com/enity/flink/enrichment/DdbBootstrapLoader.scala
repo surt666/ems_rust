@@ -25,9 +25,13 @@ object DdbBootstrapLoader:
     val hierarchyPath = item.get("hierarchy_path").s()
     val ids = HierarchyPathParser.parse(hierarchyPath)
     val purpose = if item.containsKey("purpose") then item.get("purpose").s() else ""
-    val binning: java.lang.Integer =
-      if item.containsKey("binning") && item.get("binning").n() != null then
-        Integer.valueOf(item.get("binning").n().toInt)
+    // Prefer the canonical "resample_minutes"; fall back to the legacy "binning"
+    // attribute for items written before the rename.
+    val resampleAttr =
+      if item.containsKey("resample_minutes") then "resample_minutes" else "binning"
+    val resampleMinutes: java.lang.Integer =
+      if item.containsKey(resampleAttr) && item.get(resampleAttr).n() != null then
+        Integer.valueOf(item.get(resampleAttr).n().toInt)
       else null
 
     val mapping = MeterMapping(
@@ -37,7 +41,7 @@ object DdbBootstrapLoader:
       hn3 = ids.hn3, hn4 = ids.hn4, hn5 = ids.hn5,
       hn6 = ids.hn6, hn7 = ids.hn7, hn8 = ids.hn8, hn9 = ids.hn9,
       purpose = purpose,
-      binning = binning
+      resampleMinutes = resampleMinutes
     )
     (daqId, mapping)
 

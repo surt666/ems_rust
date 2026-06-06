@@ -351,9 +351,9 @@ let sensor_dialog ~nid_str =
                 [ label [ class_ "form-label" ] [ txt "Unit" ];
                   input [ type_ "text"; name "data.unit"; class_ "form-input" ] ];
               div [ class_ "form-row" ]
-                [ label [ class_ "form-label" ] [ txt "Binning (min)" ];
+                [ label [ class_ "form-label" ] [ txt "Resample interval (min)" ];
                   input
-                    [ type_ "number"; name "data.binning";
+                    [ type_ "number"; name "data.resample_minutes";
                       string_attr "min" "1"; string_attr "step" "1";
                       class_ "form-input" ] ] ] ];
       div [ class_ "dialog-footer" ]

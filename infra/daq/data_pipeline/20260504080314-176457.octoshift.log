@@ -1,0 +1,2 @@
+[2026-05-04 08.03.14] [WARNING] You are running an old version of the gei CLI [v1.27.0]. The latest version is v1.29.0.
+[2026-05-04 08.03.14] [WARNING] Please update by running: gh extension upgrade gei

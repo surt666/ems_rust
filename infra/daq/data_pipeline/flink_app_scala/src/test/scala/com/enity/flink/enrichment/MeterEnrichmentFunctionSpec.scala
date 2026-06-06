@@ -61,11 +61,11 @@ class MeterEnrichmentFunctionSpec extends AnyFlatSpec with Matchers {
     e.hn4 shouldBe java.lang.Integer.valueOf(8)
   }
 
-  it should "preserve raw timestamp regardless of binning value" in {
+  it should "preserve raw timestamp regardless of resampleMinutes value" in {
     val mappings = Seq(
-      testMapping.copy(binning = null),
-      testMapping.copy(binning = java.lang.Integer.valueOf(15)),
-      testMapping.copy(binning = java.lang.Integer.valueOf(60))
+      testMapping.copy(resampleMinutes = null),
+      testMapping.copy(resampleMinutes = java.lang.Integer.valueOf(15)),
+      testMapping.copy(resampleMinutes = java.lang.Integer.valueOf(60))
     )
     for (m <- mappings) do
       val record = testRecord.copy(timestamp = "2026-03-27T10:07:23Z")
@@ -74,7 +74,7 @@ class MeterEnrichmentFunctionSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "leave bin_* fields null at the enrichment stage" in {
-    val mapping = testMapping.copy(binning = java.lang.Integer.valueOf(15))
+    val mapping = testMapping.copy(resampleMinutes = java.lang.Integer.valueOf(15))
     val enriched = MeterEnrichmentFunction.enrich(testRecord, mapping)
     enriched.binTimestamp shouldBe null
     enriched.binValue shouldBe null

@@ -33,7 +33,12 @@ class DdbStreamDeserializer extends DeserializationSchema[IdMappingChange]:
         val hierarchyPath = extractString(newImage, "hierarchy_path")
         val ids = HierarchyPathParser.parse(hierarchyPath)
         val purpose = extractOptionalString(newImage, "purpose").getOrElse("")
-        val binning: java.lang.Integer = extractOptionalNumber(newImage, "binning")
+        // Prefer the canonical "resample_minutes"; fall back to the legacy "binning"
+        // attribute for items written before the rename.
+        val resampleMinutes: java.lang.Integer =
+          extractOptionalNumber(newImage, "resample_minutes") match
+            case null => extractOptionalNumber(newImage, "binning")
+            case v    => v
 
         val mapping = MeterMapping(
           logicalId = logicalId,
@@ -42,7 +47,7 @@ class DdbStreamDeserializer extends DeserializationSchema[IdMappingChange]:
           hn3 = ids.hn3, hn4 = ids.hn4, hn5 = ids.hn5,
           hn6 = ids.hn6, hn7 = ids.hn7, hn8 = ids.hn8, hn9 = ids.hn9,
           purpose = purpose,
-          binning = binning
+          resampleMinutes = resampleMinutes
         )
         IdMappingChange(eventName, daqId, Some(mapping))
 

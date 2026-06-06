@@ -16,7 +16,7 @@ import java.time.Instant
   *
   * Main input: SensorRecord stream
   * Broadcast input: IdMappingChange stream (from DDB Streams via Kinesis)
-  * Output: (EnrichedRecord, MeterMapping) tuples — mapping carries meterType + binning for BinningFunction
+  * Output: (EnrichedRecord, MeterMapping) tuples — mapping carries meterType + resampleMinutes for ResampleFunction
   *
   * On open(), performs a full DynamoDB scan to bootstrap the local cache.
   * CDC events from the broadcast stream update broadcast state, which takes priority. */
@@ -88,8 +88,8 @@ object MeterEnrichmentFunction:
     )
 
   /** Pure function for testability. Passes through the original timestamp un-floored.
-    * BinningFunction downstream computes bin_timestamp / bin_value / bin_method from
-    * the raw timestamp + per-meter binning config. */
+    * ResampleFunction downstream computes bin_timestamp / bin_value / bin_method from
+    * the raw timestamp + per-meter resampleMinutes config. */
   def enrich(record: SensorRecord, m: MeterMapping): EnrichedRecord =
     EnrichedRecord(
       logicalId = m.logicalId,

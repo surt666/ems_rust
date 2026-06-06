@@ -1,16 +1,16 @@
-# Binning Rules for Irregular Time-Series Measurements — Design Spec
+# Resampling Rules for Irregular Time-Series Measurements — Design Spec
 
 **Date:** 2026-05-01
 **Status:** Implemented (deployed to production v49 on 2026-05-02)
-**Supersedes (binning section of):** `2026-03-27-meter-enrichment-design.md`
+**Supersedes (resampling section of):** `2026-03-27-meter-enrichment-design.md`
 
 ## Context
 
-Sensor measurements arrive at irregular intervals but consumers (dashboards, aggregations, billing) need values aligned to fixed bin boundaries (`:00`, `:15`, `:30`, `:45` for 15-min bins, whole hours, etc.). Today the Flink pipeline floors raw timestamps to the nearest bin and the Glue late-recomputation job does no binning at all — they are not aligned, and the floor-only approach loses information.
+Sensor measurements arrive at irregular intervals but consumers (dashboards, aggregations, billing) need values aligned to fixed bin boundaries (`:00`, `:15`, `:30`, `:45` for 15-min bins, whole hours, etc.). Today the Flink pipeline floors raw timestamps to the nearest bin and the Glue late-recomputation job does no resampling at all — they are not aligned, and the floor-only approach loses information.
 
-This spec defines a single set of binning rules applied identically by both the Flink streaming job (`flink_app_scala`) and the Glue batch late-recomputation job (`glue/late_recomputation.py`).
+This spec defines a single set of resampling rules applied identically by both the Flink streaming job (`flink_app_scala`) and the Glue batch late-recomputation job (`glue/late_recomputation.py`).
 
-## Binning Rules
+## Resampling Rules
 
 Gauges and counters use **different bin-enumeration rules** because they answer different questions:
 
@@ -69,7 +69,7 @@ Notes:
 | `bin_value` | linearly interpolated (unit-normalized) | time-proportional share of delta (unit-normalized) |
 | `bin_method` | `"linear_interpolation"` | `"time_proportional"` |
 
-### Meters with `binning IS NULL`
+### Meters with `resample_minutes IS NULL`
 
 Bin columns written as `NULL`. The raw row is still emitted (preserves backward compatibility for unconfigured meters).
 
@@ -90,7 +90,7 @@ Kinesis raw → JSON parse → SensorRecord
                               │   produces (EnrichedRecord, MeterMapping) tuples
                               │   timestamp NO LONGER floored here
                               ▼
-                            keyBy(logicalId) ──→ BinningFunction (replaces CounterDeltaFunction)
+                            keyBy(logicalId) ──→ ResampleFunction (replaces CounterDeltaFunction)
                               │   per-meter keyed state: prev reading + buffer for out-of-order
                               │   emits 0..N rows per input reading
                               ▼
@@ -132,12 +132,12 @@ GROUP BY logical_id, bin_timestamp, unit;
 
 For gauges (where each reading contributes one row per bin and bins don't accumulate), `MAX(bin_value)` is equivalent to `SUM(bin_value)` after dedup. The query above works for both meter types.
 
-## Flink: `BinningFunction` Operator
+## Flink: `ResampleFunction` Operator
 
 Replaces `CounterDeltaFunction`. Signature:
 
 ```scala
-class BinningFunction(bufferRetentionMs: Long)
+class ResampleFunction(bufferRetentionMs: Long)
     extends KeyedProcessFunction[String, (EnrichedRecord, MeterMapping), EnrichedRecord]
 ```
 
@@ -146,7 +146,7 @@ class BinningFunction(bufferRetentionMs: Long)
 - `MapState[Long, BufferedReadingV2]` — out-of-order buffer (same pattern as today's `CounterDeltaFunction`), keyed by event-time millis
 - `ValueState[Long]` — `lastEmittedTs` to avoid re-emission
 
-`BufferedReadingV2` carries the raw value and the full `EnrichedRecord` plus the `MeterMapping` (for `meterType` and `binning`).
+`BufferedReadingV2` carries the raw value and the full `EnrichedRecord` plus the `MeterMapping` (for `meterType` and `resample_minutes`).
 
 ### Algorithm (on input `(record, mapping)`)
 
@@ -162,7 +162,7 @@ emitFromBuffer(eventTs, ctx, out):
       side-output LATE_ARRIVAL
     return                          // first reading per meter — just buffer
 
-  binSize = mapping.binning
+  binSize = mapping.resampling
   if binSize is None:
     out.collect(record with bin_* = null)
     update lastEmittedTs
@@ -267,19 +267,19 @@ counters = counters.withColumn("delta", F.col("value") - F.col("prev_value"))
 counters = counters.filter(F.col("delta") >= 0)              # drop anomalies (alerting stays in Flink)
 counters = counters.withColumn("value", F.col("delta"))      # value column = delta
 
-binned = counters.filter(F.col("binning").isNotNull()) \
+resampled = counters.filter(F.col("resampling").isNotNull()) \
     .withColumn("bins", enumerate_overlapping_bins_udf(
         (F.unix_timestamp("prev_ts") * 1000).cast("long"),
         (F.unix_timestamp("timestamp") * 1000).cast("long"),
-        F.col("binning"),
+        F.col("resampling"),
     )) \
     .withColumn("bin_timestamp_ms", F.explode("bins")) \
     .withColumn("bin_timestamp", (F.col("bin_timestamp_ms") / 1000).cast(TimestampType()))
 
-bin_size_ms = F.col("binning").cast("long") * F.lit(60 * 1000)
+bin_size_ms = F.col("resampling").cast("long") * F.lit(60 * 1000)
 prev_ts_ms  = F.unix_timestamp("prev_ts") * 1000
 cur_ts_ms   = F.unix_timestamp("timestamp") * 1000
-binned = binned.withColumn(
+resampled = resampled.withColumn(
     "bin_value",
     F.col("delta") *
     (F.least(cur_ts_ms, F.col("bin_timestamp_ms")) - F.greatest(prev_ts_ms, F.col("bin_timestamp_ms") - bin_size_ms))
@@ -295,7 +295,7 @@ gauges = joined.filter(F.col("meter_type") == "gauge")
 gauges = gauges.filter(F.col("prev_ts").isNotNull())   # first reading per meter has no prev → no bins emitted
 
 # Fan out across bins in (prev_ts, current_ts] with linear interpolation
-gauges = gauges.withColumn("bins", F.expr("enumerate_bins(prev_ts, timestamp, binning)")) \
+gauges = gauges.withColumn("bins", F.expr("enumerate_bins(prev_ts, timestamp, resampling)")) \
                .withColumn("bin_timestamp", F.explode("bins"))
 
 gauges = gauges.withColumn("bin_value",
@@ -318,14 +318,14 @@ output.writeTo("all.logical_meter_data").append()
 
 `build_output` projects the final schema and applies `normalize_unit` (Python port of Scala `Extensions.normalizeUnit`) to both `value` and `bin_value` with the same factor. The `unit` column is replaced with the canonical unit name. This mirrors what Flink's row mapper does — required by the [output parity invariant](#output-parity-invariant).
 
-### Meters with `binning IS NULL`
+### Meters with `resample_minutes IS NULL`
 
 Skip the bin enumeration; emit one row per reading with the three bin columns NULL. For counters, still apply delta + anomaly filter as today.
 
 ### UDFs
 
-- `enumerate_overlapping_bins(prev_ts, current_ts, binning_minutes)` — for counters; bins `B` whose window `[B-binSize, B]` overlaps with `[prev_ts, current_ts]`. Mirrors `BinningFunction.enumerateOverlappingBins`.
-- `enumerate_bins(prev_ts, current_ts, binning_minutes)` — for gauges; bins `B` where `prev_ts < B <= current_ts`. Mirrors `BinningFunction.enumerateBinsIn`.
+- `enumerate_overlapping_bins(prev_ts, current_ts, resample_minutes)` — for counters; bins `B` whose window `[B-binSize, B]` overlaps with `[prev_ts, current_ts]`. Mirrors `ResampleFunction.enumerateOverlappingBins`.
+- `enumerate_bins(prev_ts, current_ts, resample_minutes)` — for gauges; bins `B` where `prev_ts < B <= current_ts`. Mirrors `ResampleFunction.enumerateBinsIn`.
 - `_normalize_unit_name`, `_normalize_unit_factor` — port of Scala `Extensions.normalizeUnit`; applied to both `value` and `bin_value` in `build_output`.
 
 ### Output parity invariant
@@ -347,13 +347,13 @@ Three layers extend the existing scenario-test framework (`docs/superpowers/spec
 
 ### Harness tests (Scala, ~5s)
 
-- `BinningFunction.computeBins` — pure function; no Flink state
+- `ResampleFunction.computeBins` — pure function; no Flink state
 - `enumerateBinsIn` (gauge) — single bin, multi-bin gap, exact boundary alignment, empty period
 - `enumerateOverlappingBins` (counter) — same set of cases plus *period straddles a bin boundary mid-period* (one reading contributes to two bins)
 - Linear interpolation: known prev/current pairs; expected `bin_value` at known boundaries
 - Time-proportional split: assert `sum(bin_values) == delta` per reading (energy-conservation invariant)
 - Bin-boundary alignment: reading whose `timestamp` is exactly on a bin boundary (right-inclusive: included as the bin emitted by that reading, excluded as predecessor anchor for the next)
-- Meter with `binning = null` → raw row only, bin columns null
+- Meter with `resample_minutes=null` → raw row only, bin columns null
 - First reading per meter → no emission, state populated
 - Counter negative delta → ANOMALY, state advances
 
@@ -368,7 +368,7 @@ Full operator chain via `MiniClusterWithClientResource`:
 - Out-of-order within watermark → buffered, emitted correctly post-watermark
 - Late arrival (predecessor purged) → `LATE_ARRIVAL` side output for both gauge and counter
 - Counter negative delta → `ANOMALY`
-- Meter with `binning = null` → raw row only
+- Meter with `resample_minutes=null` → raw row only
 
 ### Glue tests (Python, local SparkSession)
 
@@ -379,8 +379,8 @@ Full operator chain via `MiniClusterWithClientResource`:
 
 ### Cross-implementation parity
 
-A parametrised test feeds the same `(prev, current, binning, meter_type)` tuples through both:
-- The Scala `BinningFunction.computeBins` pure function
+A parametrised test feeds the same `(prev, current, resampling, meter_type)` tuples through both:
+- The Scala `ResampleFunction.computeBins` pure function
 - The Python equivalent used by Glue UDFs
 
 Asserts equal `bin_timestamp` / `bin_value` / `bin_method` outputs. Catches drift between implementations.
@@ -395,10 +395,10 @@ Extend the existing 4 smoke scenarios:
 
 Implementation plan must include updates to:
 
-- `docs/system-design.md` — binning section
+- `docs/system-design.md` — resampling section
 - `docs/data-ingestion-scenarios.md` + `.html` — three new scenarios (gauge interpolation, counter time-proportional split, gap handling)
-- `docs/03-flink-internals.png` (regenerate via `generate_diagrams.py`) — rename `CounterDeltaFunction` → `BinningFunction`
-- `docs/superpowers/specs/2026-03-27-meter-enrichment-design.md` — header note: "Binning section superseded by 2026-05-01-binning-rules-design.md"
+- `docs/03-flink-internals.png` (regenerate via `generate_diagrams.py`) — rename `CounterDeltaFunction` → `ResampleFunction`
+- `docs/superpowers/specs/2026-03-27-meter-enrichment-design.md` — header note: "Resampling section superseded by 2026-05-01-resampling-rules-design.md"
 
 ## Migration & Rollout
 
@@ -427,4 +427,4 @@ Implementation plan must include updates to:
 - Backfilling bin columns for already-written historical rows in `logical_meter_data`
 - Changing the bin-size definition for any meter (operational concern, separate workflow)
 - Real-time alerts on missing bins (consumers can detect via gaps in `bin_timestamp` series)
-- Sub-minute bin sizes (current `binning` column is integer minutes; sufficient for the foreseeable need)
+- Sub-minute bin sizes (current `resample_minutes` column is integer minutes; sufficient for the foreseeable need)

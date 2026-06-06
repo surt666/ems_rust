@@ -100,7 +100,7 @@ let attach_sensor_happy () =
   Memory.run st (fun () ->
     let body =
       Printf.sprintf
-        {|{"action":"attach_sensor","parent_id":%S,"daq_id":"daq:1","purpose":"Electricity","meter_type":"counter","unit":"kWh","binning":15}|}
+        {|{"action":"attach_sensor","parent_id":%S,"daq_id":"daq:1","purpose":"Electricity","meter_type":"counter","unit":"kWh","resample_minutes":15}|}
         (Node_id.to_string bldg)
     in
     let resp = Api_command.dispatch ~body in
@@ -109,10 +109,11 @@ let attach_sensor_happy () =
     in
     Alcotest.(check int) "200" 200 status)
 
-let attach_sensor_binning_from_string () =
-  (* The HTML form posts binning as a string ("data.binning=15" → `String "15"),
-     and an empty number input posts "". run_attach_sensor must coerce a numeric
-     string to Some, and treat "" / absent as unset (graceful Null). *)
+let attach_sensor_resample_from_string () =
+  (* The HTML form posts resample_minutes as a string ("data.resample_minutes=15"
+     → `String "15"), and an empty number input posts "". run_attach_sensor must
+     coerce a numeric string to Some, and treat "" / absent as unset (graceful
+     Null). The legacy "binning" key is also still accepted for backward compat. *)
   let st = Memory.empty () in
   let bldg =
     Memory.run st (fun () ->
@@ -139,26 +140,31 @@ let attach_sensor_binning_from_string () =
       | Ok b -> b.Node.id
       | Error e -> Alcotest.failf "seed: %s" (Errors.message e))
   in
-  let binning_of resp =
+  let resample_of resp =
     Yojson.Safe.Util.(
       Yojson.Safe.from_string resp
       |> member "body" |> to_string
       |> Yojson.Safe.from_string
-      |> member "binning")
+      |> member "resample_minutes")
   in
   Memory.run st (fun () ->
-    let body daq bn =
+    let body ?(key = "resample_minutes") daq bn =
       Printf.sprintf
-        {|{"action":"attach_sensor","parent_id":%S,"daq_id":%S,"purpose":"Electricity","meter_type":"counter","binning":%s}|}
-        (Node_id.to_string bldg) daq bn
+        {|{"action":"attach_sensor","parent_id":%S,"daq_id":%S,"purpose":"Electricity","meter_type":"counter",%S:%s}|}
+        (Node_id.to_string bldg) daq key bn
     in
     let resp = Api_command.dispatch ~body:(body "daq:str" {|"15"|}) in
-    Alcotest.(check (option int)) "numeric-string binning coerced to 15"
+    Alcotest.(check (option int)) "numeric-string resample_minutes coerced to 15"
       (Some 15)
-      (match binning_of resp with `Int i -> Some i | _ -> None);
+      (match resample_of resp with `Int i -> Some i | _ -> None);
     let resp2 = Api_command.dispatch ~body:(body "daq:empty" {|""|}) in
-    Alcotest.(check bool) "empty-string binning is unset (null)" true
-      (match binning_of resp2 with `Null -> true | _ -> false))
+    Alcotest.(check bool) "empty-string resample_minutes is unset (null)" true
+      (match resample_of resp2 with `Null -> true | _ -> false);
+    (* legacy "binning" input key still maps to resample_minutes output *)
+    let resp3 = Api_command.dispatch ~body:(body ~key:"binning" "daq:legacy" {|15|}) in
+    Alcotest.(check (option int)) "legacy binning key coerced to 15"
+      (Some 15)
+      (match resample_of resp3 with `Int i -> Some i | _ -> None))
 
 let create_user_happy () =
   let resp =
@@ -247,7 +253,7 @@ let tests =
     Alcotest.test_case "delete roundtrip" `Quick delete_node_roundtrip;
     Alcotest.test_case "invalid json -> 400" `Quick invalid_json_is_400;
     Alcotest.test_case "attach_sensor happy" `Quick attach_sensor_happy;
-    Alcotest.test_case "attach_sensor binning from string" `Quick attach_sensor_binning_from_string;
+    Alcotest.test_case "attach_sensor resample_minutes from string" `Quick attach_sensor_resample_from_string;
     Alcotest.test_case "create_user happy" `Quick create_user_happy;
     Alcotest.test_case "delete_user roundtrip" `Quick delete_user_roundtrip;
     Alcotest.test_case "block_user happy" `Quick block_user_happy;

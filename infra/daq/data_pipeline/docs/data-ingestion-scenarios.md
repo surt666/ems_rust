@@ -8,7 +8,7 @@ The pipeline processes IoT sensor data from two meter types:
 - **Gauge meters** — instantaneous readings (e.g., temperature, power). The raw value is the final value.
 - **Counter meters** — cumulative readings (e.g., total kWh, total m³). The system computes deltas between consecutive readings to derive per-interval consumption.
 
-All raw records are written unconditionally to the `raw_data` Iceberg table. The enrichment branch resolves sensor identities, computes deltas for counters, and writes to `logical_meter_data`. For meters with a `binning` configuration on `meter-identity`, the same record produces one row per bin per the binning rules (gauge: linear interpolation at each bin boundary in `(prev, current]`; counter: time-proportional split across every bin window the period overlaps). Consumers query `logical_meter_data` with newest-`ingested_time` dedup on `(logical_id, timestamp, bin_timestamp)`, then `SUM(bin_value) GROUP BY (logical_id, bin_timestamp)`. Full rules: `superpowers/specs/2026-05-01-binning-rules-design.md`.
+All raw records are written unconditionally to the `raw_data` Iceberg table. The enrichment branch resolves sensor identities, computes deltas for counters, and writes to `logical_meter_data`. For meters with a `resample_minutes` configuration on `meter-identity`, the same record produces one row per bin per the resampling rules (gauge: linear interpolation at each bin boundary in `(prev, current]`; counter: time-proportional split across every bin window the period overlaps). Consumers query `logical_meter_data` with newest-`ingested_time` dedup on `(logical_id, timestamp, bin_timestamp)`, then `SUM(bin_value) GROUP BY (logical_id, bin_timestamp)`. Full rules: `superpowers/specs/2026-05-01-resampling-rules-design.md`.
 
 **Key parameters:**
 - Watermark out-of-orderness: **1 hour** (`MAX_OUT_OF_ORDERNESS_MS`)
@@ -26,7 +26,7 @@ All raw records are written unconditionally to the `raw_data` Iceberg table. The
 2. JSON Parser routes to the device-specific processor (EMU, FLOWIQ, etc.), producing a `SensorRecord`.
 3. **Raw branch:** Record is mapped to an Iceberg `Row` and written to `raw_data` at next checkpoint.
 4. **Enrichment branch:** Watermark assigner stamps the record. MeterEnrichmentFunction looks up the `daqId` in broadcast state (or bootstrap cache), resolves `logicalId`, hierarchy IDs, and `meterType`.
-5. **Gauge:** `BinningFunction` passes the record through immediately with raw value.
+5. **Gauge:** `ResampleFunction` passes the record through immediately with raw value.
 6. **Counter:** Record is added to the event-time buffer keyed by `logicalId`. `emitFromBuffer` finds the predecessor in the sorted buffer, computes `delta = current - previous`, and emits immediately. An event-time timer is also registered (no-op in this case since the watermark hasn't passed it yet; it will fire later and find the delta already emitted).
 7. Enriched record is written to `logical_meter_data` at next checkpoint.
 
@@ -66,7 +66,7 @@ All arrive within the same wall-clock hour
 
 **Path (counter):**
 1. Record arrives, is enriched with identity.
-2. `BinningFunction.emitFromBuffer` finds the record at index 0 (no predecessor) and `lastEmittedTs` is uninitialized (`Long.MinValue`).
+2. `ResampleFunction.emitFromBuffer` finds the record at index 0 (no predecessor) and `lastEmittedTs` is uninitialized (`Long.MinValue`).
 3. Since `lastEmitted == Long.MinValue`, this is recognized as the first-ever record → the record is silently absorbed as a baseline. No output, no error.
 4. The next record for this meter will produce the first delta.
 
@@ -132,7 +132,7 @@ All arrive within the same wall-clock hour
 
 **Path:**
 1. Record is parsed and enriched normally.
-2. `BinningFunction` computes `delta = current_cumulative - previous_cumulative` and finds `delta < 0`.
+2. `ResampleFunction` computes `delta = current_cumulative - previous_cumulative` and finds `delta < 0`.
 3. Record is **suppressed** (not emitted downstream) and routed to the `ANOMALY` side output.
 4. The `ErrorRecord` includes both the current and previous cumulative values for investigation.
 5. The cumulative value IS stored in the buffer (it becomes the baseline for the next delta).
@@ -163,7 +163,7 @@ T3: cumulative = 520  → delta = 520 - 500 = 20 (emitted normally)
 
 **Path:**
 1. Record is parsed → written to `raw_data`.
-2. Record reaches `BinningFunction.processElement`.
+2. Record reaches `ResampleFunction.processElement`.
 3. `emitFromBuffer` adds the record to the buffer and finds its predecessor (still retained).
 4. Delta is computed and emitted immediately.
 5. An event-time timer is registered but will fire immediately (watermark already past) — `onTimer` finds the delta already emitted via `lastEmittedTs` check.
@@ -185,7 +185,7 @@ T3: cumulative = 520  → delta = 520 - 500 = 20 (emitted normally)
 
 **Path:**
 1. Record is parsed → written to `raw_data`.
-2. `BinningFunction.emitFromBuffer` adds the record to the buffer.
+2. `ResampleFunction.emitFromBuffer` adds the record to the buffer.
 3. Looking for predecessor: index is 0 (nothing before it in the buffer) and `lastEmittedTs > Long.MinValue` (we've emitted deltas before, so this isn't the meter's first record).
 4. Recognized as **late arrival with purged predecessor** → routed to `LATE_ARRIVAL` side output.
 5. `ErrorRecord` written to error Kinesis stream.

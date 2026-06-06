@@ -10,7 +10,7 @@ import org.scalatest.BeforeAndAfterEach
 
 import scala.jdk.CollectionConverters.*
 
-class BinningHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach {
+class ResampleHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach {
 
   private var harness: KeyedOneInputStreamOperatorTestHarness[
     java.lang.Integer, (EnrichedRecord, MeterMapping), EnrichedRecord
@@ -18,7 +18,7 @@ class BinningHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEa
 
   private val FifteenMin = java.lang.Integer.valueOf(15)
 
-  private def mapping(meterType: String, binning: java.lang.Integer = FifteenMin, logicalId: Int = 1): MeterMapping =
+  private def mapping(meterType: String, resampleMinutes: java.lang.Integer = FifteenMin, logicalId: Int = 1): MeterMapping =
     MeterMapping(
       logicalId = logicalId,
       meterType = meterType,
@@ -26,7 +26,7 @@ class BinningHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEa
       hn3 = null, hn4 = null, hn5 = null,
       hn6 = null, hn7 = null, hn8 = null, hn9 = null,
       purpose = "test",
-      binning = binning
+      resampleMinutes = resampleMinutes
     )
 
   private def makeRecord(value: Double, ts: String, logicalId: Int = 1): EnrichedRecord =
@@ -45,7 +45,7 @@ class BinningHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEa
   private def tsMillis(ts: String): Long = java.time.Instant.parse(ts).toEpochMilli
 
   override def beforeEach(): Unit =
-    val operator = new KeyedProcessOperator(new BinningFunction(6 * 3600 * 1000L))
+    val operator = new KeyedProcessOperator(new ResampleFunction(6 * 3600 * 1000L))
     harness = new KeyedOneInputStreamOperatorTestHarness(
       operator,
       new KeySelector[(EnrichedRecord, MeterMapping), java.lang.Integer] {
@@ -59,7 +59,7 @@ class BinningHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEa
   override def afterEach(): Unit =
     harness.close()
 
-  "BinningFunction harness" should "buffer the first counter reading and emit nothing" in {
+  "ResampleFunction harness" should "buffer the first counter reading and emit nothing" in {
     val record = makeRecord(100.0, "2026-01-01T10:00:00Z")
     harness.processElement((record, mapping("counter")), tsMillis("2026-01-01T10:00:00Z"))
     harness.extractOutputValues().asScala shouldBe empty
@@ -156,7 +156,7 @@ class BinningHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEa
     harness.close()
 
     val shortRetention = 1000L
-    val operator = new KeyedProcessOperator(new BinningFunction(shortRetention))
+    val operator = new KeyedProcessOperator(new ResampleFunction(shortRetention))
     harness = new KeyedOneInputStreamOperatorTestHarness(
       operator,
       new KeySelector[(EnrichedRecord, MeterMapping), java.lang.Integer] {
@@ -184,8 +184,8 @@ class BinningHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEa
     lateArrivals.head.getValue.error should include("No predecessor in buffer")
   }
 
-  it should "emit raw row with null bin fields when binning is null" in {
-    val m = mapping("counter", binning = null)
+  it should "emit raw row with null bin fields when resampleMinutes is null" in {
+    val m = mapping("counter", resampleMinutes = null)
     val r1 = makeRecord(100.0, "2026-01-01T10:00:00Z")
     val r2 = makeRecord(150.0, "2026-01-01T10:15:00Z")
 

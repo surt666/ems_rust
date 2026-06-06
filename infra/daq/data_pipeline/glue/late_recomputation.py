@@ -5,11 +5,11 @@ Reads raw cumulative values from the raw_data Iceberg table, joins with
 meter-identity from DynamoDB, computes deltas via LAG() window function,
 and appends corrected records to logical_meter_data.
 
-For meters with `binning` configured, also computes bin_timestamp / bin_value /
-bin_method per the 2026-05-01 binning spec:
+For meters with `resample_minutes` configured, also computes bin_timestamp / bin_value /
+bin_method per the 2026-05-01 resampling spec:
   - Gauge: linear interpolation between (prev, current) for each bin in (prev_ts, current_ts]
   - Counter: time-proportional split of the delta across overlapping bins
-For meters with `binning IS NULL`, bin columns are written as NULL (raw shape preserved).
+For meters with `resample_minutes IS NULL`, bin columns are written as NULL (raw shape preserved).
 
 Event-sourcing semantics: rows are appended with ingested_time=now(), never merged.
 Consumers query for the newest `ingested_time` per (logical_id, bin_timestamp).
@@ -116,14 +116,16 @@ def parse_ddb_item(item: dict) -> dict:
     logical_id = int(item["logical_id"]["N"])
     meter_type = item["meter_type"]["S"]
     hierarchy_path = item["hierarchy_path"]["S"]
-    binning_field = item.get("binning")
-    binning_minutes = int(binning_field["N"]) if binning_field and "N" in binning_field else None
+    # Prefer the canonical "resample_minutes"; fall back to the legacy "binning"
+    # attribute for items written before the rename.
+    resample_field = item.get("resample_minutes") or item.get("binning")
+    resample_minutes = int(resample_field["N"]) if resample_field and "N" in resample_field else None
     purpose_field = item.get("purpose")
     purpose = purpose_field["S"] if purpose_field and "S" in purpose_field else None
     ids = parse_hierarchy_path(hierarchy_path)
     return {
         "daq_id": daq_id, "logical_id": logical_id, "meter_type": meter_type,
-        "binning": binning_minutes, "purpose": purpose, **ids,
+        "resample_minutes": resample_minutes, "purpose": purpose, **ids,
     }
 
 
@@ -147,8 +149,8 @@ def load_meter_identity(rgn: str, table_name: str, ids: list[str] | None) -> lis
     return items
 
 
-# Mirrors flink_app_scala/.../Extensions.scala UnitConversions and BinningFunction.BinMethod.
-# Both files implement the same binning rules and must produce bit-identical output for the
+# Mirrors flink_app_scala/.../Extensions.scala UnitConversions and ResampleFunction.BinMethod.
+# Both files implement the same resampling rules and must produce bit-identical output for the
 # same input — change in lock-step.
 
 BIN_METHOD_LINEAR_INTERPOLATION = "linear_interpolation"
@@ -256,16 +258,16 @@ _normalize_unit_name_udf = F.udf(lambda u: normalize_unit(u)[0], StringType())
 _normalize_unit_factor_udf = F.udf(lambda u: float(normalize_unit(u)[1]), "double")
 
 
-def enumerate_overlapping_bins(prev_ts_ms: int, current_ts_ms: int, binning_minutes: int) -> list:
+def enumerate_overlapping_bins(prev_ts_ms: int, current_ts_ms: int, resample_minutes: int) -> list:
     """Bin boundaries B (epoch millis) such that the bin window [B-binSize, B] overlaps
     with [prev_ts, current_ts]. Used for counter time-proportional split — energy-conservation
     requires every bin the period touches to receive a share. Matches
-    BinningFunction.enumerateOverlappingBins in the Flink operator."""
-    if prev_ts_ms is None or binning_minutes is None or binning_minutes <= 0:
+    ResampleFunction.enumerateOverlappingBins in the Flink operator."""
+    if prev_ts_ms is None or resample_minutes is None or resample_minutes <= 0:
         return []
     if current_ts_ms <= prev_ts_ms:
         return []
-    bin_size_ms = binning_minutes * 60 * 1000
+    bin_size_ms = resample_minutes * 60 * 1000
     first = ((prev_ts_ms // bin_size_ms) + 1) * bin_size_ms
     last = ((current_ts_ms - 1) // bin_size_ms + 1) * bin_size_ms
     if first > last:
@@ -278,15 +280,15 @@ def enumerate_overlapping_bins(prev_ts_ms: int, current_ts_ms: int, binning_minu
     return out
 
 
-def enumerate_bins(prev_ts_ms: int, current_ts_ms: int, binning_minutes: int) -> list:
+def enumerate_bins(prev_ts_ms: int, current_ts_ms: int, resample_minutes: int) -> list:
     """Bin boundaries B (epoch millis) where prev_ts < B <= current_ts.
     Used for gauge linear interpolation — only emit bins that have been "passed" by
     the current reading."""
-    if prev_ts_ms is None or binning_minutes is None or binning_minutes <= 0:
+    if prev_ts_ms is None or resample_minutes is None or resample_minutes <= 0:
         return []
     if current_ts_ms <= prev_ts_ms:
         return []
-    bin_size_ms = binning_minutes * 60 * 1000
+    bin_size_ms = resample_minutes * 60 * 1000
     first = ((prev_ts_ms // bin_size_ms) + 1) * bin_size_ms
     if first > current_ts_ms:
         return []
@@ -304,7 +306,7 @@ enumerate_overlapping_bins_udf = F.udf(enumerate_overlapping_bins, ArrayType(Lon
 
 
 def compute_counter_bins(joined_df: DataFrame) -> DataFrame:
-    """For counter readings: compute delta, then for binned meters fan out time-proportionally
+    """For counter readings: compute delta, then for resampled meters fan out time-proportionally
     across overlapping bins in (prev_ts, current_ts]. Unbinned meters get one row per reading
     with delta in `value` and bin_* = NULL."""
     counters = joined_df.filter(F.col("meter_type") == "counter")
@@ -315,82 +317,82 @@ def compute_counter_bins(joined_df: DataFrame) -> DataFrame:
     counters = counters.filter(F.col("delta") >= 0)
     counters = counters.withColumn("value", F.col("delta"))
 
-    binned = counters.filter(F.col("binning").isNotNull())
-    unbinned = counters.filter(F.col("binning").isNull()) \
+    resampled = counters.filter(F.col("resample_minutes").isNotNull())
+    unresampled = counters.filter(F.col("resample_minutes").isNull()) \
         .withColumn("bin_timestamp", F.lit(None).cast(TimestampType())) \
         .withColumn("bin_value", F.lit(None).cast("double")) \
         .withColumn("bin_method", F.lit(None).cast(StringType()))
 
-    binned = binned.withColumn(
+    resampled = resampled.withColumn(
         "bins",
         enumerate_overlapping_bins_udf(
             (F.unix_timestamp("prev_ts") * 1000).cast("long"),
             (F.unix_timestamp("timestamp") * 1000).cast("long"),
-            F.col("binning"),
+            F.col("resample_minutes"),
         ),
     )
-    binned = binned.withColumn("bin_timestamp_ms", F.explode("bins"))
-    binned = binned.withColumn(
+    resampled = resampled.withColumn("bin_timestamp_ms", F.explode("bins"))
+    resampled = resampled.withColumn(
         "bin_timestamp",
         (F.col("bin_timestamp_ms") / 1000).cast(TimestampType()),
     )
-    bin_size_ms = F.col("binning").cast("long") * F.lit(60 * 1000)
+    bin_size_ms = F.col("resample_minutes").cast("long") * F.lit(60 * 1000)
     prev_ts_ms = F.unix_timestamp("prev_ts") * 1000
     cur_ts_ms = F.unix_timestamp("timestamp") * 1000
     bin_start_ms = F.greatest(prev_ts_ms, F.col("bin_timestamp_ms") - bin_size_ms)
     bin_end_ms = F.least(cur_ts_ms, F.col("bin_timestamp_ms"))
     overlap_ms = bin_end_ms - bin_start_ms
     period_ms = cur_ts_ms - prev_ts_ms
-    binned = binned.withColumn(
+    resampled = resampled.withColumn(
         "bin_value",
         F.col("delta") * (overlap_ms.cast("double") / period_ms.cast("double")),
     )
-    binned = binned.withColumn("bin_method", F.lit(BIN_METHOD_TIME_PROPORTIONAL))
-    binned = binned.drop("bins", "bin_timestamp_ms")
+    resampled = resampled.withColumn("bin_method", F.lit(BIN_METHOD_TIME_PROPORTIONAL))
+    resampled = resampled.drop("bins", "bin_timestamp_ms")
 
-    return binned.unionByName(unbinned, allowMissingColumns=True).drop("delta", "prev_ts", "prev_value")
+    return resampled.unionByName(unresampled, allowMissingColumns=True).drop("delta", "prev_ts", "prev_value")
 
 
 def compute_gauge_bins(joined_df: DataFrame) -> DataFrame:
-    """For gauge readings: for binned meters, fan out across bins in (prev_ts, current_ts]
+    """For gauge readings: for resampled meters, fan out across bins in (prev_ts, current_ts]
     with linear interpolation between (prev, current). Unbinned gauges pass through with
     bin_* = NULL. Single-reading-only meters produce no bin rows (consistent with Flink)."""
     gauges = joined_df.filter(F.col("meter_type") == "gauge")
     gauges = gauges.withColumn("prev_ts", F.lag("timestamp").over(window))
     gauges = gauges.withColumn("prev_value", F.lag("value").over(window))
 
-    unbinned = gauges.filter(F.col("binning").isNull()) \
+    unresampled = gauges.filter(F.col("resample_minutes").isNull()) \
         .withColumn("bin_timestamp", F.lit(None).cast(TimestampType())) \
         .withColumn("bin_value", F.lit(None).cast("double")) \
         .withColumn("bin_method", F.lit(None).cast(StringType())) \
         .drop("prev_ts", "prev_value")
 
-    binned = gauges.filter(F.col("binning").isNotNull() & F.col("prev_ts").isNotNull())
-    binned = binned.withColumn(
+    resampled = gauges.filter(F.col("resample_minutes").isNotNull() & F.col("prev_ts").isNotNull())
+    resampled = resampled.withColumn(
         "bins",
         enumerate_bins_udf(
             (F.unix_timestamp("prev_ts") * 1000).cast("long"),
             (F.unix_timestamp("timestamp") * 1000).cast("long"),
-            F.col("binning"),
+            F.col("resample_minutes"),
         ),
     )
-    binned = binned.withColumn("bin_timestamp_ms", F.explode("bins"))
-    binned = binned.withColumn(
+    resampled = resampled.withColumn("bin_timestamp_ms", F.explode("bins"))
+    resampled = resampled.withColumn(
         "bin_timestamp",
         (F.col("bin_timestamp_ms") / 1000).cast(TimestampType()),
     )
     prev_ts_ms = F.unix_timestamp("prev_ts") * 1000
     cur_ts_ms = F.unix_timestamp("timestamp") * 1000
-    binned = binned.withColumn(
+    resampled = resampled.withColumn(
         "bin_value",
         F.col("prev_value") + (F.col("value") - F.col("prev_value")) *
         (F.col("bin_timestamp_ms") - prev_ts_ms).cast("double") /
         (cur_ts_ms - prev_ts_ms).cast("double"),
     )
-    binned = binned.withColumn("bin_method", F.lit(BIN_METHOD_LINEAR_INTERPOLATION))
-    binned = binned.drop("bins", "bin_timestamp_ms", "prev_ts", "prev_value")
+    resampled = resampled.withColumn("bin_method", F.lit(BIN_METHOD_LINEAR_INTERPOLATION))
+    resampled = resampled.drop("bins", "bin_timestamp_ms", "prev_ts", "prev_value")
 
-    return binned.unionByName(unbinned, allowMissingColumns=True)
+    return resampled.unionByName(unresampled, allowMissingColumns=True)
 
 
 def build_output(df: DataFrame) -> DataFrame:
@@ -422,7 +424,7 @@ def build_output(df: DataFrame) -> DataFrame:
 
 # ── Main logic ──
 
-# Window used by both gauge and counter binning paths
+# Window used by both gauge and counter resampling paths
 window = Window.partitionBy("logical_id").orderBy("timestamp")
 
 identity_records = load_meter_identity(region, args["meter_identity_table"], daq_ids)
@@ -431,7 +433,7 @@ if identity_records:
         StructField("daq_id", StringType(), False),
         StructField("logical_id", IntegerType(), False),
         StructField("meter_type", StringType(), False),
-        StructField("binning", IntegerType(), True),
+        StructField("resample_minutes", IntegerType(), True),
         StructField("purpose", StringType(), True),
         StructField("hn1", IntegerType(), True),
         StructField("hn2", IntegerType(), True),

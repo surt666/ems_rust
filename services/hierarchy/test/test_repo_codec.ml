@@ -76,7 +76,7 @@ let sensor_round_trip () =
         ast = Formula.Abs (Formula.Sub (Formula.Self, Formula.Ref "r"));
         refs = [ ("r", id) ];
       };
-      binning = Some 15;
+      resample_minutes = Some 15;
     }
   in
   let item = Codec.sensor_to_item ~active:true s in
@@ -88,7 +88,7 @@ let sensor_round_trip () =
         (Node_id.to_string parent)
         (Node_id.to_string (Sensor.parent_id s2));
       Alcotest.(check string) "purpose" s.purpose s2.Sensor.purpose;
-      Alcotest.(check (option int)) "binning" (Some 15) s2.Sensor.binning;
+      Alcotest.(check (option int)) "resample_minutes" (Some 15) s2.Sensor.resample_minutes;
       Alcotest.(check bool)   "formula kind" true
         (match s2.Sensor.formula with Formula.Expr _ -> true | _ -> false)
   | Error e -> Alcotest.failf "decode: %s" e
@@ -108,7 +108,7 @@ let sensor_active_sk_prefixed () =
       meter_type = Sensor.Gauge;
       unit = None;
       formula = Formula.Identity;
-      binning = Some 60;
+      resample_minutes = Some 60;
     }
   in
   let item_active = Codec.sensor_to_item ~active:true s in

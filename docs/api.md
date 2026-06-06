@@ -172,7 +172,7 @@ in the owning `hn2`'s `schema.sensors`.
   "purpose": "electricity",
   "meter_type": "counter",
   "unit": "kWh",
-  "binning": 15
+  "resampling": 15
 }
 ```
 
@@ -183,10 +183,10 @@ in the owning `hn2`'s `schema.sensors`.
 | purpose     | yes      |                                                    |
 | meter_type  | yes      | `counter` or `gauge`                               |
 | unit        | no       |                                                    |
-| binning     | no       | aggregation bin size in minutes, `> 0`; accepts an int or a numeric string |
+| resample_minutes | no    | resample interval in minutes, `> 0`; accepts an int or a numeric string (legacy key `binning` still accepted) |
 
 Response — the created sensor (mirrors `Api_json.sensor_to_json`). `path` is
-the pipe-separated ancestry ending in the sensor id; `unit`/`binning` are
+the pipe-separated ancestry ending in the sensor id; `unit`/`resample_minutes` are
 `null` when unset:
 
 ```json
@@ -198,7 +198,7 @@ the pipe-separated ancestry ending in the sensor id; `unit`/`binning` are
   "purpose": "electricity",
   "meter_type": "counter",
   "unit": "kWh",
-  "binning": 15
+  "resampling": 15
 }
 ```
 
@@ -451,7 +451,7 @@ GET /query/list_sensors?parent=HN6%23600
       "purpose": "electricity",
       "meter_type": "counter",
       "unit": "kWh",
-      "binning": 15
+      "resampling": 15
     }
   ]
 }

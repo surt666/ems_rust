@@ -119,7 +119,7 @@ object ScenarioTestHelper:
 
     val binnedStream = enrichedStream
       .keyBy((t: (EnrichedRecord, MeterMapping)) => java.lang.Integer.valueOf(t._1.logicalId))
-      .process(new BinningFunction(config.bufferRetentionMs))
+      .process(new ResampleFunction(config.bufferRetentionMs))
 
     binnedStream.addSink(new EnrichedSink())
 

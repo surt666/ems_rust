@@ -112,7 +112,7 @@ def diagram_context():
 
     # Data Pipeline (main system)
     draw_box(ax, 0.50, 0.50, 0.42, 0.16, "DAQ Data Pipeline",
-             "Ingests raw IoT readings, enriches\nwith meter identity, bins (interpolation /\ntime-proportional split), writes to data lake",
+             "Ingests raw IoT readings, enriches\nwith meter identity, resamples (interpolation /\ntime-proportional split), writes to data lake",
              color=C["system"], fontsize=13, sublabel_size=9)
 
     # Meter Registry (external)
@@ -220,7 +220,7 @@ def diagram_containers():
              color=C["component"], text_color=C["text_dark"],
              fontsize=9, sublabel_size=7)
 
-    draw_box(ax, 0.56, 0.62, 0.14, 0.06, "Binning",
+    draw_box(ax, 0.56, 0.62, 0.14, 0.06, "Resampling",
              "Per-bin emit (linear interp /\ntime-proportional)",
              color=C["component"], text_color=C["text_dark"],
              fontsize=9, sublabel_size=7)
@@ -419,7 +419,7 @@ def diagram_flink_internals():
 
     draw_arrow(ax, 0.52, 0.44, 0.52, 0.425, "", fontsize=6)
 
-    # ── Stage 4: BinningFunction ──
+    # ── Stage 4: ResampleFunction ──
     delta_bg = FancyBboxPatch(
         (0.15, 0.17), 0.70, 0.20,
         boxstyle="round,pad=0.01",
@@ -427,7 +427,7 @@ def diagram_flink_internals():
         linewidth=1.5, linestyle="--", zorder=1
     )
     ax.add_patch(delta_bg)
-    ax.text(0.50, 0.365, "BinningFunction  (KeyedProcessFunction, keyed by logicalId)",
+    ax.text(0.50, 0.365, "ResampleFunction  (KeyedProcessFunction, keyed by logicalId)",
             ha="center", fontsize=10, fontweight="bold", color=C["store"], zorder=2)
 
     draw_arrow(ax, 0.52, 0.41, 0.52, 0.37, "", fontsize=6)

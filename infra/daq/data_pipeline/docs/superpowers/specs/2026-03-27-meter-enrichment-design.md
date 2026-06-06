@@ -1,6 +1,6 @@
 # Meter Enrichment & Counter Delta — Design Spec
 
-> **Note:** The binning section of this spec is **superseded by** `2026-05-01-binning-rules-design.md`. Counter delta computation and timestamp binning are now handled by a unified `BinningFunction` (replacing `CounterDeltaFunction`). See the newer spec for the full binning rules.
+> **Note:** The resampling section of this spec is **superseded by** `2026-05-01-resampling-rules-design.md`. Counter delta computation and timestamp resampling are now handled by a unified `ResampleFunction` (replacing `CounterDeltaFunction`). See the newer spec for the full resampling rules.
 
 
 ## Context

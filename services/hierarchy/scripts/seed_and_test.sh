@@ -249,14 +249,14 @@ api_add_node_id() {
 }
 
 api_attach_sensor() {
-  # args: parent daq purpose meter_type binning_minutes
-  local parent="$1" daq="$2" purpose="$3" mt="$4" bin="${5:-15}"
+  # args: parent daq purpose meter_type resample_minutes
+  local parent="$1" daq="$2" purpose="$3" mt="$4" rsm="${5:-15}"
   local payload
   payload=$(jq -n \
     --arg p "$parent" --arg d "$daq" --arg pu "$purpose" --arg mt "$mt" \
-    --argjson bn "$bin" \
+    --argjson bn "$rsm" \
     '{action:"attach_sensor", parent_id:$p, daq_id:$d, purpose:$pu,
-      meter_type:$mt, binning:$bn}')
+      meter_type:$mt, resample_minutes:$bn}')
   local resp
   resp=$(post_command_with_retry "$payload")
   if ! echo "$resp" | jq -e '.id' >/dev/null 2>&1; then
@@ -320,10 +320,10 @@ build_one_company() {
       fi
 
       # Emit N sensor jobs to a temp file then xargs them in parallel.
-      # Binning rotates over a small set of typical aggregation windows.
+      # Resample interval rotates over a small set of typical windows.
       local jobs
       jobs=$(mktemp)
-      local i parent_for binnings=(5 15 60)
+      local i parent_for resample_intervals=(5 15 60)
       for i in $(seq 1 "$SCALE_SENSORS"); do
         local mt
         mt=$(meter_type_for_index "$i")
@@ -335,10 +335,10 @@ build_one_company() {
         else
           parent_for="$bld_id"
         fi
-        local daq bin
+        local daq rsm
         daq=$(printf 'daq:%s:%02d:%02d:%02d' "$co_name" "$p_idx" "$b_idx" "$i")
-        bin="${binnings[$(( (i - 1) % ${#binnings[@]} ))]}"
-        printf '%s\t%s\t%s\t%s\t%s\n' "$parent_for" "$daq" "s$i" "$mt" "$bin" >> "$jobs"
+        rsm="${resample_intervals[$(( (i - 1) % ${#resample_intervals[@]} ))]}"
+        printf '%s\t%s\t%s\t%s\t%s\n' "$parent_for" "$daq" "s$i" "$mt" "$rsm" >> "$jobs"
       done
 
       xargs -P "$PARALLEL" -a "$jobs" -I{} bash -c \
@@ -384,7 +384,7 @@ aws dynamodb scan --region "$REGION" --table-name "$TABLE" \
       pk:.pk.S,
       gsi1pk:.gsi1pk.S,
       gsi1sk:.gsi1sk.S,
-      binning:(.binning.N | tonumber),
+      resample_minutes:(.resample_minutes.N | tonumber),
       legacy_path:(has("path")),
       legacy_parent:(has("parent")),
       legacy_hierarchy_path:(has("hierarchy_path"))

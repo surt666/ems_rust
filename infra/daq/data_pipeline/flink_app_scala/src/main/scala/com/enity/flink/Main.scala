@@ -273,15 +273,16 @@ object Main:
 
       val deadLetters = enrichedStream.getSideOutput(SideOutputTags.DEAD_LETTER)
 
-      // ── Step 5: Binning (delta + interpolation per the 2026-05-01 binning spec) ──
+      // ── Step 5: Resampling (delta + interpolation per the 2026-05-01 resampling spec) ──
 
-      val binnedStream = enrichedStream
+      val resampledStream = enrichedStream
         .keyBy((t: (EnrichedRecord, MeterMapping)) => java.lang.Integer.valueOf(t._1.logicalId))
-        .process(new BinningFunction(bufferRetentionMs))
+        .process(new ResampleFunction(bufferRetentionMs))
+        // uid kept as "binning" to preserve savepoint/checkpoint restore identity.
         .uid("binning")
 
-      val anomalies = binnedStream.getSideOutput(SideOutputTags.ANOMALY)
-      val lateArrivals = binnedStream.getSideOutput(SideOutputTags.LATE_ARRIVAL)
+      val anomalies = resampledStream.getSideOutput(SideOutputTags.ANOMALY)
+      val lateArrivals = resampledStream.getSideOutput(SideOutputTags.LATE_ARRIVAL)
 
       // ── Step 6: Enriched Iceberg sink ──
 
@@ -310,7 +311,7 @@ object Main:
       val enrichedTableId = TableIdentifier.of(Namespace.of("all"), "logical_meter_data")
       val enrichedTableLoader = TableLoader.fromCatalog(catalogLoader, enrichedTableId)
 
-      val enrichedRowStream = binnedStream
+      val enrichedRowStream = resampledStream
         .map { (record: EnrichedRecord) =>
           val (normalizedUnit, factor) = Extensions.unitFactor(record.unit)
           val normalizedValue = record.value * factor

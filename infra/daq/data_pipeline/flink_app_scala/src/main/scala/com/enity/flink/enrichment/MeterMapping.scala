@@ -23,7 +23,7 @@ case class MeterMapping(
   hn8: java.lang.Integer,
   hn9: java.lang.Integer,
   purpose: String,
-  binning: java.lang.Integer = null
+  resampleMinutes: java.lang.Integer = null
 ) extends Serializable
 
 /** Keyed state for counter delta computation */
@@ -32,8 +32,8 @@ case class CounterState(
   lastTimestamp: Instant
 ) extends Serializable
 
-/** Buffered reading for the event-time reordering buffer in BinningFunction.
-  * Carries the mapping so the operator has access to meterType + binning per reading. */
+/** Buffered reading for the event-time reordering buffer in ResampleFunction.
+  * Carries the mapping so the operator has access to meterType + resampleMinutes per reading. */
 case class BufferedReadingV2(
   cumulativeValue: Double,
   record: EnrichedRecord,
@@ -51,8 +51,8 @@ case class IdMappingChange(
   * Uses java.lang.Integer / java.lang.Long / java.lang.Double for nullable fields
   * to avoid Flink Kryo serialization corrupting Scala Option across operator boundaries.
   *
-  * `binTimestamp` (epoch millis) / `binValue` / `binMethod` are populated by BinningFunction.
-  * For meters with `binning=null`, all three are null and only the raw row is emitted. */
+  * `binTimestamp` (epoch millis) / `binValue` / `binMethod` are populated by ResampleFunction.
+  * For meters with `resampleMinutes=null`, all three are null and only the raw row is emitted. */
 case class EnrichedRecord(
   logicalId: Int,
   timestamp: String,

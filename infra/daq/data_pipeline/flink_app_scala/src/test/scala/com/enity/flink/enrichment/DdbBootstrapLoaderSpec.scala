@@ -47,10 +47,25 @@ class DdbBootstrapLoaderSpec extends AnyFlatSpec with Matchers {
     mapping.hn2 shouldBe 2
     mapping.hn3 shouldBe java.lang.Integer.valueOf(8)
     mapping.hn4 shouldBe java.lang.Integer.valueOf(3)
-    mapping.binning shouldBe null
+    mapping.resampleMinutes shouldBe null
   }
 
-  it should "parse binning and purpose when present" in {
+  it should "parse resample_minutes and purpose when present" in {
+    val item = new java.util.HashMap[String, AttributeValue]()
+    item.put("pk", AttributeValue.builder().s("00001").build())
+    item.put("sk", AttributeValue.builder().s("daq:std:cust:m2:energy").build())
+    item.put("logical_id", AttributeValue.builder().n("42").build())
+    item.put("meter_type", AttributeValue.builder().s("counter").build())
+    item.put("hierarchy_path", AttributeValue.builder().s("HN0#root|HN1#1|HN2#2|HN3#3").build())
+    item.put("resample_minutes", AttributeValue.builder().n("15").build())
+    item.put("purpose", AttributeValue.builder().s("main meter").build())
+
+    val (_, mapping) = DdbBootstrapLoader.parseDdbItem(item)
+    mapping.resampleMinutes shouldBe java.lang.Integer.valueOf(15)
+    mapping.purpose shouldBe "main meter"
+  }
+
+  it should "fall back to the legacy binning attribute" in {
     val item = new java.util.HashMap[String, AttributeValue]()
     item.put("pk", AttributeValue.builder().s("00001").build())
     item.put("sk", AttributeValue.builder().s("daq:std:cust:m2:energy").build())
@@ -58,10 +73,8 @@ class DdbBootstrapLoaderSpec extends AnyFlatSpec with Matchers {
     item.put("meter_type", AttributeValue.builder().s("counter").build())
     item.put("hierarchy_path", AttributeValue.builder().s("HN0#root|HN1#1|HN2#2|HN3#3").build())
     item.put("binning", AttributeValue.builder().n("15").build())
-    item.put("purpose", AttributeValue.builder().s("main meter").build())
 
     val (_, mapping) = DdbBootstrapLoader.parseDdbItem(item)
-    mapping.binning shouldBe java.lang.Integer.valueOf(15)
-    mapping.purpose shouldBe "main meter"
+    mapping.resampleMinutes shouldBe java.lang.Integer.valueOf(15)
   }
 }

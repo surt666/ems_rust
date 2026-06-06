@@ -1499,10 +1499,10 @@
   </div>
 </div>
 
-<!-- ==================== SLIDE 17: TIMESTAMP BINNING ==================== -->
+<!-- ==================== SLIDE 17: TIMESTAMP RESAMPLING ==================== -->
 <div class="slide">
   <span class="tag config">Configuration</span>
-  <h2>16. Timestamp Binning</h2>
+  <h2>16. Timestamp Resampling</h2>
   <p class="subtitle">Optional per-meter timestamp rounding to fixed intervals (5, 15, or 60 min)</p>
   <div class="two-col">
     <div class="col">
@@ -1550,7 +1550,7 @@
           <!-- DDB item -->
           <rect x="60" y="180" width="300" height="50" rx="6" fill="rgba(250,204,21,0.08)" stroke="var(--yellow)" stroke-width="1.5"/>
           <text x="210" y="200" text-anchor="middle" fill="var(--yellow)" font-size="11" font-weight="600">meter-identity DDB item</text>
-          <text x="210" y="218" text-anchor="middle" fill="var(--muted)" font-size="10">sk=daq:...:energy &nbsp; binning=<tspan fill="var(--green)" font-weight="600">15</tspan> &nbsp; purpose &nbsp; formula</text>
+          <text x="210" y="218" text-anchor="middle" fill="var(--muted)" font-size="10">sk=daq:...:energy &nbsp; resample_minutes=<tspan fill="var(--green)" font-weight="600">15</tspan> &nbsp; purpose &nbsp; formula</text>
 
           <!-- Formula -->
           <rect x="70" y="250" width="280" height="30" rx="4" fill="var(--surface)" stroke="var(--border)" stroke-width="1"/>
@@ -1565,9 +1565,9 @@
     <div class="col">
       <h3>How It Works</h3>
       <ul>
-        <li>Optional <span class="code-inline">binning</span> column (integer minutes) on <span class="code-inline">meter-identity</span> &mdash; populated by the ems_ocaml bridge</li>
+        <li>Optional <span class="code-inline">resample_minutes</span> column (integer minutes) on <span class="code-inline">meter-identity</span> &mdash; populated by the ems_ocaml bridge</li>
         <li>Absent or null &rarr; raw row written, <span class="code-inline">bin_*</span> columns NULL</li>
-        <li><span class="code-inline">BinningFunction</span> (replaces <span class="code-inline">CounterDeltaFunction</span>) holds one-reading lag per meter; emits per-bin rows when next reading arrives</li>
+        <li><span class="code-inline">ResampleFunction</span> (replaces <span class="code-inline">CounterDeltaFunction</span>) holds one-reading lag per meter; emits per-bin rows when next reading arrives</li>
         <li>Original <span class="code-inline">timestamp</span> &amp; <span class="code-inline">value</span> preserved; <span class="code-inline">bin_timestamp</span>/<span class="code-inline">bin_value</span>/<span class="code-inline">bin_method</span> added</li>
       </ul>
       <h3 style="margin-top:16px">Counter Meters</h3>
@@ -1623,7 +1623,7 @@
         <tr><td>13</td><td>Job restart</td><td><span class="dot" style="background:var(--orange)"></span>Re-read window</td><td><span class="dot" style="background:var(--orange)"></span>Possible duplicates</td><td>None</td><td>Checkpoint recovery</td></tr>
         <tr><td>14</td><td>Source idle</td><td><span class="dot" style="background:var(--muted)"></span>Nothing</td><td><span class="dot" style="background:var(--muted)"></span>Nothing</td><td>None</td><td>Resumes on reactivation</td></tr>
         <tr><td>15</td><td>Backfill on new mapping</td><td><span class="dot" style="background:var(--green)"></span>Written</td><td><span class="dot" style="background:var(--green)"></span>Backfilled by Glue</td><td>None</td><td>Auto (DDB Stream &rarr; Lambda &rarr; Glue)</td></tr>
-        <tr><td>16</td><td>Timestamp binning</td><td><span class="dot" style="background:var(--green)"></span>Written (raw ts)</td><td><span class="dot" style="background:var(--green)"></span>Per-bin rows w/ bin_value</td><td>None</td><td>Opt-in per meter via DDB</td></tr>
+        <tr><td>16</td><td>Timestamp resampling</td><td><span class="dot" style="background:var(--green)"></span>Written (raw ts)</td><td><span class="dot" style="background:var(--green)"></span>Per-bin rows w/ bin_value</td><td>None</td><td>Opt-in per meter via DDB</td></tr>
         <tr><td>17</td><td>Sensor gap fill</td><td><span class="dot" style="background:var(--green)"></span>Written</td><td><span class="dot" style="background:var(--green)"></span>Fan-out across missing bins</td><td>None</td><td>Implicit (overlap enumeration)</td></tr>
       </tbody>
     </table>

@@ -4,7 +4,7 @@ import com.enity.flink.SensorRecord
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
-/** Integration test: exercises enrich → BinningFunction.computeBins pipeline end-to-end
+/** Integration test: exercises enrich → ResampleFunction.computeBins pipeline end-to-end
   * using the pure functions, verifying delta correctness, time-proportional split,
   * and gauge linear interpolation. Includes out-of-order scenarios. */
 class EnrichmentPipelineSpec extends AnyFlatSpec with Matchers {
@@ -18,7 +18,7 @@ class EnrichmentPipelineSpec extends AnyFlatSpec with Matchers {
     hn3 = java.lang.Integer.valueOf(1), hn4 = java.lang.Integer.valueOf(1), hn5 = null,
     hn6 = null, hn7 = null, hn8 = null, hn9 = null,
     purpose = "volume",
-    binning = FifteenMin
+    resampleMinutes = FifteenMin
   )
 
   private val gaugeMapping = counterMapping.copy(
@@ -37,8 +37,8 @@ class EnrichmentPipelineSpec extends AnyFlatSpec with Matchers {
   private def epochMs(ts: String): Long = java.time.Instant.parse(ts).toEpochMilli
 
   /** Compute (timestamp, delta, isAnomaly) for a sequence of counter readings using
-    * the new BinningFunction.computeBins pure function. Sorts buffer by event time first,
-    * matching the BinningFunction operator's behavior on out-of-order arrival. */
+    * the new ResampleFunction.computeBins pure function. Sorts buffer by event time first,
+    * matching the ResampleFunction operator's behavior on out-of-order arrival. */
   private def computeDeltasWithBuffer(readings: Seq[(Double, String)]): Seq[(String, Double, Boolean)] =
     val buffered = readings.map { (value, ts) =>
       val sensor = makeSensorRecord(value, ts)
@@ -48,10 +48,10 @@ class EnrichmentPipelineSpec extends AnyFlatSpec with Matchers {
 
     buffered.sortBy(_._1).sliding(2).collect {
       case Seq((prevTs, _, prev), (curTs, _, cur)) =>
-        BinningFunction.computeBins(prev, cur, prevTs, curTs, counterMapping) match
-          case BinningFunction.Anomaly =>
+        ResampleFunction.computeBins(prev, cur, prevTs, curTs, counterMapping) match
+          case ResampleFunction.Anomaly =>
             (cur.record.timestamp, cur.cumulativeValue - prev.cumulativeValue, true)
-          case BinningFunction.Bins(rows) =>
+          case ResampleFunction.Bins(rows) =>
             // delta is in `value` field (same across all rows for a given (prev, current))
             (cur.record.timestamp, rows.headOption.map(_.value).getOrElse(0.0), false)
     }.toSeq
@@ -91,10 +91,10 @@ class EnrichmentPipelineSpec extends AnyFlatSpec with Matchers {
     val prev = BufferedReadingV2(10.0, r1, gaugeMapping)
     val curr = BufferedReadingV2(30.0, r2, gaugeMapping)
 
-    val result = BinningFunction.computeBins(prev, curr,
+    val result = ResampleFunction.computeBins(prev, curr,
       epochMs(r1.timestamp), epochMs(r2.timestamp), gaugeMapping)
     result match
-      case BinningFunction.Bins(rows) =>
+      case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 2
         rows.head.binValue.doubleValue() shouldBe 20.0 +- 1e-9   // 10:15, midpoint
         rows(1).binValue.doubleValue() shouldBe 30.0 +- 1e-9    // 10:30, equals current
@@ -125,7 +125,7 @@ class EnrichmentPipelineSpec extends AnyFlatSpec with Matchers {
       hn5 = java.lang.Integer.valueOf(50),
       hn6 = null, hn7 = null, hn8 = null, hn9 = null,
       purpose = "test",
-      binning = FifteenMin
+      resampleMinutes = FifteenMin
     )
     val enriched = MeterEnrichmentFunction.enrich(
       makeSensorRecord(99.9, "2026-03-27T10:00:00Z"), mapping

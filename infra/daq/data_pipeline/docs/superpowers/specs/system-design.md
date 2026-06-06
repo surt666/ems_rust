@@ -49,7 +49,7 @@ The system is decomposed into five Bounded Contexts, each with its own models, r
 +------------------------------------------------------------------------+
 |                    Identity & Configuration Context                     |
 |                                                                        |
-|  Meter Identity (DynamoDB), Meter Type, Binning, Hierarchy Path        |
+|  Meter Identity (DynamoDB), Meter Type, Resampling, Hierarchy Path        |
 +------------------------------------------------------------------------+
                                       ^
                                       |
@@ -102,7 +102,7 @@ The system is decomposed into five Bounded Contexts, each with its own models, r
 
 ### 2.5 Identity & Configuration Context
 
-**Responsibility:** Maintain the mapping between physical sensors (`daqId`) and logical meters (`logical_id`), including hierarchy path, meter type, and binning configuration. Propagated via CDC (DynamoDB Streams). This context is downstream of OAC — when the hierarchy changes or meters are attached/detached, those changes flow into `meter-identity` and are picked up by DFE.
+**Responsibility:** Maintain the mapping between physical sensors (`daqId`) and logical meters (`logical_id`), including hierarchy path, meter type, and resampling configuration. Propagated via CDC (DynamoDB Streams). This context is downstream of OAC — when the hierarchy changes or meters are attached/detached, those changes flow into `meter-identity` and are picked up by DFE.
 
 **Aggregate Root:** `MeterMapping`
 
@@ -203,7 +203,7 @@ A **meter** is a central domain concept. Every meter:
 ```
 Meter := {
   meter_id:           String              -- globally unique across all customers
-  meter_type:         MeterType           -- Guage or Counter (Counter Binned ?)
+  meter_type:         MeterType           -- Guage or Counter (Counter Resampled ?)
   energy_type:        EnergyType          -- Heat, Water, Electricity, Transport, etc.
   parent_meter_id:    Option<String>      -- REMOVE ? if set, this meter is a sub-meter (Not as field but as an edge)
   part_of_summation:  Bool                -- flag controlling summation participation
@@ -389,7 +389,7 @@ Logical sensor data is the enriched, curated time series stored in the `logical_
 
 **Manual corrections** (inserts and tombstone deletes) are ingested via CSV file upload or HTTPS request — they flow through the standard pipeline like any other data source, not via a side-channel. A manual meter is simply a logical meter with no underlying automated sensor data — only manually ingested records.
 
-**Binning:** When a meter has a `binning` configuration (e.g., 15 minutes) on `meter-identity`, the pipeline emits per-bin rows. **Gauges** emit one row per bin boundary in `(prev_ts, current_ts]` with the value linearly interpolated between the bracketing readings. **Counters** emit one row per bin whose **window** `[B − binSize, B]` overlaps the period `[prev_ts, current_ts]`, with `bin_value` equal to a time-proportional share of the delta — a single reading can contribute to multiple bins, and a single bin can receive contributions from multiple readings (consumer SUMs after dedup). `timestamp` and `value` carry the original reading time and the delta (counter) / instantaneous value (gauge); `bin_timestamp` / `bin_value` / `bin_method` carry the binned form. Meters without a `binning` configuration get `bin_*` = NULL (raw shape preserved). Full rules: `docs/superpowers/specs/2026-05-01-binning-rules-design.md`.
+**Resampling:** When a meter has a `resample_minutes` configuration (e.g., 15 minutes) on `meter-identity`, the pipeline emits per-bin rows. **Gauges** emit one row per bin boundary in `(prev_ts, current_ts]` with the value linearly interpolated between the bracketing readings. **Counters** emit one row per bin whose **window** `[B − binSize, B]` overlaps the period `[prev_ts, current_ts]`, with `bin_value` equal to a time-proportional share of the delta — a single reading can contribute to multiple bins, and a single bin can receive contributions from multiple readings (consumer SUMs after dedup). `timestamp` and `value` carry the original reading time and the delta (counter) / instantaneous value (gauge); `bin_timestamp` / `bin_value` / `bin_method` carry the resampled form. Meters without a `resample_minutes` configuration get `bin_*` = NULL (raw shape preserved). Full rules: `docs/superpowers/specs/2026-05-01-resampling-rules-design.md`.
 
 ```
 LogicalSensorRecord := {
@@ -405,7 +405,7 @@ LogicalSensorRecord := {
   building_id:    Option<Int>
   area_id:        Option<Int>
   group_id:       Option<Int>
-  bin_timestamp:  Option<DateTime<UTC>>  -- bin boundary (multiples of `binning` from epoch); NULL when meter has no binning
+  bin_timestamp:  Option<DateTime<UTC>>  -- bin boundary (multiples of `resample_minutes` from epoch); NULL when meter has no resampling
   bin_value:      Option<Double>         -- linearly interpolated (gauge) or time-proportional share (counter)
   bin_method:     Option<String>         -- "linear_interpolation" | "time_proportional" | "nearest_neighbor"
 }
@@ -592,10 +592,10 @@ Stage 4: ENRICH        BroadcastProcessFunction
                        Broadcast input: IdMappingChange (DDB CDC)
                        Bootstrap: parallel DDB scan (20 segments, 20K partitions)
                        Lookup: broadcast state -> bootstrap cache -> DEAD_LETTER
-                       Output: (EnrichedRecord, MeterMapping)  -- mapping carries meterType + binning
-                       (timestamp passed through un-floored; binning applied in Stage 5)
+                       Output: (EnrichedRecord, MeterMapping)  -- mapping carries meterType + resampling
+                       (timestamp passed through un-floored; resampling applied in Stage 5)
 
-Stage 5: BINNING       KeyedProcessFunction (keyed by logicalId) — replaces former CounterDeltaFunction
+Stage 5: RESAMPLING       KeyedProcessFunction (keyed by logicalId) — replaces former CounterDeltaFunction
                        One-reading-lag: prev held in buffer until next arrives
                        Gauge: bins B in (prev_ts, current_ts]; linear interpolation between (prev, current)
                               → bin_method=linear_interpolation
@@ -603,10 +603,10 @@ Stage 5: BINNING       KeyedProcessFunction (keyed by logicalId) — replaces fo
                               (i.e., bins B in (prev_ts, ceil(current_ts to grid)])
                               → time-proportional split of (current-prev), bin_method=time_proportional
                               → multiple readings can contribute to the same bin (consumer SUMs)
-                       Meters with binning=null: backward-compat (gauge passthrough; counter delta), bin_*=null
+                       Meters with resample_minutes=null: backward-compat (gauge passthrough; counter delta), bin_*=null
                        Side outputs: ANOMALY (negative counter delta), LATE_ARRIVAL (predecessor purged)
                        State: MapState[Long, BufferedReadingV2], ValueState[Long] (lastEmittedTs)
-                       Spec: docs/superpowers/specs/2026-05-01-binning-rules-design.md
+                       Spec: docs/superpowers/specs/2026-05-01-resampling-rules-design.md
 
 Stage 6: ENRICHED SINK EnrichedRecord -> unit normalization -> Row mapping -> Iceberg "logical_sensor_data"
 
@@ -628,7 +628,7 @@ EnrichedRecord := {
   buildingId:   Option<Int>
   areaId:       Option<Int>
   groupId:      Option<Int>
-  binTimestamp: Option<Long>        -- bin boundary epoch ms (NULL when meter has no binning)
+  binTimestamp: Option<Long>        -- bin boundary epoch ms (NULL when meter has no resampling)
   binValue:     Option<Double>      -- linearly interpolated (gauge) or proportional share (counter)
   binMethod:    Option<String>      -- "linear_interpolation" | "time_proportional" | "nearest_neighbor"
 }
@@ -720,7 +720,7 @@ The pipeline handles 16 distinct scenarios. Key parameters: watermark=1h, buffer
 | 13  | Job restart                 | Checkpoint recovery, possible limited duplicates                | No data loss                          |
 | 14  | Source idle (>24h)          | Idleness timeout, watermark unblocked                           | Resumes normally                      |
 | 15  | Backfill on new mapping     | DDB Stream INSERT -> Lambda -> Glue backfills `raw_data` gap    | Auto-backfilled, zero manual work     |
-| 16  | Timestamp binning           | Per-meter rule: linear interpolation (gauge) per bin in `(prev_ts, current_ts]`; time-proportional split (counter) per bin whose window overlaps `[prev_ts, current_ts]` | `bin_timestamp`, `bin_value`, `bin_method` populated |
+| 16  | Timestamp resampling           | Per-meter rule: linear interpolation (gauge) per bin in `(prev_ts, current_ts]`; time-proportional split (counter) per bin whose window overlaps `[prev_ts, current_ts]` | `bin_timestamp`, `bin_value`, `bin_method` populated |
 | 17  | Sensor gap fill             | Sensor offline → next reading triggers fan-out across missing bins (interpolated) | Multiple bin rows per delayed reading |
 
 ### 7.1 Scenario 15 — Backfill on New Meter Mapping
@@ -746,19 +746,19 @@ DDB Streams fires INSERT event on new mapping
 - Duplicate check: Glue job is skipped if one is already running for the same `daq_id`
 - Zero manual intervention required — the entire flow is event-driven
 
-### 7.2 Scenario 16 — Timestamp Binning
+### 7.2 Scenario 16 — Timestamp Resampling
 
-Per-meter alignment to fixed bin boundaries (typically 5, 15, or 60 minutes). Configured via an optional `binning` column (integer, minutes) on the `meter-identity` DynamoDB table. Implemented in `BinningFunction` as a one-reading-lag operator: a meter's previous reading is held in keyed state until the next arrives, then per-bin rows are emitted.
+Per-meter alignment to fixed bin boundaries (typically 5, 15, or 60 minutes). Configured via an optional `resample_minutes` column (integer, minutes) on the `meter-identity` DynamoDB table. Implemented in `ResampleFunction` as a one-reading-lag operator: a meter's previous reading is held in keyed state until the next arrives, then per-bin rows are emitted.
 
 **Gauge meters:** Bins `B` in `(prev_ts, current_ts]`. Each emitted bin uses linear interpolation between `(prev_ts, prev_value)` and `(current_ts, current_value)` evaluated at `B`. `bin_method = "linear_interpolation"`.
 
 **Counter meters:** Bins whose **window** `[B − binSize, B]` overlaps the reading's period `[prev_ts, current_ts]`. Each bin's `bin_value = delta × overlap / period`, where `overlap = min(current_ts, B) − max(prev_ts, B − binSize)`. Energy is conserved per reading: `sum(bin_value)` across all bins of one reading equals the reading's `value` (delta). Energy is also conserved per bin across readings: when a reading boundary falls inside a bin window, that bin gets contributions from both the reading before and the reading after. **Consumers must SUM `bin_value` per `(logical_id, bin_timestamp)` after dedup on `(logical_id, timestamp, bin_timestamp)`.** `bin_method = "time_proportional"`.
 
-**`binning IS NULL`:** Backward-compatible passthrough — gauges emit immediately, counters compute deltas as before, and `bin_*` columns are NULL.
+**`resample_minutes IS NULL`:** Backward-compatible passthrough — gauges emit immediately, counters compute deltas as before, and `bin_*` columns are NULL.
 
 **Unit normalization:** Both `value` and `bin_value` are scaled by the unit factor (e.g., raw `1` reported as `"Energy (100 Wh)"` → `100 Wh`). Glue and Flink share the same conversion table — output is bit-identical for the same input.
 
-Full rules and edge cases: `docs/superpowers/specs/2026-05-01-binning-rules-design.md`.
+Full rules and edge cases: `docs/superpowers/specs/2026-05-01-resampling-rules-design.md`.
 
 ### 7.3 Scenario 17 — Sensor Gap Fill
 
@@ -892,7 +892,7 @@ Permission traversal uses precedence: `Root(5) > Partner(4) > Company(3) > Prope
 - [ ] Scheduled Glue jobs for pre-aggregated query tables
 - [ ] QuickSight data source configuration
 - [ ] Meter hierarchy CRUD in EMS (attach/detach sub-meters, summation flag management)
-- [ ] Binning and interpolation on-demand vs. pre-computed tradeoff
+- [ ] Resampling and interpolation on-demand vs. pre-computed tradeoff
 - [ ] **Event subscription streams:** Requirements doc mentions subscribing to sensor data and logical sensor data change events. Could be implemented as additional Kinesis sinks for raw and/or enriched data (straightforward to add in Flink). Need to define the use cases first — e.g., real-time dashboards, alarm triggers, external integrations — before deciding which streams and what filtering.
 - [ ] **"Live Sensor Data" definition:** Terminology doc defines it as "most recent reading, no older than 30 days (?)" with an unsettled threshold. No clear need for pipeline enforcement — likely a query-time/frontend concern if needed at all. Revisit if staleness detection or alerting on silent sensors becomes a requirement.
 - [ ] **Data Provider as domain entity:** The terminology distinguishes "Data Provider" (contractual entity — Datahub, Brunata, Enity) from "Data Source" (device/API). Currently not modeled. Needs decision: is it a domain entity in OAC (with agreement details, allowed volumes, contact info) or purely operational metadata outside the system? Affects per-provider rate limiting and billing.

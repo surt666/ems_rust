@@ -32,7 +32,7 @@ let has_cycle ~self_id formula =
 let sensor_not_found (id : Sensor_id.t) =
   Errors.Not_found (Node_id.make Level.Hn9 (Sensor_id.id id))
 
-let attach ?(formula = Formula.Identity) ?unit ?binning ~parent
+let attach ?(formula = Formula.Identity) ?unit ?resample_minutes ~parent
     ~daq_id ~purpose ~meter_type () =
   let* parent_node =
     match Effects.get_node parent with
@@ -40,9 +40,9 @@ let attach ?(formula = Formula.Identity) ?unit ?binning ~parent
     | Some n -> Ok n
   in
   let* () =
-    match binning with
+    match resample_minutes with
     | Some b when b <= 0 ->
-        Error (validation_err "binning must be > 0 minutes")
+        Error (validation_err "resample_minutes must be > 0 minutes")
     | _ -> Ok ()
   in
   let parent_level = Node_id.level parent_node.Node.id in
@@ -71,7 +71,7 @@ let attach ?(formula = Formula.Identity) ?unit ?binning ~parent
         meter_type;
         unit;
         formula;
-        binning;
+        resample_minutes;
       }
     in
     let edge =

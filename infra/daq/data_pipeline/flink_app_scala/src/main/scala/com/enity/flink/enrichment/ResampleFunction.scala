@@ -11,15 +11,20 @@ import org.slf4j.LoggerFactory
 import java.time.Instant
 import scala.jdk.CollectionConverters.*
 
-/** Keyed by logicalId. Holds one-reading lag per meter and emits per-bin rows when the
-  * next reading arrives. See `docs/superpowers/specs/2026-05-01-binning-rules-design.md`. */
-class BinningFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
+/** Resamples irregular readings onto a fixed time grid. Keyed by logicalId, holds one-reading
+  * lag per meter and emits per-bin rows when the next reading arrives. See
+  * `docs/superpowers/specs/2026-05-01-resampling-rules-design.md`.
+  *
+  * Note: the emitted grid points and the `bin_*` output columns retain the "bin" name (the
+  * persisted Iceberg schema is unchanged); only the operator and the per-meter config field
+  * (`resampleMinutes`) use the resample vocabulary. */
+class ResampleFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
     extends KeyedProcessFunction[Integer, (EnrichedRecord, MeterMapping), EnrichedRecord]:
 
   @transient private lazy val logger = LoggerFactory.getLogger(getClass)
 
   /** Buffer: event timestamp millis → BufferedReadingV2.
-    * Carries the EnrichedRecord plus its mapping (meterType + binning). */
+    * Carries the EnrichedRecord plus its mapping (meterType + resampleMinutes). */
   @transient private var readingBuffer: MapState[java.lang.Long, BufferedReadingV2] = _
 
   /** Track the latest timestamp for which we've emitted bins, to avoid re-emission. */
@@ -30,6 +35,8 @@ class BinningFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
   @transient private var latestBufferedTs: ValueState[java.lang.Long] = _
 
   override def open(parameters: Configuration): Unit =
+    // State descriptor names are kept as "binning-*" to preserve savepoint/checkpoint
+    // restore compatibility — they are operator state identity, not user-facing terms.
     readingBuffer = getRuntimeContext.getMapState(
       new MapStateDescriptor[java.lang.Long, BufferedReadingV2](
         "binning-reading-buffer",
@@ -57,9 +64,9 @@ class BinningFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
   ): Unit =
     val (record, mapping) = value
 
-    // Backward-compat fast path for unconfigured meters (binning=null):
+    // Backward-compat fast path for unconfigured meters (resampleMinutes=null):
     // gauges pass through immediately; counters fall through to the buffer-and-delta path.
-    if mapping.binning == null && mapping.meterType == "gauge" then
+    if mapping.resampleMinutes == null && mapping.meterType == "gauge" then
       out.collect(record)
       return
 
@@ -139,9 +146,9 @@ class BinningFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
   ): Unit =
     val mapping = current.mapping
 
-    // Counter with binning=null: preserve old CounterDeltaFunction behavior — emit one
+    // Counter with resampleMinutes=null: preserve old CounterDeltaFunction behavior — emit one
     // row per (prev, current) pair with value=delta, bin_* fields null.
-    if mapping.binning == null then
+    if mapping.resampleMinutes == null then
       mapping.meterType match
         case "counter" =>
           if current.cumulativeValue < prev.cumulativeValue then
@@ -158,8 +165,8 @@ class BinningFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
           out.collect(current.record)
       return
 
-    BinningFunction.computeBins(prev, current, prevTs, currentTs, mapping) match
-      case BinningFunction.Anomaly =>
+    ResampleFunction.computeBins(prev, current, prevTs, currentTs, mapping) match
+      case ResampleFunction.Anomaly =>
         ctx.output(SideOutputTags.ANOMALY, ErrorRecord(
           errorType = "anomaly",
           timestamp = current.record.timestamp,
@@ -167,7 +174,7 @@ class BinningFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
           payload = s"value=${current.cumulativeValue}, previous=${prev.cumulativeValue}",
           error = s"Negative counter delta: ${current.cumulativeValue} - ${prev.cumulativeValue}"
         ))
-      case BinningFunction.Bins(rows) =>
+      case ResampleFunction.Bins(rows) =>
         rows.foreach(out.collect)
 
   /** Find the entry with the largest timestamp strictly less than the given timestamp.
@@ -194,7 +201,7 @@ class BinningFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
       .toSeq
       .sortBy(_._1)
 
-object BinningFunction:
+object ResampleFunction:
 
   /** `bin_method` values written to `logical_meter_data`. Must stay in sync with the
     * Python equivalents in `glue/late_recomputation.py` — change in lock-step. */
@@ -214,7 +221,7 @@ object BinningFunction:
       currentTs: Long,
       mapping: MeterMapping
   ): Result =
-    val binSizeMs = mapping.binning.intValue().toLong * 60L * 1000L
+    val binSizeMs = mapping.resampleMinutes.intValue().toLong * 60L * 1000L
 
     mapping.meterType match
       case "counter" =>

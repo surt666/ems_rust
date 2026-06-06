@@ -217,7 +217,7 @@ type t = {
   meter_type : meter_type;
   unit       : string option;
   formula    : Formula.t;
-  binning    : int option;      (* aggregation bin size in minutes (> 0); None = unbinned *)
+  resample_minutes : int option;   (* resample interval in minutes (> 0); None = no resampling *)
 }
 ```
 
@@ -237,9 +237,9 @@ key so it's distinguishable from history without a filter.
 | `gsi1pk`      | `S`                             | `S`                   |
 | `gsi1sk`      | sensor `path`                   | sensor `path`         |
 | `daq_id`      | current device                  | frozen historical     |
-| `purpose`, `meter_type`, `unit`, `formula`, `binning` | current | snapshot at demotion time |
+| `purpose`, `meter_type`, `unit`, `formula`, `resample_minutes` | current | snapshot at demotion time |
 
-`binning` (and `unit`) are only written when set. The sensor edge row (in the
+`resample_minutes` (and `unit`) are only written when set. The sensor edge row (in the
 parent node's partition) is written once at attach time and survives device
 replacements:
 

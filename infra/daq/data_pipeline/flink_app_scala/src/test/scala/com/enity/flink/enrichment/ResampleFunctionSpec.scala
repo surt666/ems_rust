@@ -5,12 +5,12 @@ import org.scalatest.matchers.should.Matchers
 
 import java.time.Instant
 
-class BinningFunctionSpec extends AnyFlatSpec with Matchers {
+class ResampleFunctionSpec extends AnyFlatSpec with Matchers {
 
   private val FifteenMin = java.lang.Integer.valueOf(15)
   private val OneHour = java.lang.Integer.valueOf(60)
 
-  private def mapping(meterType: String, binning: java.lang.Integer = FifteenMin): MeterMapping =
+  private def mapping(meterType: String, resampleMinutes: java.lang.Integer = FifteenMin): MeterMapping =
     MeterMapping(
       logicalId = 101,
       meterType = meterType,
@@ -18,7 +18,7 @@ class BinningFunctionSpec extends AnyFlatSpec with Matchers {
       hn3 = null, hn4 = java.lang.Integer.valueOf(8), hn5 = null,
       hn6 = null, hn7 = null, hn8 = null, hn9 = null,
       purpose = "test",
-      binning = binning
+      resampleMinutes = resampleMinutes
     )
 
   private def enriched(value: Double, ts: String): EnrichedRecord =
@@ -42,33 +42,33 @@ class BinningFunctionSpec extends AnyFlatSpec with Matchers {
   // ── enumerateBinsIn ──
 
   "enumerateBinsIn" should "return empty when binSize is zero" in {
-    BinningFunction.enumerateBinsIn(0L, 1000L, 0L) shouldBe empty
+    ResampleFunction.enumerateBinsIn(0L, 1000L, 0L) shouldBe empty
   }
 
   it should "return empty when currentTs <= prevTs" in {
-    BinningFunction.enumerateBinsIn(1000L, 1000L, 100L) shouldBe empty
-    BinningFunction.enumerateBinsIn(1000L, 500L, 100L) shouldBe empty
+    ResampleFunction.enumerateBinsIn(1000L, 1000L, 100L) shouldBe empty
+    ResampleFunction.enumerateBinsIn(1000L, 500L, 100L) shouldBe empty
   }
 
   it should "be left-exclusive: prevTs exactly on boundary is not emitted" in {
     val binMs = 15L * 60L * 1000L
     val prev = epochMs("2026-05-01T10:00:00Z")
     val curr = epochMs("2026-05-01T10:14:00Z")
-    BinningFunction.enumerateBinsIn(prev, curr, binMs) shouldBe empty
+    ResampleFunction.enumerateBinsIn(prev, curr, binMs) shouldBe empty
   }
 
   it should "be right-inclusive: currentTs exactly on boundary is emitted" in {
     val binMs = 15L * 60L * 1000L
     val prev = epochMs("2026-05-01T10:00:00Z")
     val curr = epochMs("2026-05-01T10:15:00Z")
-    BinningFunction.enumerateBinsIn(prev, curr, binMs) shouldBe Seq(epochMs("2026-05-01T10:15:00Z"))
+    ResampleFunction.enumerateBinsIn(prev, curr, binMs) shouldBe Seq(epochMs("2026-05-01T10:15:00Z"))
   }
 
   it should "enumerate multiple bins across a gap" in {
     val binMs = 15L * 60L * 1000L
     val prev = epochMs("2026-05-01T10:00:00Z")
     val curr = epochMs("2026-05-01T10:45:00Z")
-    BinningFunction.enumerateBinsIn(prev, curr, binMs) shouldBe Seq(
+    ResampleFunction.enumerateBinsIn(prev, curr, binMs) shouldBe Seq(
       epochMs("2026-05-01T10:15:00Z"),
       epochMs("2026-05-01T10:30:00Z"),
       epochMs("2026-05-01T10:45:00Z")
@@ -79,7 +79,7 @@ class BinningFunctionSpec extends AnyFlatSpec with Matchers {
     val binMs = 15L * 60L * 1000L
     val prev = epochMs("2026-05-01T10:08:00Z")
     val curr = epochMs("2026-05-01T10:23:00Z")
-    BinningFunction.enumerateBinsIn(prev, curr, binMs) shouldBe Seq(epochMs("2026-05-01T10:15:00Z"))
+    ResampleFunction.enumerateBinsIn(prev, curr, binMs) shouldBe Seq(epochMs("2026-05-01T10:15:00Z"))
   }
 
   // ── Counter time-proportional split ──
@@ -88,18 +88,18 @@ class BinningFunctionSpec extends AnyFlatSpec with Matchers {
     val m = mapping("counter")
     val prev = buffered(150.0, "2026-05-01T10:00:00Z", m)
     val curr = buffered(140.0, "2026-05-01T10:15:00Z", m)
-    BinningFunction.computeBins(prev, curr, epochMs(prev.record.timestamp), epochMs(curr.record.timestamp), m) shouldBe
-      BinningFunction.Anomaly
+    ResampleFunction.computeBins(prev, curr, epochMs(prev.record.timestamp), epochMs(curr.record.timestamp), m) shouldBe
+      ResampleFunction.Anomaly
   }
 
   it should "emit single bin in normal-spaced period" in {
     val m = mapping("counter")
     val prev = buffered(100.0, "2026-05-01T10:00:00Z", m)
     val curr = buffered(115.0, "2026-05-01T10:15:00Z", m)
-    val result = BinningFunction.computeBins(prev, curr,
+    val result = ResampleFunction.computeBins(prev, curr,
       epochMs(prev.record.timestamp), epochMs(curr.record.timestamp), m)
     result match
-      case BinningFunction.Bins(rows) =>
+      case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 1
         rows.head.value shouldBe 15.0
         rows.head.binValue.doubleValue() shouldBe 15.0 +- 1e-9
@@ -112,10 +112,10 @@ class BinningFunctionSpec extends AnyFlatSpec with Matchers {
     val m = mapping("counter")
     val prev = buffered(100.0, "2026-05-01T10:00:00Z", m)
     val curr = buffered(120.0, "2026-05-01T10:30:00Z", m)
-    val result = BinningFunction.computeBins(prev, curr,
+    val result = ResampleFunction.computeBins(prev, curr,
       epochMs(prev.record.timestamp), epochMs(curr.record.timestamp), m)
     result match
-      case BinningFunction.Bins(rows) =>
+      case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 2
         rows.foreach(_.value shouldBe 20.0)
         rows.foreach(_.binMethod shouldBe "time_proportional")
@@ -129,10 +129,10 @@ class BinningFunctionSpec extends AnyFlatSpec with Matchers {
     val m = mapping("counter")
     val prev = buffered(100.0, "2026-05-01T10:08:00Z", m)
     val curr = buffered(122.0, "2026-05-01T10:30:00Z", m)
-    val result = BinningFunction.computeBins(prev, curr,
+    val result = ResampleFunction.computeBins(prev, curr,
       epochMs(prev.record.timestamp), epochMs(curr.record.timestamp), m)
     result match
-      case BinningFunction.Bins(rows) =>
+      case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 2
         rows.head.binValue.doubleValue() shouldBe 7.0 +- 1e-9
         rows(1).binValue.doubleValue() shouldBe 15.0 +- 1e-9
@@ -147,10 +147,10 @@ class BinningFunctionSpec extends AnyFlatSpec with Matchers {
     val m = mapping("counter")
     val prev = buffered(0.0, "2026-05-01T09:54:29Z", m)
     val curr = buffered(100.0, "2026-05-01T10:09:33Z", m)
-    val result = BinningFunction.computeBins(prev, curr,
+    val result = ResampleFunction.computeBins(prev, curr,
       epochMs(prev.record.timestamp), epochMs(curr.record.timestamp), m)
     result match
-      case BinningFunction.Bins(rows) =>
+      case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 2
         val byBin = rows.map(r => r.binTimestamp.longValue() -> r.binValue.doubleValue()).toMap
         byBin(epochMs("2026-05-01T10:00:00Z")) shouldBe (100.0 * 331.0 / 904.0) +- 1e-9
@@ -166,10 +166,10 @@ class BinningFunctionSpec extends AnyFlatSpec with Matchers {
     val m = mapping("gauge")
     val prev = buffered(10.0, "2026-05-01T10:00:00Z", m)
     val curr = buffered(20.0, "2026-05-01T10:30:00Z", m)
-    val result = BinningFunction.computeBins(prev, curr,
+    val result = ResampleFunction.computeBins(prev, curr,
       epochMs(prev.record.timestamp), epochMs(curr.record.timestamp), m)
     result match
-      case BinningFunction.Bins(rows) =>
+      case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 2
         rows.head.binValue.doubleValue() shouldBe 15.0 +- 1e-9
         rows(1).binValue.doubleValue() shouldBe 20.0 +- 1e-9
@@ -181,10 +181,10 @@ class BinningFunctionSpec extends AnyFlatSpec with Matchers {
     val m = mapping("gauge")
     val prev = buffered(10.0, "2026-05-01T10:00:00Z", m)
     val curr = buffered(20.0, "2026-05-01T10:15:00Z", m)
-    val result = BinningFunction.computeBins(prev, curr,
+    val result = ResampleFunction.computeBins(prev, curr,
       epochMs(prev.record.timestamp), epochMs(curr.record.timestamp), m)
     result match
-      case BinningFunction.Bins(rows) => rows.head.value shouldBe 20.0
+      case ResampleFunction.Bins(rows) => rows.head.value shouldBe 20.0
       case _ => fail("expected Bins")
   }
 
@@ -192,10 +192,10 @@ class BinningFunctionSpec extends AnyFlatSpec with Matchers {
     val m = mapping("gauge")
     val prev = buffered(0.0, "2026-05-01T10:00:00Z", m)
     val curr = buffered(60.0, "2026-05-01T11:00:00Z", m)
-    val result = BinningFunction.computeBins(prev, curr,
+    val result = ResampleFunction.computeBins(prev, curr,
       epochMs(prev.record.timestamp), epochMs(curr.record.timestamp), m)
     result match
-      case BinningFunction.Bins(rows) =>
+      case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 4
         rows.map(_.binValue.doubleValue()) shouldBe Seq(15.0, 30.0, 45.0, 60.0)
       case _ => fail("expected Bins")
@@ -207,10 +207,10 @@ class BinningFunctionSpec extends AnyFlatSpec with Matchers {
     val m = mapping("gauge")
     val prev = buffered(10.0, "2026-05-01T10:01:00Z", m)
     val curr = buffered(20.0, "2026-05-01T10:14:00Z", m)
-    val result = BinningFunction.computeBins(prev, curr,
+    val result = ResampleFunction.computeBins(prev, curr,
       epochMs(prev.record.timestamp), epochMs(curr.record.timestamp), m)
     result match
-      case BinningFunction.Bins(rows) => rows shouldBe empty
+      case ResampleFunction.Bins(rows) => rows shouldBe empty
       case _ => fail("expected Bins")
   }
 
@@ -218,10 +218,10 @@ class BinningFunctionSpec extends AnyFlatSpec with Matchers {
     val m = mapping("counter", OneHour)
     val prev = buffered(100.0, "2026-05-01T10:00:00Z", m)
     val curr = buffered(124.0, "2026-05-01T11:00:00Z", m)
-    val result = BinningFunction.computeBins(prev, curr,
+    val result = ResampleFunction.computeBins(prev, curr,
       epochMs(prev.record.timestamp), epochMs(curr.record.timestamp), m)
     result match
-      case BinningFunction.Bins(rows) =>
+      case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 1
         rows.head.binValue.doubleValue() shouldBe 24.0 +- 1e-9
       case _ => fail("expected Bins")
@@ -231,10 +231,10 @@ class BinningFunctionSpec extends AnyFlatSpec with Matchers {
     val m = mapping("unknown_type")
     val prev = buffered(10.0, "2026-05-01T10:00:00Z", m)
     val curr = buffered(20.0, "2026-05-01T10:15:00Z", m)
-    val result = BinningFunction.computeBins(prev, curr,
+    val result = ResampleFunction.computeBins(prev, curr,
       epochMs(prev.record.timestamp), epochMs(curr.record.timestamp), m)
     result match
-      case BinningFunction.Bins(rows) =>
+      case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 1
         rows.head.value shouldBe 20.0
         rows.head.binTimestamp shouldBe null

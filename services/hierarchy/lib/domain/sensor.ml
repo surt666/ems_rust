@@ -13,10 +13,11 @@ type t = {
   meter_type : meter_type;
   unit : string option;
   formula : Formula.t;
-  (* Aggregation bin size in minutes. Typical values: 5, 15, 60. When set,
+  (* Resample interval in minutes. Typical values: 5, 15, 60. When set,
      must be > 0; the downstream timeseries store uses it to know how to
-     bucket raw readings. None = no binning configured for this sensor. *)
-  binning : int option;
+     resample raw readings onto a fixed time grid. None = no resampling
+     configured for this sensor. *)
+  resample_minutes : int option;
 }
 
 let path_sep = "|"

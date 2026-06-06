@@ -1,0 +1,7 @@
+[2026-05-04 08.03.26] [DEBUG] HTTP GET: https://www.githubstatus.com/api/v2/incidents/unresolved.json
+[2026-05-04 08.03.26] [DEBUG] RESPONSE (OK): {"page":{"id":"kctbh9vrtdwd","name":"GitHub","url":"https://www.githubstatus.com","time_zone":"Etc/UTC","updated_at":"2026-05-04T04:19:16.183Z"},"incidents":[]}
+[2026-05-04 08.03.26] [DEBUG] HTTP GET: https://raw.githubusercontent.com/github/gh-gei/main/LATEST-VERSION.txt
+[2026-05-04 08.03.26] [DEBUG] RESPONSE (OK): v1.29.0
+
+[2026-05-04 08.03.26] [WARNING] You are running an old version of the gei CLI [v1.27.0]. The latest version is v1.29.0.
+[2026-05-04 08.03.26] [WARNING] Please update by running: gh extension upgrade gei

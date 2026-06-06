@@ -32,7 +32,7 @@ When a meter starts sending data before its mapping is added to `meter-identity`
 
 - Backfill must apply the same enrichment logic (unit mapping, counter delta) as the Flink pipeline to keep data consistent
 - Counter delta backfill needs records in timestamp order — batch job can sort, unlike streaming
-- Binning should also apply during backfill
+- Resampling should also apply during backfill
 - Need idempotency to avoid duplicate records if backfill overlaps with streaming data
 
 ## Switch Kinesis Consumers to Enhanced Fan-Out (EFO)
