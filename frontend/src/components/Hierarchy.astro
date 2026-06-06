@@ -5,8 +5,10 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 <div _="on click
           set w to closest .icon-wrapper to event.target
           if w is null then exit end
+          set row to closest <li/> to w
+          set list to first .nested-list in row
+          if list is null then exit end
           toggle .tree-toggle-expanded on first .tree-toggle in w
-          set list to the next .nested-list from w
           if the @style of list is 'display:none;' then
             set the @style of list to ''
           else
