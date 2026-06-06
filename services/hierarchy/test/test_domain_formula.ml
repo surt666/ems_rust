@@ -115,6 +115,34 @@ let to_string_renders_minimal_parens () =
   Alcotest.(check string) "renders with minimal parens"
     "abs(self - a - b)" (expr_to_string e)
 
+let parse_ok s expected =
+  match Ocaml_lambda_hierarchy.Formula_parser.parse s with
+  | Ok e -> Alcotest.(check string) ("parse " ^ s)
+              (Ocaml_lambda_hierarchy.Formula.expr_to_string expected)
+              (Ocaml_lambda_hierarchy.Formula.expr_to_string e)
+  | Error m -> Alcotest.failf "parse %S failed: %s" s m
+
+let parse_err s =
+  match Ocaml_lambda_hierarchy.Formula_parser.parse s with
+  | Ok _ -> Alcotest.failf "expected parse error for %S" s
+  | Error _ -> ()
+
+let parser_precedence_and_assoc () =
+  let open Ocaml_lambda_hierarchy.Formula in
+  parse_ok "self - a - b" (Sub (Sub (Self, Ref "a"), Ref "b"));
+  parse_ok "self + a * b" (Add (Self, Mul (Ref "a", Ref "b")));
+  parse_ok "(self + a) * b" (Mul (Add (Self, Ref "a"), Ref "b"));
+  parse_ok "abs(self - a - b)" (Abs (Sub (Sub (Self, Ref "a"), Ref "b")));
+  parse_ok "self * -1" (Mul (Self, Sub (Num 0., Num 1.)));
+  parse_ok "2.5 * self" (Mul (Num 2.5, Self))
+
+let parser_rejects_garbage () =
+  parse_err "";
+  parse_err "self +";
+  parse_err "abs self";
+  parse_err "(self + a";
+  parse_err "self # a"
+
 let tests =
   [
     Alcotest.test_case "Identity constructs"    `Quick identity_constructs;
@@ -132,4 +160,6 @@ let tests =
     Alcotest.test_case "referenced_ids zero"         `Quick referenced_ids_zero_empty;
     Alcotest.test_case "expr_aliases distinct/in order" `Quick expr_aliases_distinct_in_order;
     Alcotest.test_case "expr_to_string renders minimal parens" `Quick to_string_renders_minimal_parens;
+    Alcotest.test_case "parser precedence/assoc" `Quick parser_precedence_and_assoc;
+    Alcotest.test_case "parser rejects garbage"  `Quick parser_rejects_garbage;
   ]
