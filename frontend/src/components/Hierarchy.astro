@@ -2,7 +2,20 @@
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 ---
 <div id="container" class="sidebar-label">Hierarki</div>
-<div>
+<div _="on click
+          set w to closest .icon-wrapper to event.target
+          if w is null then exit end
+          toggle .tree-toggle-expanded on first .tree-toggle in w
+          set list to the next .nested-list from w
+          if the @style of list is 'display:none;' then
+            set the @style of list to ''
+          else
+            if the innerHTML of list is '' then
+              send loadChildren to w
+            else
+              set the @style of list to 'display:none;'
+            end
+          end">
     <ul class="nested-list">
         <li hx-get={`${API_BASE_URL}/hierarchy/query/nodes`}
             hx-vals="js:{user: localStorage.getItem('loginId')}"

@@ -248,18 +248,17 @@ let list_item ~id_str ~level ~user ~node_name ~parent_path ~is_leaf
       [ data ~suffix:"id" "%s" id_str;
         data ~suffix:"path" "%s" current_path ]
       [ div
+          (* The fold toggle is handled by a single delegated hyperscript
+             listener on the persisted sidebar wrapper (frontend
+             Hierarchy.astro), not per-node, so it survives Astro view-transition
+             navigations. This div keeps only the htmx attributes that load
+             children when it receives the `loadChildren` event. *)
           [ class_ "icon-wrapper";
             hx_get "/hierarchy/query/nodes?id=%s&user=%s&path=%s"
               (pct id_str) (pct user) (pct current_path);
             Hx.request {|{"noHeaders": true}|};
             Hx.target "next .nested-list";
-            Hx.trigger "loadChildren";
-            Hx.__
-              "on click toggle .tree-toggle-expanded on first .tree-toggle \
-               in me then get the next .nested-list then if its @style is \
-               'display:none;' then set its @style to '' else if its \
-               innerHTML is '' then send loadChildren to me else set its \
-               @style to 'display:none;' end end" ]
+            Hx.trigger "loadChildren" ]
           [ toggle ];
         icon;
         a
