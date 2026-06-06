@@ -172,7 +172,7 @@ in the owning `hn2`'s `schema.sensors`.
   "purpose": "electricity",
   "meter_type": "counter",
   "unit": "kWh",
-  "resampling": 15
+  "resample_minutes": 15
 }
 ```
 
@@ -184,10 +184,13 @@ in the owning `hn2`'s `schema.sensors`.
 | meter_type  | yes      | `counter` or `gauge`                               |
 | unit        | no       |                                                    |
 | resample_minutes | no    | resample interval in minutes, `> 0`; accepts an int or a numeric string (legacy key `binning` still accepted) |
+| formula          | no    | `{"kind":"identity"\|"zero"\|"expr", "expr": <text>, "refs": <object or JSON string>}`; default `identity`. For `expr`, `expr` is a text formula over `self`, numbers, `+ - * /`, `abs()`, and aliases; `refs` maps each alias to a sensor id (`"S#<n>"`). Every alias used in the expression must be bound; refs with unused aliases are rejected. Cross-sensor references are scoped to the owning HN2 company. |
 
 Response — the created sensor (mirrors `Api_json.sensor_to_json`). `path` is
 the pipe-separated ancestry ending in the sensor id; `unit`/`resample_minutes` are
-`null` when unset:
+`null` when unset. `formula` is always present: `{"kind":"identity"}` by
+default, or for `expr` formulas also includes `"expr"` (the text) and `"refs"`
+(the alias-to-sensor-id map):
 
 ```json
 {
@@ -198,7 +201,8 @@ the pipe-separated ancestry ending in the sensor id; `unit`/`resample_minutes` a
   "purpose": "electricity",
   "meter_type": "counter",
   "unit": "kWh",
-  "resampling": 15
+  "resample_minutes": 15,
+  "formula": { "kind": "identity" }
 }
 ```
 
@@ -451,7 +455,7 @@ GET /query/list_sensors?parent=HN6%23600
       "purpose": "electricity",
       "meter_type": "counter",
       "unit": "kWh",
-      "resampling": 15
+      "resample_minutes": 15
     }
   ]
 }

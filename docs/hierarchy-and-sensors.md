@@ -268,6 +268,15 @@ allocates the sensor's int id from the `count#S` counter and writes three rows:
 sensor/edge pairs appeared under load — see commit `665c959 feat(repo/dynamo):
 sensor ops with TransactWriteItems-backed replace`.
 
+A formula may be supplied at attach time (default `Identity` when omitted). The
+three supported variants are `Identity` (`S' = Self`), `Zero` (`S' = 0`), and
+`Expr` — a text expression over `self`, numeric literals, `+ - * /`, `abs()`,
+parentheses, and named aliases; each alias is bound to another sensor id via a
+`refs` map and resolves to that sensor's computed value `S'`. Alias bindings are
+scoped to the owning HN2 company: references to sensors outside that company are
+rejected. The backend also rejects formulas that introduce a cycle in the
+reference graph.
+
 ### 5.4 Replace device — atomic
 
 A sensor's `sk` includes its `created` timestamp, so updating in place is not
