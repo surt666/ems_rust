@@ -47,6 +47,7 @@ type _ Effect.t +=
   | Delete_sensor         : { sensor_id : Sensor_id.t; parent : Node_id.t }
                               -> unit Effect.t
   | Get_sensor_reading    : Sensor_id.t -> float option Effect.t
+  | List_sensors_under_path : string -> Sensor.t list Effect.t
 
 let get_node id                 = Effect.perform (Get_node id)
 let list_children ?kind parent = Effect.perform (List_children (parent, kind))
@@ -73,6 +74,9 @@ let delete_sensor ~sensor_id ~parent =
 
 let get_sensor_reading id =
   Effect.perform (Get_sensor_reading id)
+
+let list_sensors_under_path prefix =
+  Effect.perform (List_sensors_under_path prefix)
 
 type _ Effect.t +=
   | Put_user    : User.t -> unit Effect.t

@@ -193,6 +193,16 @@ let run (st : state) (f : unit -> 'a) : 'a =
               Some (fun k -> continue k ())
           | Effects.Get_sensor_reading _id ->
               Some (fun k -> continue k None)
+          | Effects.List_sensors_under_path prefix ->
+              let acc =
+                Hashtbl.fold
+                  (fun _ rows acc ->
+                    match active_of_rows rows with
+                    | Some s when String.starts_with ~prefix s.Sensor.path -> s :: acc
+                    | _ -> acc)
+                  st.sensors []
+              in
+              Some (fun k -> continue k acc)
           | Effects.Put_user u ->
               Hashtbl.replace st.users (User_id.to_string u.User.id) u;
               Some (fun k -> continue k ())

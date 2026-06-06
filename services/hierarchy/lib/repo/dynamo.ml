@@ -506,6 +506,18 @@ let query_sensor_ids cfg parent =
           | _ -> None)
         rows
 
+(* All active sensors whose gsi1sk (= path) begins with [path_prefix].
+   gsi1 projects ALL, so items decode directly. *)
+let query_sensors_under_path cfg ~path_prefix =
+  let rows = query_gsi_partition cfg ~gsi1pk_v:Codec.sensor_gsi1pk ~path_prefix in
+  List.filter_map
+    (fun kvs ->
+      match (List.assoc_opt "sk" kvs : Dyn.attribute_value option) with
+      | Some (Dyn.S sk) when String.starts_with ~prefix:active_sk_prefix sk ->
+          (match Codec.sensor_of_item kvs with Ok s -> Some s | Error _ -> None)
+      | _ -> None)
+    rows
+
 let transact_replace cfg ~old_created ~new_sensor =
   let old_item =
     Codec.sensor_to_item ~active:true
@@ -773,6 +785,9 @@ let run (cfg : cfg) (f : unit -> 'a) : 'a =
           | Effects.List_sensor_ids parent ->
               Some (fun (k : (a, _) continuation) ->
                 continue k (query_sensor_ids cfg parent))
+          | Effects.List_sensors_under_path prefix ->
+              Some (fun (k : (a, _) continuation) ->
+                continue k (query_sensors_under_path cfg ~path_prefix:prefix))
           | Effects.Replace_sensor_device { old_created; new_sensor } ->
               transact_replace cfg ~old_created ~new_sensor;
               Some (fun (k : (a, _) continuation) -> continue k ())

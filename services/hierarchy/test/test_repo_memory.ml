@@ -209,3 +209,48 @@ let tests =
   [
     Alcotest.test_case "blocked list and delete" `Quick blocked_list_and_delete;
   ]
+
+let list_sensors_under_path_filters_by_prefix () =
+  let st = Memory.empty () in
+  let mk id path =
+    Sensor.{
+      id = Sensor_id.make id;
+      created = Ptime.epoch;
+      daq_id = Printf.sprintf "daq:%d" id;
+      path;
+      purpose = "Electricity";
+      meter_type = Sensor.Counter;
+      unit = Some "kWh";
+      formula = Formula.Identity;
+      resample_minutes = None;
+    }
+  in
+  let seed (s : Sensor.t) =
+    Memory.run st (fun () ->
+      Effects.add_sensor ~build:(fun ~id:_ ->
+        (s, { Effects.from_ = "HN0#root"; to_ = Sensor_id.to_string s.Sensor.id;
+              kind = Edge_kind.Has_sensor; name = ""; created = Ptime.epoch;
+              self_path = Some s.Sensor.path }))
+      |> Result.get_ok |> ignore)
+  in
+  seed (mk 1 "HN0#root|HN1#10|HN2#200|HN3#1|S#1");
+  seed (mk 2 "HN0#root|HN1#10|HN2#200|HN3#2|S#2");
+  seed (mk 3 "HN0#root|HN1#10|HN2#999|HN3#3|S#3");
+  let got =
+    Memory.run st (fun () ->
+      Effects.list_sensors_under_path "HN0#root|HN1#10|HN2#200|")
+  in
+  Alcotest.(check int) "two sensors under company HN2#200" 2 (List.length got);
+  Alcotest.(check bool) "excludes other company" true
+    (not (List.exists (fun (s : Sensor.t) ->
+       s.Sensor.path = "HN0#root|HN1#10|HN2#999|HN3#3|S#3") got));
+  Alcotest.(check bool) "includes S#1" true
+    (List.exists (fun (s : Sensor.t) -> s.Sensor.daq_id = "daq:1") got);
+  Alcotest.(check bool) "includes S#2" true
+    (List.exists (fun (s : Sensor.t) -> s.Sensor.daq_id = "daq:2") got)
+
+let tests =
+  tests @
+  [
+    Alcotest.test_case "list_sensors_under_path filters by prefix" `Quick list_sensors_under_path_filters_by_prefix;
+  ]
