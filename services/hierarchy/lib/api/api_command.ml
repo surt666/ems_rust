@@ -80,10 +80,11 @@ let run_attach_sensor json =
     | Some _ as v -> v
     | None -> parse (field json "binning")
   in
+  let* formula = Api_json.formula_of_json (field json "formula") in
   let* parent     = Node_id.of_string parent_s in
   let* meter_type = Sensor.meter_type_of_string mt_s in
   match Sensors.attach ~parent ~daq_id:daq ~purpose ~meter_type ?resample_minutes
-          ?unit () with
+          ~formula ?unit () with
   | Ok s -> Ok (Api_json.ok_response (Api_json.sensor_to_json s))
   | Error e -> Ok (Api_json.error_response e)
 

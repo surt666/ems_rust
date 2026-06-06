@@ -65,9 +65,7 @@ let invalid_json_is_400 () =
   in
   Alcotest.(check int) "400" 400 status
 
-let attach_sensor_happy () =
-  (* Tests that follow the existing seed pattern for a company with an electricity slot *)
-  let st = Memory.empty () in
+let seed_building st =
   let c2 =
     Memory.run st (fun () ->
       let sch : Schema.t =
@@ -90,13 +88,16 @@ let attach_sensor_happy () =
       Effects.put_node n2;
       Node_id.make Level.Hn2 10002)
   in
-  let bldg =
-    Memory.run st (fun () ->
-      match Hierarchy.add_node ~parent:c2 ~level:Level.Hn3
-              ~name:"B" ~metadata:(`Assoc []) () with
-      | Ok b -> b.Node.id
-      | Error e -> Alcotest.failf "seed: %s" (Errors.message e))
-  in
+  Memory.run st (fun () ->
+    match Hierarchy.add_node ~parent:c2 ~level:Level.Hn3
+            ~name:"B" ~metadata:(`Assoc []) () with
+    | Ok b -> b.Node.id
+    | Error e -> Alcotest.failf "seed: %s" (Errors.message e))
+
+let attach_sensor_happy () =
+  (* Tests that follow the existing seed pattern for a company with an electricity slot *)
+  let st = Memory.empty () in
+  let bldg = seed_building st in
   Memory.run st (fun () ->
     let body =
       Printf.sprintf
@@ -115,31 +116,7 @@ let attach_sensor_resample_from_string () =
      coerce a numeric string to Some, and treat "" / absent as unset (graceful
      Null). The legacy "binning" key is also still accepted for backward compat. *)
   let st = Memory.empty () in
-  let bldg =
-    Memory.run st (fun () ->
-      let sch : Schema.t =
-        Schema.{
-          version = 1;
-          edges = [
-            (Level.Hn2, [ (Level.Hn3, [ { label = "building"; min = None; max = None } ]) ]);
-          ];
-          metadata = [];
-          sensors = [ Level.Hn3 ];
-        }
-      in
-      let parent_path =
-        Node_id.to_string Node_id.root ^ "|"
-        ^ Node_id.to_string (Node_id.make Level.Hn1 10001)
-      in
-      let n2 = Node.make ~id:10002 ~level:Level.Hn2 ~name:"Co"
-                 ~parent:Node_id.root ~parent_path ~created:Ptime.epoch
-                 ~metadata:(`Assoc []) ~schema:(Some sch) in
-      Effects.put_node n2;
-      match Hierarchy.add_node ~parent:(Node_id.make Level.Hn2 10002)
-              ~level:Level.Hn3 ~name:"B" ~metadata:(`Assoc []) () with
-      | Ok b -> b.Node.id
-      | Error e -> Alcotest.failf "seed: %s" (Errors.message e))
-  in
+  let bldg = seed_building st in
   let resample_of resp =
     Yojson.Safe.Util.(
       Yojson.Safe.from_string resp
@@ -247,6 +224,45 @@ let unblock_user_roundtrip () =
     in
     Alcotest.(check int) "status 200" 200 status)
 
+let attach_sensor_with_formula () =
+  let st = Memory.empty () in
+  let bldg = seed_building st in
+  Memory.run st (fun () ->
+    let body =
+      Printf.sprintf
+        {|{"action":"attach_sensor","parent_id":%S,"daq_id":"daq:f","purpose":"E","meter_type":"counter","formula":{"kind":"expr","expr":"abs(self - a)","refs":{"a":"S#1"}}}|}
+        (Node_id.to_string bldg)
+    in
+    let resp = Api_command.dispatch ~body in
+    let status = Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int) in
+    Alcotest.(check int) "200" 200 status;
+    let kind =
+      Yojson.Safe.Util.(
+        Yojson.Safe.from_string resp |> member "body" |> to_string
+        |> Yojson.Safe.from_string |> member "formula" |> member "kind" |> to_string)
+    in
+    Alcotest.(check string) "formula echoed as expr" "expr" kind)
+
+let attach_sensor_unbound_alias_400 () =
+  let st = Memory.empty () in
+  let bldg = seed_building st in
+  Memory.run st (fun () ->
+    let body =
+      Printf.sprintf
+        {|{"action":"attach_sensor","parent_id":%S,"daq_id":"daq:bad","purpose":"E","meter_type":"counter","formula":{"kind":"expr","expr":"self - a","refs":{}}}|}
+        (Node_id.to_string bldg)
+    in
+    let resp = Api_command.dispatch ~body in
+    let status = Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int) in
+    Alcotest.(check int) "400 on unbound alias" 400 status;
+    let body = Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "body" |> to_string) in
+    let contains hay needle =
+      let nh = String.length needle and hh = String.length hay in
+      let rec go i = i + nh <= hh && (String.sub hay i nh = needle || go (i + 1)) in
+      nh = 0 || go 0
+    in
+    Alcotest.(check bool) "mentions unbound alias" true (contains body "unbound alias"))
+
 let tests =
   [
     Alcotest.test_case "add_node happy path" `Quick add_node_happy_path;
@@ -254,6 +270,8 @@ let tests =
     Alcotest.test_case "invalid json -> 400" `Quick invalid_json_is_400;
     Alcotest.test_case "attach_sensor happy" `Quick attach_sensor_happy;
     Alcotest.test_case "attach_sensor resample_minutes from string" `Quick attach_sensor_resample_from_string;
+    Alcotest.test_case "attach_sensor with formula"         `Quick attach_sensor_with_formula;
+    Alcotest.test_case "attach_sensor unbound alias -> 400"  `Quick attach_sensor_unbound_alias_400;
     Alcotest.test_case "create_user happy" `Quick create_user_happy;
     Alcotest.test_case "delete_user roundtrip" `Quick delete_user_roundtrip;
     Alcotest.test_case "block_user happy" `Quick block_user_happy;
