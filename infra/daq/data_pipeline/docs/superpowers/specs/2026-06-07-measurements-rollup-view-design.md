@@ -25,7 +25,7 @@ counters have neither and are excluded).
 
 ## Data model
 
-**Table:** `measurements_rollup` — DynamoDB, on-demand capacity, TTL enabled on attribute `ttl`.
+**Table:** `measurements_aggregate` — DynamoDB, on-demand capacity, TTL enabled on attribute `ttl`.
 
 **One item per `(node, purpose, granularity, time-bucket)`**, pre-aggregated at **every level**
 from the company (`hn2`) down to the leaf meter:
@@ -151,7 +151,7 @@ freshness-vs-cost dial (small `N` = cheaper, less late-data reach). Restatements
 A new CDK stack in `infra/daq/data_pipeline` (Go CDK, matching the existing stacks), account
 `891`:
 
-- DynamoDB table `measurements_rollup` (on-demand, TTL on `ttl`).
+- DynamoDB table `measurements_aggregate` (on-demand, TTL on `ttl`).
 - Glue PySpark job reading `logical_meter_data` via the catalog and writing the table; lookback
   passed as a job argument from CDK context.
 - EventBridge hourly schedule.
@@ -175,7 +175,7 @@ A new CDK stack in `infra/daq/data_pipeline` (Go CDK, matching the existing stac
 
 ## Scope (YAGNI)
 
-In scope: the `measurements_rollup` table + the hourly Glue populator + tests.
+In scope: the `measurements_aggregate` table + the hourly Glue populator + tests.
 
 Out of scope (deferred):
 - **Gauges** (incl. energy gauges) — counters only for now; gauges slot in later as another
