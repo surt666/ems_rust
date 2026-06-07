@@ -57,13 +57,13 @@ cd infra/daq/data_pipeline
 # To run it manually / add a cdk diff gate:
 ( cd flink_app_scala && sbt clean assembly )      # -> target/scala-3.3.4/flink-app-scala-0.1.0.jar
 unset GOROOT
-npx cdk diff DaqPipelineStack LateRecomputationStack \
+npx cdk diff DaqPipelineStack LateRecomputationStack MeasurementsAggregateStack \
   -c SHA="$(git rev-parse --short HEAD)" -c RUN_NR="$(date +%s)" \
-  -c ParPerKPU=1 -c MaxKPU=4 -c TableBucketName=measurements
-npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStack \
+  -c ParPerKPU=1 -c MaxKPU=4 -c TableBucketName=measurements -c LookbackDays=1
+npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStack MeasurementsAggregateStack \
   --require-approval never \
   -c SHA="$(git rev-parse --short HEAD)" -c RUN_NR="$(date +%s)" \
-  -c ParPerKPU=1 -c MaxKPU=4 -c TableBucketName=measurements
+  -c ParPerKPU=1 -c MaxKPU=4 -c TableBucketName=measurements -c LookbackDays=1
 ```
 
 - `DaqPipelineStack` updates the MSF Flink application (`flink-iceberg-processor`) **in place**
@@ -77,6 +77,11 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
   `S3TablesStack` owns the Iceberg tables; deploying it with **changed columns replaces the table**
   (data loss) — that's how `logical_meter_data` (columns `resample_value/resample_method/resample_timestamp`)
   gets recreated.
+- `MeasurementsAggregateStack` owns the `measurements_aggregate` DynamoDB table (on-demand, TTL,
+  `RETAIN`) + the hourly `measurements-aggregate` Glue job that rolls up `logical_meter_data`
+  counter consumption per node/purpose/hour|day. `-c LookbackDays=N` sets the day-aligned recompute
+  window (default `1` = today + yesterday). Spec/plan:
+  `infra/daq/data_pipeline/docs/superpowers/specs/2026-06-07-measurements-rollup-view-design.md`.
 - Verify the live Flink JAR is the one you built:
   `aws kinesisanalyticsv2 describe-application --application-name flink-iceberg-processor`
   → download the `FileKey` jar from `s3://flink-code-891377204778-eu-central-1/...` and
