@@ -57,6 +57,29 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		ManagedPolicies: &managedPolicies,
 	})
 
+	// Lake Formation registration / passrole / assume-role inline policies
+	// (mirror late_recomputation_stack.go).
+	glueRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect: awsiam.Effect_ALLOW,
+		Actions: jsii.Strings("glue:PassConnection",
+			"lakeformation:RegisterResource",
+			"lakeformation:RegisterResourceWithPrivilegedAccess"),
+		Resources: jsii.Strings("*"),
+	}))
+	glueRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect:    awsiam.Effect_ALLOW,
+		Actions:   jsii.Strings("iam:PassRole"),
+		Resources: &[]*string{glueRole.RoleArn()},
+		Conditions: &map[string]interface{}{
+			"StringEquals": map[string]interface{}{"iam:PassedToService": "glue.amazonaws.com"},
+		},
+	}))
+	glueRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect:    awsiam.Effect_ALLOW,
+		Actions:   jsii.Strings("sts:AssumeRole"),
+		Resources: jsii.Strings("arn:aws:iam::" + account + ":role/aws-service-role/lakeformation.amazonaws.com/AWSServiceRoleForLakeFormationDataAccess"),
+	}))
+
 	// Glue catalog access for S3 Tables
 	glueRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 		Effect:  awsiam.Effect_ALLOW,
@@ -77,6 +100,15 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 	dlPrincipal := &awslakeformation.CfnPermissions_DataLakePrincipalProperty{
 		DataLakePrincipalIdentifier: glueRole.RoleArn(),
 	}
+	awslakeformation.NewCfnPermissions(stack, jsii.String("AggLfLinkDbPermissions"), &awslakeformation.CfnPermissionsProps{
+		DataLakePrincipal: dlPrincipal,
+		Resource: &awslakeformation.CfnPermissions_ResourceProperty{
+			DatabaseResource: &awslakeformation.CfnPermissions_DatabaseResourceProperty{
+				Name: jsii.String("all_link"), CatalogId: jsii.String(account),
+			},
+		},
+		Permissions: jsii.Strings("DESCRIBE"),
+	})
 	awslakeformation.NewCfnPermissions(stack, jsii.String("AggLfDbPermissions"), &awslakeformation.CfnPermissionsProps{
 		DataLakePrincipal: dlPrincipal,
 		Resource: &awslakeformation.CfnPermissions_ResourceProperty{
