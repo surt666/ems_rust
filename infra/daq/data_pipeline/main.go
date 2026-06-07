@@ -19,6 +19,7 @@ func main() {
 	maxKPU := contextString(app, "MaxKPU", "1")
 	tableBucketName := contextString(app, "TableBucketName", "measurements")
 	runNr := contextString(app, "RUN_NR", strconv.FormatInt(time.Now().Unix(), 10))
+	lookbackDays := contextString(app, "LookbackDays", "1")
 
 	pipeline := NewDaqPipelineStack(app, "DaqPipelineStack", &DaqPipelineStackProps{
 		StackProps: awscdk.StackProps{Env: defaultEnv()},
@@ -39,6 +40,12 @@ func main() {
 		TableBucket:       tableBucketName,
 	})
 	lateRecomp.AddDependency(pipeline.Stack, jsii.String("LateRecomputation depends on meter-identity / error stream"))
+
+	NewMeasurementsAggregateStack(app, "MeasurementsAggregateStack", &MeasurementsAggregateStackProps{
+		StackProps:   awscdk.StackProps{Env: defaultEnv()},
+		TableBucket:  tableBucketName,
+		LookbackDays: lookbackDays,
+	})
 
 	NewS3TablesStack(app, "S3TablesStack", &awscdk.StackProps{
 		Env: &awscdk.Environment{
