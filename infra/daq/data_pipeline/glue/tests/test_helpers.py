@@ -53,3 +53,9 @@ def test_delimiter_invariant_node_sorts_before_descendants():
     own = m.build_sk("HN3#9|HN4#456", "Electricity", "d", "2026-06-07")
     child = m.build_sk("HN3#9|HN4#456|L#10009", "Electricity", "d", "2026-06-07")
     assert own < child
+
+
+def test_window_start_is_day_aligned_utc():
+    now = datetime(2026, 6, 7, 9, 30, tzinfo=timezone.utc)
+    assert m.window_start_iso(now, 1) == "2026-06-06T00:00:00+00:00"
+    assert m.window_start_iso(now, 0) == "2026-06-07T00:00:00+00:00"

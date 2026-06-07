@@ -125,3 +125,91 @@ def build_rollups(df: DataFrame, run_at_iso: str) -> DataFrame:
         F.lit(run_at_iso).alias("updated_at"),
         _TTL_UDF("gran", "bucket").alias("ttl"),
     )
+
+
+# ── IO + entrypoint ──
+
+def window_start_iso(now: datetime, lookback_days: int) -> str:
+    """00:00 UTC of (today - lookback_days)."""
+    start_day = (now.astimezone(timezone.utc) - timedelta(days=lookback_days)).date()
+    return datetime(start_day.year, start_day.month, start_day.day, tzinfo=timezone.utc) \
+        .strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
+
+def read_counters(spark, window_start: str):
+    """Resampled counter rows in [window_start, now], by ingested_time so restatements are caught."""
+    return spark.sql(f"""
+        SELECT hn2, hn3, hn4, hn5, hn6, hn7, hn8, hn9, logical_id, purpose,
+               resample_value, value, timestamp, resample_timestamp
+        FROM all.logical_meter_data
+        WHERE resample_method = 'time_proportional'
+          AND resample_value IS NOT NULL
+          AND hn2 IS NOT NULL
+          AND ingested_time >= TIMESTAMP '{window_start}'
+    """)
+
+
+def write_to_dynamo(df: DataFrame, table_name: str, region: str) -> None:
+    """Upsert rollup items into DynamoDB, partition-parallel. PutItem overwrites (idempotent)."""
+    from decimal import Decimal
+
+    cols = df.columns
+
+    def _write(rows):
+        import boto3
+        table = boto3.resource("dynamodb", region_name=region).Table(table_name)
+        with table.batch_writer(overwrite_by_pkeys=["pk", "sk"]) as bw:
+            for r in rows:
+                item = {}
+                for c in cols:
+                    v = r[c]
+                    if v is None:
+                        continue
+                    item[c] = Decimal(str(v)) if isinstance(v, float) else v
+                bw.put_item(Item=item)
+
+    df.foreachPartition(_write)
+
+
+def main():
+    import sys
+    from awsglue.context import GlueContext
+    from awsglue.job import Job
+    from awsglue.utils import getResolvedOptions
+    from pyspark.context import SparkContext
+
+    sc = SparkContext()
+    glue_context = GlueContext(sc)
+    spark = glue_context.spark_session
+    job = Job(glue_context)
+    job.init("measurements-aggregate", {})
+
+    required = ["JOB_NAME", "region", "table_bucket_name", "account_id", "rollup_table"]
+    args = getResolvedOptions(sys.argv, required)
+    try:
+        args["lookback_days"] = getResolvedOptions(sys.argv, ["lookback_days"])["lookback_days"]
+    except Exception:
+        args["lookback_days"] = "1"
+
+    region = args["region"]
+    table_bucket = args["table_bucket_name"]
+    account_id = args["account_id"]
+    warehouse = f"arn:aws:s3tables:{region}:{account_id}:bucket/{table_bucket}"
+    glue_id = f"{account_id}:s3tablescatalog/{table_bucket}"
+
+    spark.conf.set("spark.sql.session.timeZone", "UTC")
+    spark.conf.set("spark.sql.defaultCatalog", "s3tables")
+    spark.conf.set("spark.sql.catalog.s3tables", "org.apache.iceberg.spark.SparkCatalog")
+    spark.conf.set("spark.sql.catalog.s3tables.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog")
+    spark.conf.set("spark.sql.catalog.s3tables.glue.id", glue_id)
+    spark.conf.set("spark.sql.catalog.s3tables.warehouse", warehouse)
+
+    now = datetime.now(timezone.utc)
+    window_start = window_start_iso(now, int(args["lookback_days"]))
+    rollups = build_rollups(read_counters(spark, window_start), now.strftime("%Y-%m-%dT%H:%M:%S+00:00"))
+    write_to_dynamo(rollups, args["rollup_table"], region)
+    job.commit()
+
+
+if __name__ == "__main__":
+    main()
