@@ -83,6 +83,27 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
   `unzip -l | grep ResampleFunction`. (Don't trust the sbt "Jar hash" line vs the S3 key sha256 —
   jar packaging has non-deterministic bytes, so they legitimately differ; check the class instead.)
 
+#### Gotchas when renaming Iceberg columns / Flink operator state (learned 2026-06-07)
+
+- **`AWS::S3Tables::Table` cannot be replaced in place.** Changing a column forces a CFN replace,
+  which does create-before-delete → fails with `409 "table with an identical name already exists"`.
+  To rename columns / clear a table, do a **two-step deploy**: (1) remove the table resource from
+  `s3tables_stack.go` and `cdk deploy S3TablesStack` (CFN deletes it — clears the data), then
+  (2) restore the resource (new columns) and `cdk deploy` again (CFN creates it fresh). Only the
+  changed table is affected; sibling tables (e.g. `raw_data`) are untouched.
+- **Renaming the Flink operator `uid`/keyed-state forces a non-restorable snapshot.** On the next
+  Flink deploy the running app keeps writing the old schema and goes into failure, so MSF can't
+  snapshot it and the stack sticks in `UPDATE_ROLLBACK_FAILED`. Recover with:
+  `aws kinesisanalyticsv2 stop-application --force` → `aws cloudformation continue-update-rollback
+  --stack-name DaqPipelineStack --resources-to-skip FlinkApplication` → forward `cdk deploy` (app
+  is stopped, so the update needs no snapshot) → then start it.
+- **Starting after a uid/state rename:** the old state can't map to the renamed operators, so you
+  must drop it. `AllowNonRestoredState` lives under **`FlinkRunConfiguration`** in the
+  `start-application` run-config (NOT `ApplicationRestoreConfiguration`):
+  `--run-configuration '{"FlinkRunConfiguration":{"AllowNonRestoredState":true},"ApplicationRestoreConfiguration":{"ApplicationRestoreType":"RESTORE_FROM_LATEST_SNAPSHOT"}}'`.
+  Prefer `RESTORE_FROM_LATEST_SNAPSHOT` over `SKIP_RESTORE_FROM_SNAPSHOT` — the source is
+  `TRIM_HORIZON`, so SKIP reprocesses the full Kinesis retention (24h) and **duplicates `raw_data`**.
+
 ### Cross-account ordering (important)
 
 The bridge writes the per-sensor resample interval to `meter-identity` as **`resample_minutes`**,
