@@ -39,10 +39,10 @@ func NewS3TablesStack(scope constructs.Construct, id string, props *awscdk.Stack
 	return stack
 }
 
-func rawIcebergMetadata() interface{} {
-	return map[string]interface{}{
-		"icebergSchema": map[string]interface{}{
-			"schemaFieldList": []interface{}{
+func rawIcebergMetadata() any {
+	return map[string]any{
+		"icebergSchema": map[string]any{
+			"schemaFieldList": []any{
 				field("daq_id", "string", true),
 				field("timestamp", "timestamptz", true),
 				field("value", "double", true),
@@ -50,8 +50,8 @@ func rawIcebergMetadata() interface{} {
 				field("ingested_time", "timestamptz", true),
 			},
 		},
-		"icebergPartitionSpec": map[string]interface{}{
-			"fields": []interface{}{
+		"icebergPartitionSpec": map[string]any{
+			"fields": []any{
 				partition(2, "month", "timestamp_month"),
 				partition(1, "bucket[64]", "daq_id_bucket"),
 			},
@@ -60,12 +60,12 @@ func rawIcebergMetadata() interface{} {
 	}
 }
 
-func meterReadingsIcebergMetadata() interface{} {
-	return map[string]interface{}{
-		"icebergSchema": map[string]interface{}{
+func meterReadingsIcebergMetadata() any {
+	return map[string]any{
+		"icebergSchema": map[string]any{
 			// hn1=partner, hn2=company hard-coded; hn3..hn9 are schema-defined per
 			// company (per ems_ocaml hierarchy model). All ids are ints.
-			"schemaFieldList": []interface{}{
+			"schemaFieldList": []any{
 				field("logical_id", "int", true),
 				field("timestamp", "timestamptz", true),
 				field("value", "double", true),
@@ -86,15 +86,15 @@ func meterReadingsIcebergMetadata() interface{} {
 				field("resample_timestamp", "timestamp", false),
 			},
 		},
-		"icebergPartitionSpec": map[string]interface{}{
-			"fields": []interface{}{
+		"icebergPartitionSpec": map[string]any{
+			"fields": []any{
 				partition(2, "month", "timestamp_month"),
 				partition(7, "bucket[4]", "hn2_bucket"),
 			},
 		},
-		"icebergSortOrder": map[string]interface{}{
+		"icebergSortOrder": map[string]any{
 			"orderId": 1,
-			"fields": []interface{}{
+			"fields": []any{
 				sortField(7), sortField(8), sortField(9), sortField(1), sortField(2),
 			},
 		},
@@ -104,10 +104,10 @@ func meterReadingsIcebergMetadata() interface{} {
 	}
 }
 
-func hierarchyIcebergMetadata() interface{} {
-	return map[string]interface{}{
-		"icebergSchema": map[string]interface{}{
-			"schemaFieldList": []interface{}{
+func hierarchyIcebergMetadata() any {
+	return map[string]any{
+		"icebergSchema": map[string]any{
+			"schemaFieldList": []any{
 				field("partner_id", "int", true),
 				field("company_id", "int", false),
 				field("property_id", "int", false),
@@ -119,15 +119,15 @@ func hierarchyIcebergMetadata() interface{} {
 				field("ingested_time", "timestamptz", true),
 			},
 		},
-		"icebergPartitionSpec": map[string]interface{}{
-			"fields": []interface{}{
+		"icebergPartitionSpec": map[string]any{
+			"fields": []any{
 				partition(1, "identity", "partner_id"),
 				partition(2, "bucket[4]", "company_id_bucket"),
 			},
 		},
-		"icebergSortOrder": map[string]interface{}{
+		"icebergSortOrder": map[string]any{
 			"orderId": 1,
-			"fields": []interface{}{
+			"fields": []any{
 				sortField(1), sortField(2), sortField(3), sortField(6), sortField(4), sortField(5),
 			},
 		},
@@ -137,22 +137,22 @@ func hierarchyIcebergMetadata() interface{} {
 	}
 }
 
-func field(name, t string, required bool) map[string]interface{} {
-	return map[string]interface{}{"name": name, "type": t, "required": required}
+func field(name, t string, required bool) map[string]any {
+	return map[string]any{"name": name, "type": t, "required": required}
 }
 
-func partition(sourceId int, transform, name string) map[string]interface{} {
-	return map[string]interface{}{"sourceId": sourceId, "transform": transform, "name": name}
+func partition(sourceId int, transform, name string) map[string]any {
+	return map[string]any{"sourceId": sourceId, "transform": transform, "name": name}
 }
 
-func sortField(sourceId int) map[string]interface{} {
-	return map[string]interface{}{
+func sortField(sourceId int) map[string]any {
+	return map[string]any{
 		"sourceId": sourceId, "transform": "identity", "direction": "asc", "nullOrder": "nulls-last",
 	}
 }
 
-func commonTableProperties(sortOrder string) map[string]interface{} {
-	return map[string]interface{}{
+func commonTableProperties(sortOrder string) map[string]any {
+	return map[string]any{
 		"write.metadata.delete-after-commit.enabled": "false",
 		"write.metadata.previous-versions-max":       "10",
 		"write.format.default":                       "parquet",
