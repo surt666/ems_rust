@@ -38,19 +38,18 @@ def ttl_for(gran: str, bucket: str) -> int:
 
 
 def ancestor_keys(hns, logical_id):
-    """hns = [hn2, hn3, ..., hn9] (ints or None). Returns [(level_label, node_path)] for every
-    populated level from hn2 down, plus the leaf meter.
-      level_label: "2".."9" for hn nodes, "leaf" for the meter.
-      node_path:   sk path-below-hn2 (company => "")."""
-    result = [("2", "")]
-    segments = []
+    """hns = [hn2, hn3, ..., hn9] (ints or None). Returns the full hierarchy node_path for every
+    populated level from hn2 down, plus the leaf meter. Paths are '|'-joined hierarchy segments,
+    consistent with the rest of the hierarchy: company = 'HN2#<id>', deeper nodes append
+    '|HN<d>#<id>', and the leaf meter appends '|L#<logical_id>'."""
+    segments = ["HN2#%d" % hns[0]]
+    result = [segments[0]]
     for depth, hid in enumerate(hns[1:], start=3):  # hn3..hn9
         if hid is None:
             break
         segments.append("HN%d#%d" % (depth, hid))
-        result.append((str(depth), "|".join(segments)))
-    leaf_path = "|".join(segments + ["L#%d" % logical_id]) if segments else "L#%d" % logical_id
-    result.append(("leaf", leaf_path))
+        result.append("|".join(segments))
+    result.append("|".join(segments + ["L#%d" % logical_id]))
     return result
 
 
@@ -65,16 +64,12 @@ def build_sk(node_path: str, purpose: str, gran: str, bucket: str) -> str:
 from pyspark.sql import DataFrame, functions as F, types as T  # noqa: E402
 from pyspark.sql.window import Window  # noqa: E402
 
-_ANCESTOR_SCHEMA = T.ArrayType(T.StructType([
-    T.StructField("level", T.StringType()),
-    T.StructField("node_path", T.StringType()),
-]))
+_ANCESTOR_SCHEMA = T.ArrayType(T.StringType())
 
 
 @F.udf(_ANCESTOR_SCHEMA)
 def _ancestor_keys_udf(hn2, hn3, hn4, hn5, hn6, hn7, hn8, hn9, logical_id):
-    return [{"level": lvl, "node_path": p}
-            for (lvl, p) in ancestor_keys([hn2, hn3, hn4, hn5, hn6, hn7, hn8, hn9], logical_id)]
+    return ancestor_keys([hn2, hn3, hn4, hn5, hn6, hn7, hn8, hn9], logical_id)
 
 
 _TTL_UDF = F.udf(ttl_for, T.LongType())
@@ -86,8 +81,8 @@ def build_rollups(df: DataFrame, run_at_iso: str) -> DataFrame:
 
     Input columns: hn2..hn9 (int), logical_id (int), purpose (str), resample_value (double),
     value (double), timestamp (ts), resample_timestamp (ts).
-    Output columns: pk, sk, level, purpose, gran, bucket, sum, count, min, max,
-    last_value, last_ts, updated_at, ttl.
+    Output columns: pk ('HN2#<id>'), sk ('<full hierarchy path>#<purpose>#<gran>#<bucket>'),
+    purpose, bucket, sum, count, min, max, last_value, last_ts, updated_at, ttl.
     NOTE: caller must set spark.sql.session.timeZone='UTC' so the bucket labels are UTC.
     """
     with_buckets = df.withColumn(
@@ -101,14 +96,13 @@ def build_rollups(df: DataFrame, run_at_iso: str) -> DataFrame:
     ).select("*", F.col("gb.gran").alias("gran"), F.col("gb.bucket").alias("bucket"))
 
     with_nodes = with_buckets.withColumn(
-        "node",
+        "node_path",
         F.explode(_ancestor_keys_udf(
             *[F.col("hn%d" % i) for i in range(2, 10)], F.col("logical_id"))),
-    ).select(
-        "*", F.col("node.level").alias("level"), F.col("node.node_path").alias("node_path"))
+    )
 
     grouped = with_nodes.groupBy(
-        "hn2", "node_path", "level", "purpose", "gran", "bucket"
+        "hn2", "node_path", "purpose", "gran", "bucket"
     ).agg(
         F.sum("resample_value").alias("sum"),
         F.count("resample_value").alias("count"),
@@ -118,9 +112,9 @@ def build_rollups(df: DataFrame, run_at_iso: str) -> DataFrame:
     )
 
     return grouped.select(
-        F.col("hn2").cast("string").alias("pk"),
+        F.concat(F.lit("HN2#"), F.col("hn2").cast("string")).alias("pk"),
         _SK_UDF("node_path", "purpose", "gran", "bucket").alias("sk"),
-        "level", "purpose", "gran", "bucket", "sum", "count", "min", "max",
+        "purpose", "bucket", "sum", "count", "min", "max",
         F.col("_last.value").alias("last_value"),
         F.date_format(F.col("_last.timestamp"), "yyyy-MM-dd'T'HH:mm:ssXXX").alias("last_ts"),
         F.lit(run_at_iso).alias("updated_at"),

@@ -31,19 +31,20 @@ counters have neither and are excluded).
 from the company (`hn2`) down to the leaf meter:
 
 ```
-pk = "<hn2>"                                   # company id, string. Partition = one company.
-sk = "<path-below-hn2>#<purpose>#<gran>#<bucket>"
+pk = "HN2#<hn2>"                               # company node, hierarchy-segment form. Partition = one company.
+sk = "<full hierarchy path from HN2>#<purpose>#<gran>#<bucket>"
 ```
 
-- `path-below-hn2`: hierarchy segments below the company, `|`-joined, then the leaf:
-  - company (`hn2`) itself → empty → sk begins with `#`
-  - `hn3=9` → `"HN3#9"`
-  - `hn4=456` under `hn3=9` → `"HN3#9|HN4#456"`
-  - leaf meter `10009` under `hn4=456` → `"HN3#9|HN4#456|L#10009"`
+- the **full hierarchy path** is `|`-joined hierarchy segments starting at the company `HN2#<id>`
+  (consistent with the rest of the hierarchy — no bare `#` start), then deeper nodes, then the leaf:
+  - company (`hn2`) itself → `"HN2#<id>"`
+  - `hn3=9` → `"HN2#<id>|HN3#9"`
+  - `hn4=456` under `hn3=9` → `"HN2#<id>|HN3#9|HN4#456"`
+  - leaf meter `10009` under `hn4=456` → `"HN2#<id>|HN3#9|HN4#456|L#10009"`
   - a meter produces a rollup row at each populated level between `hn2` and its deepest
     non-null `hn` node, **plus** the leaf `L#<logical_id>` row.
 - `purpose`: e.g. `"Electricity"`.
-- `gran`: `"h"` (hour) | `"d"` (day).
+- `gran`: `"h"` (hour) | `"d"` (day) — lives in the sk only, not stored as a separate attribute.
 - `bucket`: **UTC** window start — hour `"YYYY-MM-DDThh"`, day `"YYYY-MM-DD"`.
 
 ### Delimiter invariant
@@ -59,10 +60,10 @@ One electricity reading from meter `10009` (`hn2=2`, `hn3=9`, `hn4=456`) contrib
 **daily** rows (and the 4 matching **hourly** rows):
 
 ```
-pk="2"  sk="#Electricity#d#2026-06-07"                       # company hn2=2
-pk="2"  sk="HN3#9#Electricity#d#2026-06-07"                  # hn3 node
-pk="2"  sk="HN3#9|HN4#456#Electricity#d#2026-06-07"          # hn4 building
-pk="2"  sk="HN3#9|HN4#456|L#10009#Electricity#d#2026-06-07"  # the meter (leaf)
+pk="HN2#2"  sk="HN2#2#Electricity#d#2026-06-07"                       # company hn2=2
+pk="HN2#2"  sk="HN2#2|HN3#9#Electricity#d#2026-06-07"                 # hn3 node
+pk="HN2#2"  sk="HN2#2|HN3#9|HN4#456#Electricity#d#2026-06-07"         # hn4 building
+pk="HN2#2"  sk="HN2#2|HN3#9|HN4#456|L#10009#Electricity#d#2026-06-07" # the meter (leaf)
 ```
 
 A node's row is the sum across **all** meters beneath it (siblings collapse in the rollup).
@@ -76,11 +77,14 @@ A node's row is the sum across **all** meters beneath it (siblings collapse in t
 | `min`, `max` | number | min/max `resample_value` in the bucket |
 | `last_value` | number | `value` (cumulative reading) at `max(timestamp)` in the bucket |
 | `last_ts` | string | `max(timestamp)` in the bucket (ISO-8601) |
-| `unit` | string | normalized unit for this purpose |
-| `purpose` | string | e.g. `"Electricity"` (also in sk) |
-| `level` | string | `"2".."9"` (hn level) or `"leaf"` |
+| `purpose` | string | e.g. `"Electricity"` (also encoded in the sk; kept for convenience) |
+| `bucket` | string | the bucket label (also in the sk; kept for convenience) |
 | `updated_at` | string | when the job last wrote this item |
 | `ttl` | number | epoch seconds: bucket-end + 90d (hourly) / + 730d (daily) |
+
+(`level` and `gran` are deliberately **not** stored — `gran` is in the sk and `level` is derivable
+from the path. `unit` is **not** carried yet; it isn't redundant, so it's a candidate to add to the
+read if consumers need it to interpret `sum`.)
 
 ### TTL / retention
 
@@ -93,21 +97,21 @@ All issued from a known node path (the reader always knows where it is):
 
 ```
 # point: one node, one bucket
-GetItem pk="2", sk="HN3#9|HN4#456#Electricity#d#2026-06-07"
+GetItem pk="HN2#2", sk="HN2#2|HN3#9|HN4#456#Electricity#d#2026-06-07"
 
 # interval: one node's series over a date range (ONE query)
-query pk="2",
-      sk BETWEEN "HN3#9|HN4#456#Electricity#d#2026-06-01"
-             AND "HN3#9|HN4#456#Electricity#d#2026-06-07"
+query pk="HN2#2",
+      sk BETWEEN "HN2#2|HN3#9|HN4#456#Electricity#d#2026-06-01"
+             AND "HN2#2|HN3#9|HN4#456#Electricity#d#2026-06-07"
 
 # the 24 hourly buckets of a day
-query pk="2",
-      sk BETWEEN "HN3#9|HN4#456#Electricity#h#2026-06-07T00"
-             AND "HN3#9|HN4#456#Electricity#h#2026-06-07T23"
+query pk="HN2#2",
+      sk BETWEEN "HN2#2|HN3#9|HN4#456#Electricity#h#2026-06-07T00"
+             AND "HN2#2|HN3#9|HN4#456#Electricity#h#2026-06-07T23"
 
 # ancestor breadcrumb (node + ancestors), one bucket
-BatchGetItem [ "#Electricity#d#D", "HN3#9#Electricity#d#D",
-               "HN3#9|HN4#456#Electricity#d#D", ... ]
+BatchGetItem [ "HN2#2#Electricity#d#D", "HN2#2|HN3#9#Electricity#d#D",
+               "HN2#2|HN3#9|HN4#456#Electricity#d#D", ... ]
 ```
 
 Deliberately **not** supported in a single query: "a whole subtree of different nodes,
@@ -121,20 +125,22 @@ closes).
 
 **Each run:**
 1. Read a **configurable lookback** of `logical_meter_data`, expressed as a number of trailing
-   **whole UTC days** `N` (default `1` ⇒ recompute *today + yesterday* each run). The read window
-   is `[00:00 UTC of (today − N), now]`, also filtered by `ingested_time` so late/restated
-   readings within it are re-picked-up. `N` is a Glue job argument wired from CDK context.
-   **Whole-day alignment is required for correctness:** because each run *overwrites* a daily
-   bucket with the sum of every reading in the window that falls in that day, the window must
-   cover each recomputed day in full. Closed days in the window are therefore complete; the
-   current (still-open) day is overwritten with the correct running partial total.
-2. Filter to counters: `resample_method = 'time_proportional' AND resample_value IS NOT NULL`.
-3. Derive each row's UTC hour bucket and day bucket from `resample_timestamp` (each input row
-   contributes to one hourly group and one daily group).
-4. Roll up at every populated level in one pass with Spark `GROUPING SETS` over
-   `(hn2), (hn2,hn3), …, (hn2..deepest hn), (…, logical_id)` × `purpose` × `gran` × `bucket`,
-   computing `sum/count/min/max` of `resample_value` and `last_value`/`last_ts` from the reading
-   at `max(timestamp)`. (A level is emitted only where its node id is non-null.)
+   **whole UTC days** `N` (default `1` ⇒ recompute *today + yesterday* each run), filtering by
+   **`resample_timestamp >= 00:00 UTC of (today − N)`** (the bucket axis). `N` is a Glue job
+   argument wired from CDK context. **Whole-day alignment** means each recomputed daily bucket is
+   summed from all its points — closed days complete, the current day a correct running partial.
+   Restatements of points whose `resample_timestamp` is older than the window aren't picked up;
+   widen `N` to recompute them (the documented hook).
+2. **Take the newest `ingested_time` per `(logical_id, resample_timestamp)`** — `logical_meter_data`
+   is event-sourced (append-only; restatements are appended), so superseded rows must be dropped
+   before aggregating, matching every other consumer. Then keep **counters** only
+   (`resample_method = 'time_proportional'`, non-null `resample_value`, non-null `hn2`).
+3. Derive each row's UTC hour bucket and day bucket from `resample_timestamp` (each row contributes
+   to one hourly and one daily group).
+4. **Explode each row into its ancestor node keys** (company `HN2#<id>` → … → leaf `L#<id>`) and
+   group by `(node_path, purpose, gran, bucket)`, computing `sum/count/min/max` of `resample_value`
+   and `last_value`/`last_ts` from the reading at `max(timestamp)`. (Ancestor-explode emits a row
+   only for populated levels — equivalent to per-level `GROUPING SETS` without null groups.)
 5. Build the `pk`/`sk`/`ttl` for each group and **upsert** (`PutItem` overwrite → idempotent;
    recomputing a bucket restates it, never double-counts). Batched writes with retry/backoff.
 

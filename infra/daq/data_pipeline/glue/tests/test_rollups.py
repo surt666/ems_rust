@@ -32,12 +32,12 @@ def _by_sk(df):
 
 def test_rollup_sums_at_every_level(spark):
     out = _by_sk(m.build_rollups(_input(spark), run_at_iso="2026-06-07T09:05:00Z"))
-    assert out["#Electricity#h#2026-06-07T08"]["sum"] == 15.0
-    assert out["HN3#9#Electricity#h#2026-06-07T08"]["sum"] == 15.0
-    assert out["HN3#9|HN4#456#Electricity#h#2026-06-07T08"]["sum"] == 10.0
-    leaf = out["HN3#9|HN4#456|L#10009#Electricity#h#2026-06-07T08"]
+    assert out["HN2#2#Electricity#h#2026-06-07T08"]["sum"] == 15.0
+    assert out["HN2#2|HN3#9#Electricity#h#2026-06-07T08"]["sum"] == 15.0
+    assert out["HN2#2|HN3#9|HN4#456#Electricity#h#2026-06-07T08"]["sum"] == 10.0
+    leaf = out["HN2#2|HN3#9|HN4#456|L#10009#Electricity#h#2026-06-07T08"]
     assert leaf["sum"] == 10.0 and leaf["count"] == 2 and leaf["last_value"] == 106.0
-    assert out["#Electricity#d#2026-06-07"]["sum"] == 15.0
+    assert out["HN2#2#Electricity#d#2026-06-07"]["sum"] == 15.0
 
 
 def test_rollup_is_idempotent(spark):
@@ -50,8 +50,8 @@ def test_rollup_is_idempotent(spark):
 
 def test_ttl_and_pk_present(spark):
     out = _by_sk(m.build_rollups(_input(spark), run_at_iso="2026-06-07T09:05:00Z"))
-    row = out["#Electricity#d#2026-06-07"]
-    assert row["pk"] == "2"
+    row = out["HN2#2#Electricity#d#2026-06-07"]
+    assert row["pk"] == "HN2#2"
     assert row["ttl"] == m.ttl_for("d", "2026-06-07")
 
 
