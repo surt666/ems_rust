@@ -119,7 +119,7 @@ let attach_sensor_resample_from_string () =
   (* The HTML form posts resample_minutes as a string ("data.resample_minutes=15"
      → `String "15"), and an empty number input posts "". run_attach_sensor must
      coerce a numeric string to Some, and treat "" / absent as unset (graceful
-     Null). The legacy "binning" key is also still accepted for backward compat. *)
+     Null). *)
   let st = Memory.empty () in
   let bldg = seed_building st in
   let resample_of resp =
@@ -130,10 +130,10 @@ let attach_sensor_resample_from_string () =
       |> member "resample_minutes")
   in
   Memory.run st (fun () ->
-    let body ?(key = "resample_minutes") daq bn =
+    let body daq bn =
       Printf.sprintf
-        {|{"action":"attach_sensor","parent_id":%S,"daq_id":%S,"purpose":"Electricity","meter_type":"counter",%S:%s}|}
-        (Node_id.to_string bldg) daq key bn
+        {|{"action":"attach_sensor","parent_id":%S,"daq_id":%S,"purpose":"Electricity","meter_type":"counter","resample_minutes":%s}|}
+        (Node_id.to_string bldg) daq bn
     in
     let resp = Api_command.dispatch ~body:(body "daq:str" {|"15"|}) in
     Alcotest.(check (option int)) "numeric-string resample_minutes coerced to 15"
@@ -141,12 +141,7 @@ let attach_sensor_resample_from_string () =
       (match resample_of resp with `Int i -> Some i | _ -> None);
     let resp2 = Api_command.dispatch ~body:(body "daq:empty" {|""|}) in
     Alcotest.(check bool) "empty-string resample_minutes is unset (null)" true
-      (match resample_of resp2 with `Null -> true | _ -> false);
-    (* legacy "binning" input key still maps to resample_minutes output *)
-    let resp3 = Api_command.dispatch ~body:(body ~key:"binning" "daq:legacy" {|15|}) in
-    Alcotest.(check (option int)) "legacy binning key coerced to 15"
-      (Some 15)
-      (match resample_of resp3 with `Int i -> Some i | _ -> None))
+      (match resample_of resp2 with `Null -> true | _ -> false))
 
 let create_user_happy () =
   let resp =

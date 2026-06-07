@@ -102,9 +102,9 @@ class ResampleFunctionSpec extends AnyFlatSpec with Matchers {
       case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 1
         rows.head.value shouldBe 15.0
-        rows.head.binValue.doubleValue() shouldBe 15.0 +- 1e-9
-        rows.head.binMethod shouldBe "time_proportional"
-        rows.head.binTimestamp.longValue() shouldBe epochMs("2026-05-01T10:15:00Z")
+        rows.head.resampleValue.doubleValue() shouldBe 15.0 +- 1e-9
+        rows.head.resampleMethod shouldBe "time_proportional"
+        rows.head.resampleTimestamp.longValue() shouldBe epochMs("2026-05-01T10:15:00Z")
       case _ => fail("expected Bins")
   }
 
@@ -118,10 +118,10 @@ class ResampleFunctionSpec extends AnyFlatSpec with Matchers {
       case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 2
         rows.foreach(_.value shouldBe 20.0)
-        rows.foreach(_.binMethod shouldBe "time_proportional")
-        rows.map(_.binValue.doubleValue()).sum shouldBe 20.0 +- 1e-9
-        rows.head.binValue.doubleValue() shouldBe 10.0 +- 1e-9
-        rows(1).binValue.doubleValue() shouldBe 10.0 +- 1e-9
+        rows.foreach(_.resampleMethod shouldBe "time_proportional")
+        rows.map(_.resampleValue.doubleValue()).sum shouldBe 20.0 +- 1e-9
+        rows.head.resampleValue.doubleValue() shouldBe 10.0 +- 1e-9
+        rows(1).resampleValue.doubleValue() shouldBe 10.0 +- 1e-9
       case _ => fail("expected Bins")
   }
 
@@ -134,9 +134,9 @@ class ResampleFunctionSpec extends AnyFlatSpec with Matchers {
     result match
       case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 2
-        rows.head.binValue.doubleValue() shouldBe 7.0 +- 1e-9
-        rows(1).binValue.doubleValue() shouldBe 15.0 +- 1e-9
-        rows.map(_.binValue.doubleValue()).sum shouldBe 22.0 +- 1e-9
+        rows.head.resampleValue.doubleValue() shouldBe 7.0 +- 1e-9
+        rows(1).resampleValue.doubleValue() shouldBe 15.0 +- 1e-9
+        rows.map(_.resampleValue.doubleValue()).sum shouldBe 22.0 +- 1e-9
       case _ => fail("expected Bins")
   }
 
@@ -152,11 +152,11 @@ class ResampleFunctionSpec extends AnyFlatSpec with Matchers {
     result match
       case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 2
-        val byBin = rows.map(r => r.binTimestamp.longValue() -> r.binValue.doubleValue()).toMap
+        val byBin = rows.map(r => r.resampleTimestamp.longValue() -> r.resampleValue.doubleValue()).toMap
         byBin(epochMs("2026-05-01T10:00:00Z")) shouldBe (100.0 * 331.0 / 904.0) +- 1e-9
         byBin(epochMs("2026-05-01T10:15:00Z")) shouldBe (100.0 * 573.0 / 904.0) +- 1e-9
-        rows.map(_.binValue.doubleValue()).sum shouldBe 100.0 +- 1e-9
-        rows.foreach(_.binMethod shouldBe "time_proportional")
+        rows.map(_.resampleValue.doubleValue()).sum shouldBe 100.0 +- 1e-9
+        rows.foreach(_.resampleMethod shouldBe "time_proportional")
       case _ => fail("expected Bins")
   }
 
@@ -171,9 +171,9 @@ class ResampleFunctionSpec extends AnyFlatSpec with Matchers {
     result match
       case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 2
-        rows.head.binValue.doubleValue() shouldBe 15.0 +- 1e-9
-        rows(1).binValue.doubleValue() shouldBe 20.0 +- 1e-9
-        rows.foreach(_.binMethod shouldBe "linear_interpolation")
+        rows.head.resampleValue.doubleValue() shouldBe 15.0 +- 1e-9
+        rows(1).resampleValue.doubleValue() shouldBe 20.0 +- 1e-9
+        rows.foreach(_.resampleMethod shouldBe "linear_interpolation")
       case _ => fail("expected Bins")
   }
 
@@ -197,7 +197,7 @@ class ResampleFunctionSpec extends AnyFlatSpec with Matchers {
     result match
       case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 4
-        rows.map(_.binValue.doubleValue()) shouldBe Seq(15.0, 30.0, 45.0, 60.0)
+        rows.map(_.resampleValue.doubleValue()) shouldBe Seq(15.0, 30.0, 45.0, 60.0)
       case _ => fail("expected Bins")
   }
 
@@ -223,7 +223,7 @@ class ResampleFunctionSpec extends AnyFlatSpec with Matchers {
     result match
       case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 1
-        rows.head.binValue.doubleValue() shouldBe 24.0 +- 1e-9
+        rows.head.resampleValue.doubleValue() shouldBe 24.0 +- 1e-9
       case _ => fail("expected Bins")
   }
 
@@ -237,9 +237,9 @@ class ResampleFunctionSpec extends AnyFlatSpec with Matchers {
       case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 1
         rows.head.value shouldBe 20.0
-        rows.head.binTimestamp shouldBe null
-        rows.head.binValue shouldBe null
-        rows.head.binMethod shouldBe null
+        rows.head.resampleTimestamp shouldBe null
+        rows.head.resampleValue shouldBe null
+        rows.head.resampleMethod shouldBe null
       case _ => fail("expected Bins")
   }
 

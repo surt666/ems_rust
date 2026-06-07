@@ -82,18 +82,6 @@ class DdbStreamDeserializerSpec extends AnyFlatSpec with Matchers {
     result.mapping.get.purpose shouldBe "main meter"
   }
 
-  it should "fall back to the legacy binning attribute" in {
-    val image = s"""{
-      "pk": {"S": "00001"},
-      "sk": {"S": "daq:std:cust:m1:energy"},
-      "logical_id": {"N": "12"},
-      "meter_type": {"S": "counter"},
-      "hierarchy_path": {"S": "HN0#root|HN1#1|HN2#2|HN3#3"},
-      "binning": {"N": "15"}
-    }"""
-    val result = deserializer.deserialize(makeJson("INSERT", image))
-    result.mapping.get.resampleMinutes shouldBe java.lang.Integer.valueOf(15)
-  }
 
   it should "set optional fields empty/null when not present" in {
     val image = s"""{

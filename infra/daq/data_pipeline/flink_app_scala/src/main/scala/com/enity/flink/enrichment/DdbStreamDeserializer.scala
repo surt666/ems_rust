@@ -33,12 +33,8 @@ class DdbStreamDeserializer extends DeserializationSchema[IdMappingChange]:
         val hierarchyPath = extractString(newImage, "hierarchy_path")
         val ids = HierarchyPathParser.parse(hierarchyPath)
         val purpose = extractOptionalString(newImage, "purpose").getOrElse("")
-        // Prefer the canonical "resample_minutes"; fall back to the legacy "binning"
-        // attribute for items written before the rename.
         val resampleMinutes: java.lang.Integer =
-          extractOptionalNumber(newImage, "resample_minutes") match
-            case null => extractOptionalNumber(newImage, "binning")
-            case v    => v
+          extractOptionalNumber(newImage, "resample_minutes")
 
         val mapping = MeterMapping(
           logicalId = logicalId,

@@ -76,8 +76,8 @@ class MeterEnrichmentFunctionSpec extends AnyFlatSpec with Matchers {
   it should "leave bin_* fields null at the enrichment stage" in {
     val mapping = testMapping.copy(resampleMinutes = java.lang.Integer.valueOf(15))
     val enriched = MeterEnrichmentFunction.enrich(testRecord, mapping)
-    enriched.binTimestamp shouldBe null
-    enriched.binValue shouldBe null
-    enriched.binMethod shouldBe null
+    enriched.resampleTimestamp shouldBe null
+    enriched.resampleValue shouldBe null
+    enriched.resampleMethod shouldBe null
   }
 }

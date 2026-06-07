@@ -5,14 +5,14 @@ Reads raw cumulative values from the raw_data Iceberg table, joins with
 meter-identity from DynamoDB, computes deltas via LAG() window function,
 and appends corrected records to logical_meter_data.
 
-For meters with `resample_minutes` configured, also computes bin_timestamp / bin_value /
-bin_method per the 2026-05-01 resampling spec:
+For meters with `resample_minutes` configured, also computes resample_timestamp / resample_value /
+resample_method per the 2026-05-01 resampling spec:
   - Gauge: linear interpolation between (prev, current) for each bin in (prev_ts, current_ts]
   - Counter: time-proportional split of the delta across overlapping bins
 For meters with `resample_minutes IS NULL`, bin columns are written as NULL (raw shape preserved).
 
 Event-sourcing semantics: rows are appended with ingested_time=now(), never merged.
-Consumers query for the newest `ingested_time` per (logical_id, bin_timestamp).
+Consumers query for the newest `ingested_time` per (logical_id, resample_timestamp).
 
 Parameters:
   --daq_ids              Comma-separated DAQ IDs, or "*" for full backfill
@@ -116,9 +116,7 @@ def parse_ddb_item(item: dict) -> dict:
     logical_id = int(item["logical_id"]["N"])
     meter_type = item["meter_type"]["S"]
     hierarchy_path = item["hierarchy_path"]["S"]
-    # Prefer the canonical "resample_minutes"; fall back to the legacy "binning"
-    # attribute for items written before the rename.
-    resample_field = item.get("resample_minutes") or item.get("binning")
+    resample_field = item.get("resample_minutes")
     resample_minutes = int(resample_field["N"]) if resample_field and "N" in resample_field else None
     purpose_field = item.get("purpose")
     purpose = purpose_field["S"] if purpose_field and "S" in purpose_field else None
@@ -319,9 +317,9 @@ def compute_counter_bins(joined_df: DataFrame) -> DataFrame:
 
     resampled = counters.filter(F.col("resample_minutes").isNotNull())
     unresampled = counters.filter(F.col("resample_minutes").isNull()) \
-        .withColumn("bin_timestamp", F.lit(None).cast(TimestampType())) \
-        .withColumn("bin_value", F.lit(None).cast("double")) \
-        .withColumn("bin_method", F.lit(None).cast(StringType()))
+        .withColumn("resample_timestamp", F.lit(None).cast(TimestampType())) \
+        .withColumn("resample_value", F.lit(None).cast("double")) \
+        .withColumn("resample_method", F.lit(None).cast(StringType()))
 
     resampled = resampled.withColumn(
         "bins",
@@ -331,24 +329,24 @@ def compute_counter_bins(joined_df: DataFrame) -> DataFrame:
             F.col("resample_minutes"),
         ),
     )
-    resampled = resampled.withColumn("bin_timestamp_ms", F.explode("bins"))
+    resampled = resampled.withColumn("resample_timestamp_ms", F.explode("bins"))
     resampled = resampled.withColumn(
-        "bin_timestamp",
-        (F.col("bin_timestamp_ms") / 1000).cast(TimestampType()),
+        "resample_timestamp",
+        (F.col("resample_timestamp_ms") / 1000).cast(TimestampType()),
     )
     bin_size_ms = F.col("resample_minutes").cast("long") * F.lit(60 * 1000)
     prev_ts_ms = F.unix_timestamp("prev_ts") * 1000
     cur_ts_ms = F.unix_timestamp("timestamp") * 1000
-    bin_start_ms = F.greatest(prev_ts_ms, F.col("bin_timestamp_ms") - bin_size_ms)
-    bin_end_ms = F.least(cur_ts_ms, F.col("bin_timestamp_ms"))
+    bin_start_ms = F.greatest(prev_ts_ms, F.col("resample_timestamp_ms") - bin_size_ms)
+    bin_end_ms = F.least(cur_ts_ms, F.col("resample_timestamp_ms"))
     overlap_ms = bin_end_ms - bin_start_ms
     period_ms = cur_ts_ms - prev_ts_ms
     resampled = resampled.withColumn(
-        "bin_value",
+        "resample_value",
         F.col("delta") * (overlap_ms.cast("double") / period_ms.cast("double")),
     )
-    resampled = resampled.withColumn("bin_method", F.lit(BIN_METHOD_TIME_PROPORTIONAL))
-    resampled = resampled.drop("bins", "bin_timestamp_ms")
+    resampled = resampled.withColumn("resample_method", F.lit(BIN_METHOD_TIME_PROPORTIONAL))
+    resampled = resampled.drop("bins", "resample_timestamp_ms")
 
     return resampled.unionByName(unresampled, allowMissingColumns=True).drop("delta", "prev_ts", "prev_value")
 
@@ -362,9 +360,9 @@ def compute_gauge_bins(joined_df: DataFrame) -> DataFrame:
     gauges = gauges.withColumn("prev_value", F.lag("value").over(window))
 
     unresampled = gauges.filter(F.col("resample_minutes").isNull()) \
-        .withColumn("bin_timestamp", F.lit(None).cast(TimestampType())) \
-        .withColumn("bin_value", F.lit(None).cast("double")) \
-        .withColumn("bin_method", F.lit(None).cast(StringType())) \
+        .withColumn("resample_timestamp", F.lit(None).cast(TimestampType())) \
+        .withColumn("resample_value", F.lit(None).cast("double")) \
+        .withColumn("resample_method", F.lit(None).cast(StringType())) \
         .drop("prev_ts", "prev_value")
 
     resampled = gauges.filter(F.col("resample_minutes").isNotNull() & F.col("prev_ts").isNotNull())
@@ -376,21 +374,21 @@ def compute_gauge_bins(joined_df: DataFrame) -> DataFrame:
             F.col("resample_minutes"),
         ),
     )
-    resampled = resampled.withColumn("bin_timestamp_ms", F.explode("bins"))
+    resampled = resampled.withColumn("resample_timestamp_ms", F.explode("bins"))
     resampled = resampled.withColumn(
-        "bin_timestamp",
-        (F.col("bin_timestamp_ms") / 1000).cast(TimestampType()),
+        "resample_timestamp",
+        (F.col("resample_timestamp_ms") / 1000).cast(TimestampType()),
     )
     prev_ts_ms = F.unix_timestamp("prev_ts") * 1000
     cur_ts_ms = F.unix_timestamp("timestamp") * 1000
     resampled = resampled.withColumn(
-        "bin_value",
+        "resample_value",
         F.col("prev_value") + (F.col("value") - F.col("prev_value")) *
-        (F.col("bin_timestamp_ms") - prev_ts_ms).cast("double") /
+        (F.col("resample_timestamp_ms") - prev_ts_ms).cast("double") /
         (cur_ts_ms - prev_ts_ms).cast("double"),
     )
-    resampled = resampled.withColumn("bin_method", F.lit(BIN_METHOD_LINEAR_INTERPOLATION))
-    resampled = resampled.drop("bins", "bin_timestamp_ms", "prev_ts", "prev_value")
+    resampled = resampled.withColumn("resample_method", F.lit(BIN_METHOD_LINEAR_INTERPOLATION))
+    resampled = resampled.drop("bins", "resample_timestamp_ms", "prev_ts", "prev_value")
 
     return resampled.unionByName(unresampled, allowMissingColumns=True)
 
@@ -415,10 +413,10 @@ def build_output(df: DataFrame) -> DataFrame:
         F.col("hn8").cast(IntegerType()),
         F.col("hn9").cast(IntegerType()),
         F.col("purpose"),
-        F.when(F.col("bin_value").isNotNull(), F.col("bin_value") * F.col("_unit_factor"))
-         .otherwise(F.lit(None).cast("double")).alias("bin_value"),
-        F.col("bin_method"),
-        F.col("bin_timestamp"),
+        F.when(F.col("resample_value").isNotNull(), F.col("resample_value") * F.col("_unit_factor"))
+         .otherwise(F.lit(None).cast("double")).alias("resample_value"),
+        F.col("resample_method"),
+        F.col("resample_timestamp"),
     )
 
 

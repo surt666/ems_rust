@@ -96,8 +96,8 @@ class EnrichmentPipelineSpec extends AnyFlatSpec with Matchers {
     result match
       case ResampleFunction.Bins(rows) =>
         rows.size shouldBe 2
-        rows.head.binValue.doubleValue() shouldBe 20.0 +- 1e-9   // 10:15, midpoint
-        rows(1).binValue.doubleValue() shouldBe 30.0 +- 1e-9    // 10:30, equals current
+        rows.head.resampleValue.doubleValue() shouldBe 20.0 +- 1e-9   // 10:15, midpoint
+        rows(1).resampleValue.doubleValue() shouldBe 30.0 +- 1e-9    // 10:30, equals current
         rows.head.logicalId shouldBe 2002
       case _ => fail("expected Bins")
   }

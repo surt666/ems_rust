@@ -349,13 +349,11 @@ def _item(img):
     }
     # resample_minutes is optional in the source sensor row. Omit it when unset so
     # the meter-identity row carries no resample_minutes attribute — Flink's
-    # DdbBootstrapLoader / DdbStreamDeserializer already treat an absent value as
-    # null (raw passthrough, no resampling). A sentinel like 0 would be an invalid
-    # resample interval. The legacy "binning" source attribute is still accepted.
+    # DdbBootstrapLoader / DdbStreamDeserializer treat an absent value as null
+    # (raw passthrough, no resampling). A sentinel like 0 would be an invalid
+    # resample interval.
     if "resample_minutes" in img:
         out["resample_minutes"] = {"N": img["resample_minutes"]["N"]}
-    elif "binning" in img:
-        out["resample_minutes"] = {"N": img["binning"]["N"]}
     if "formula" in img:
         out["formula"] = {"S": json.dumps(_d.deserialize(img["formula"]), default=str)}
     return out

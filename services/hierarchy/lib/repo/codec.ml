@@ -488,13 +488,7 @@ let sensor_of_item kvs : (Sensor.t, string) result =
     | Some v -> formula_of_attr v
     | None -> Ok Formula.Identity
   in
-  (* Prefer the canonical "resample_minutes"; fall back to the legacy
-     "binning" attribute for items written before the rename. *)
-  let resample_minutes =
-    match opt_int_of_n (List.assoc_opt "resample_minutes" kvs) with
-    | Some _ as v -> v
-    | None -> opt_int_of_n (List.assoc_opt "binning" kvs)
-  in
+  let resample_minutes = opt_int_of_n (List.assoc_opt "resample_minutes" kvs) in
   Ok Sensor.{
     id; created; daq_id; path;
     purpose; meter_type; unit; formula; resample_minutes;

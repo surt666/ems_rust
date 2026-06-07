@@ -88,7 +88,7 @@ object MeterEnrichmentFunction:
     )
 
   /** Pure function for testability. Passes through the original timestamp un-floored.
-    * ResampleFunction downstream computes bin_timestamp / bin_value / bin_method from
+    * ResampleFunction downstream computes resample_timestamp / resample_value / resample_method from
     * the raw timestamp + per-meter resampleMinutes config. */
   def enrich(record: SensorRecord, m: MeterMapping): EnrichedRecord =
     EnrichedRecord(

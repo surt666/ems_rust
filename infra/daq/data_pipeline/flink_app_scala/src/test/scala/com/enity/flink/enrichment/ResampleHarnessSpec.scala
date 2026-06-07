@@ -82,9 +82,9 @@ class ResampleHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterE
     val output = harness.extractOutputValues().asScala
     output should have size 1
     output.head.value shouldBe 50.0
-    output.head.binValue.doubleValue() shouldBe 50.0 +- 1e-9
-    output.head.binMethod shouldBe "time_proportional"
-    output.head.binTimestamp.longValue() shouldBe tsMillis("2026-01-01T10:15:00Z")
+    output.head.resampleValue.doubleValue() shouldBe 50.0 +- 1e-9
+    output.head.resampleMethod shouldBe "time_proportional"
+    output.head.resampleTimestamp.longValue() shouldBe tsMillis("2026-01-01T10:15:00Z")
   }
 
   it should "fan out across multiple bins when there is a gap" in {
@@ -98,8 +98,8 @@ class ResampleHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterE
     val output = harness.extractOutputValues().asScala
     output should have size 4
     output.foreach(_.value shouldBe 60.0)
-    output.map(_.binValue.doubleValue()).sum shouldBe 60.0 +- 1e-9
-    output.foreach(_.binValue.doubleValue() shouldBe 15.0 +- 1e-9)
+    output.map(_.resampleValue.doubleValue()).sum shouldBe 60.0 +- 1e-9
+    output.foreach(_.resampleValue.doubleValue() shouldBe 15.0 +- 1e-9)
   }
 
   it should "emit anomaly side output for negative counter delta" in {
@@ -127,9 +127,9 @@ class ResampleHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterE
 
     val output = harness.extractOutputValues().asScala
     output should have size 2
-    output.foreach(_.binMethod shouldBe "linear_interpolation")
-    output.head.binValue.doubleValue() shouldBe 20.0 +- 1e-9
-    output(1).binValue.doubleValue() shouldBe 30.0 +- 1e-9
+    output.foreach(_.resampleMethod shouldBe "linear_interpolation")
+    output.head.resampleValue.doubleValue() shouldBe 20.0 +- 1e-9
+    output(1).resampleValue.doubleValue() shouldBe 30.0 +- 1e-9
     output.head.value shouldBe 30.0
   }
 
@@ -194,8 +194,8 @@ class ResampleHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterE
 
     val output = harness.extractOutputValues().asScala
     output should have size 1
-    output.head.binTimestamp shouldBe null
-    output.head.binValue shouldBe null
-    output.head.binMethod shouldBe null
+    output.head.resampleTimestamp shouldBe null
+    output.head.resampleValue shouldBe null
+    output.head.resampleMethod shouldBe null
   }
 }

@@ -8,7 +8,7 @@ The pipeline processes IoT sensor data from two meter types:
 - **Gauge meters** — instantaneous readings (e.g., temperature, power). The raw value is the final value.
 - **Counter meters** — cumulative readings (e.g., total kWh, total m³). The system computes deltas between consecutive readings to derive per-interval consumption.
 
-All raw records are written unconditionally to the `raw_data` Iceberg table. The enrichment branch resolves sensor identities, computes deltas for counters, and writes to `logical_meter_data`. For meters with a `resample_minutes` configuration on `meter-identity`, the same record produces one row per bin per the resampling rules (gauge: linear interpolation at each bin boundary in `(prev, current]`; counter: time-proportional split across every bin window the period overlaps). Consumers query `logical_meter_data` with newest-`ingested_time` dedup on `(logical_id, timestamp, bin_timestamp)`, then `SUM(bin_value) GROUP BY (logical_id, bin_timestamp)`. Full rules: `superpowers/specs/2026-05-01-resampling-rules-design.md`.
+All raw records are written unconditionally to the `raw_data` Iceberg table. The enrichment branch resolves sensor identities, computes deltas for counters, and writes to `logical_meter_data`. For meters with a `resample_minutes` configuration on `meter-identity`, the same record produces one row per bin per the resampling rules (gauge: linear interpolation at each bin boundary in `(prev, current]`; counter: time-proportional split across every bin window the period overlaps). Consumers query `logical_meter_data` with newest-`ingested_time` dedup on `(logical_id, timestamp, resample_timestamp)`, then `SUM(resample_value) GROUP BY (logical_id, resample_timestamp)`. Full rules: `superpowers/specs/2026-05-01-resampling-rules-design.md`.
 
 **Key parameters:**
 - Watermark out-of-orderness: **1 hour** (`MAX_OUT_OF_ORDERNESS_MS`)
@@ -30,7 +30,7 @@ All raw records are written unconditionally to the `raw_data` Iceberg table. The
 6. **Counter:** Record is added to the event-time buffer keyed by `logicalId`. `emitFromBuffer` finds the predecessor in the sorted buffer, computes `delta = current - previous`, and emits immediately. An event-time timer is also registered (no-op in this case since the watermark hasn't passed it yet; it will fire later and find the delta already emitted).
 7. Enriched record is written to `logical_meter_data` at next checkpoint.
 
-**Consumer sees:** One or more rows per reading in `logical_meter_data` (one per bin emitted; for an unconfigured meter, one row with `bin_*` = NULL). Counter rows carry the delta in `value` and the time-proportional share in `bin_value`. Gauge rows carry the raw reading in `value` and the linearly interpolated value at the bin boundary in `bin_value`. Data appears within one checkpoint interval (~5 min).
+**Consumer sees:** One or more rows per reading in `logical_meter_data` (one per bin emitted; for an unconfigured meter, one row with `bin_*` = NULL). Counter rows carry the delta in `value` and the time-proportional share in `resample_value`. Gauge rows carry the raw reading in `value` and the linearly interpolated value at the bin boundary in `resample_value`. Data appears within one checkpoint interval (~5 min).
 
 **Error outputs:** None.
 

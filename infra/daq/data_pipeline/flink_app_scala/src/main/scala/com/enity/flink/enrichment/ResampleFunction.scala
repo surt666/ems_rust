@@ -12,12 +12,12 @@ import java.time.Instant
 import scala.jdk.CollectionConverters.*
 
 /** Resamples irregular readings onto a fixed time grid. Keyed by logicalId, holds one-reading
-  * lag per meter and emits per-bin rows when the next reading arrives. See
+  * lag per meter and emits one row per grid point when the next reading arrives; the output
+  * columns are `resample_timestamp` / `resample_value` / `resample_method`. See
   * `docs/superpowers/specs/2026-05-01-resampling-rules-design.md`.
   *
-  * Note: the emitted grid points and the `bin_*` output columns retain the "bin" name (the
-  * persisted Iceberg schema is unchanged); only the operator and the per-meter config field
-  * (`resampleMinutes`) use the resample vocabulary. */
+  * (Internal algorithm vocabulary still says "bin" for the grid points/windows — e.g.
+  * `binSizeMs`, `computeBins` — but nothing named "bin" is persisted or part of any contract.) */
 class ResampleFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
     extends KeyedProcessFunction[Integer, (EnrichedRecord, MeterMapping), EnrichedRecord]:
 
@@ -35,24 +35,22 @@ class ResampleFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
   @transient private var latestBufferedTs: ValueState[java.lang.Long] = _
 
   override def open(parameters: Configuration): Unit =
-    // State descriptor names are kept as "binning-*" to preserve savepoint/checkpoint
-    // restore compatibility — they are operator state identity, not user-facing terms.
     readingBuffer = getRuntimeContext.getMapState(
       new MapStateDescriptor[java.lang.Long, BufferedReadingV2](
-        "binning-reading-buffer",
+        "resample-reading-buffer",
         Types.LONG.asInstanceOf[TypeInformation[java.lang.Long]],
         TypeInformation.of(classOf[BufferedReadingV2])
       )
     )
     lastEmittedTs = getRuntimeContext.getState(
       new ValueStateDescriptor[java.lang.Long](
-        "binning-last-emitted-ts",
+        "resample-last-emitted-ts",
         Types.LONG.asInstanceOf[TypeInformation[java.lang.Long]]
       )
     )
     latestBufferedTs = getRuntimeContext.getState(
       new ValueStateDescriptor[java.lang.Long](
-        "binning-latest-buffered-ts",
+        "resample-latest-buffered-ts",
         Types.LONG.asInstanceOf[TypeInformation[java.lang.Long]]
       )
     )
@@ -147,7 +145,7 @@ class ResampleFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
     val mapping = current.mapping
 
     // Counter with resampleMinutes=null: preserve old CounterDeltaFunction behavior — emit one
-    // row per (prev, current) pair with value=delta, bin_* fields null.
+    // row per (prev, current) pair with value=delta, resample_* fields null.
     if mapping.resampleMinutes == null then
       mapping.meterType match
         case "counter" =>
@@ -203,7 +201,7 @@ class ResampleFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
 
 object ResampleFunction:
 
-  /** `bin_method` values written to `logical_meter_data`. Must stay in sync with the
+  /** `resample_method` values written to `logical_meter_data`. Must stay in sync with the
     * Python equivalents in `glue/late_recomputation.py` — change in lock-step. */
   object BinMethod:
     val LinearInterpolation = "linear_interpolation"
@@ -236,9 +234,9 @@ object ResampleFunction:
             val binValue = if totalPeriod <= 0 then 0.0 else delta * (overlap / totalPeriod)
             current.record.copy(
               value = delta,
-              binTimestamp = java.lang.Long.valueOf(b),
-              binValue = java.lang.Double.valueOf(binValue),
-              binMethod = BinMethod.TimeProportional
+              resampleTimestamp = java.lang.Long.valueOf(b),
+              resampleValue = java.lang.Double.valueOf(binValue),
+              resampleMethod = BinMethod.TimeProportional
             )
           }
           Bins(rows)
@@ -250,9 +248,9 @@ object ResampleFunction:
             if totalPeriod <= 0 then current.cumulativeValue
             else prev.cumulativeValue + (current.cumulativeValue - prev.cumulativeValue) * (b - prevTs) / totalPeriod
           current.record.copy(
-            binTimestamp = java.lang.Long.valueOf(b),
-            binValue = java.lang.Double.valueOf(binValue),
-            binMethod = BinMethod.LinearInterpolation
+            resampleTimestamp = java.lang.Long.valueOf(b),
+            resampleValue = java.lang.Double.valueOf(binValue),
+            resampleMethod = BinMethod.LinearInterpolation
           )
         }
         Bins(rows)

@@ -81,9 +81,9 @@ func meterReadingsIcebergMetadata() interface{} {
 				field("hn8", "int", false),
 				field("hn9", "int", false),
 				field("purpose", "string", false),
-				field("bin_value", "double", false),
-				field("bin_method", "string", false),
-				field("bin_timestamp", "timestamp", false),
+				field("resample_value", "double", false),
+				field("resample_method", "string", false),
+				field("resample_timestamp", "timestamp", false),
 			},
 		},
 		"icebergPartitionSpec": map[string]interface{}{

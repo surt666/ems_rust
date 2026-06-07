@@ -65,16 +65,4 @@ class DdbBootstrapLoaderSpec extends AnyFlatSpec with Matchers {
     mapping.purpose shouldBe "main meter"
   }
 
-  it should "fall back to the legacy binning attribute" in {
-    val item = new java.util.HashMap[String, AttributeValue]()
-    item.put("pk", AttributeValue.builder().s("00001").build())
-    item.put("sk", AttributeValue.builder().s("daq:std:cust:m2:energy").build())
-    item.put("logical_id", AttributeValue.builder().n("42").build())
-    item.put("meter_type", AttributeValue.builder().s("counter").build())
-    item.put("hierarchy_path", AttributeValue.builder().s("HN0#root|HN1#1|HN2#2|HN3#3").build())
-    item.put("binning", AttributeValue.builder().n("15").build())
-
-    val (_, mapping) = DdbBootstrapLoader.parseDdbItem(item)
-    mapping.resampleMinutes shouldBe java.lang.Integer.valueOf(15)
-  }
 }

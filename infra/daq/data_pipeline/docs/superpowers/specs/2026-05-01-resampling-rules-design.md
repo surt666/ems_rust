@@ -19,22 +19,22 @@ Gauges and counters use **different bin-enumeration rules** because they answer 
 
 ### Gauge values (instantaneous: temperature, voltage, power in W)
 
-- `bin_timestamp` — each bin boundary `B` in `(prev_ts, current_ts]`
-- `bin_value` — linear interpolation between `(prev_ts, prev_value)` and `(current_ts, current_value)` evaluated at `B`
+- `resample_timestamp` — each bin boundary `B` in `(prev_ts, current_ts]`
+- `resample_value` — linear interpolation between `(prev_ts, prev_value)` and `(current_ts, current_value)` evaluated at `B`
 - Single-neighbor edge case (first/last reading per meter, no counterpart) → no row emitted for that bin
 
 In normal operation (one reading per bin period) there is exactly one `B` in the period and it equals `round(current_ts, bin_size)` to within the round-half-up convention.
 
 ### Counter values (accumulated delta: kWh since last reading)
 
-- `bin_timestamp` — each bin boundary `B` such that the bin window `[B − bin_size, B]` overlaps with `[prev_ts, current_ts]`. **A single reading may contribute to multiple bins; a single bin may receive contributions from multiple readings.**
-- `bin_value` — time-proportional share of the **delta** (`current_value − prev_value`):
+- `resample_timestamp` — each bin boundary `B` such that the bin window `[B − bin_size, B]` overlaps with `[prev_ts, current_ts]`. **A single reading may contribute to multiple bins; a single bin may receive contributions from multiple readings.**
+- `resample_value` — time-proportional share of the **delta** (`current_value − prev_value`):
   - `overlap = min(current_ts, B) − max(prev_ts, B − bin_size)`
-  - `bin_value = delta × overlap / (current_ts − prev_ts)`
-- Energy is conserved per reading: `sum(bin_value)` across all bins emitted by one reading equals that reading's `value` (delta) field
-- Energy is also conserved per bin across readings: total energy in bin `B` equals `sum(bin_value)` across every reading whose period overlaps `[B − bin_size, B]`. **Consumers must sum after dedup**, see [Consumer query](#consumer-query) below.
+  - `resample_value = delta × overlap / (current_ts − prev_ts)`
+- Energy is conserved per reading: `sum(resample_value)` across all bins emitted by one reading equals that reading's `value` (delta) field
+- Energy is also conserved per bin across readings: total energy in bin `B` equals `sum(resample_value)` across every reading whose period overlaps `[B − bin_size, B]`. **Consumers must sum after dedup**, see [Consumer query](#consumer-query) below.
 
-### `bin_method` audit string
+### `resample_method` audit string
 
 - `"linear_interpolation"` — gauge
 - `"nearest_neighbor"` — defined in the rules for the single-neighbor edge case (first/last reading per meter without a counterpart). **Not emitted by the current implementation** — both Flink and Glue skip bins that have no bracketing pair. Reserved for a future enhancement.
@@ -48,16 +48,16 @@ The schema migration must run via Athena (the CDK `CfnTable` resource cannot do 
 
 ```sql
 ALTER TABLE all.logical_meter_data ADD COLUMNS (
-  bin_value     double,
-  bin_method    string,
-  bin_timestamp timestamp
+  resample_value     double,
+  resample_method    string,
+  resample_timestamp timestamp
 );
 ```
 
 Notes:
 - All three are nullable.
-- **Athena `ADD COLUMN`/`ADD COLUMNS` drops the `WITH TIME ZONE` clause** — `bin_timestamp` ends up as plain `timestamp` in the Iceberg schema regardless of how it's declared. The Flink row mapper writes `LocalDateTime` (UTC) accordingly.
-- **Field-ID order matters.** Iceberg matches by field ID, not name. If `bin_timestamp` is dropped and re-added, it gets a new field ID and lands at the end of the table. The CDK schema and the Flink row mapper must list columns in the same physical order: `bin_value, bin_method, bin_timestamp`.
+- **Athena `ADD COLUMN`/`ADD COLUMNS` drops the `WITH TIME ZONE` clause** — `resample_timestamp` ends up as plain `timestamp` in the Iceberg schema regardless of how it's declared. The Flink row mapper writes `LocalDateTime` (UTC) accordingly.
+- **Field-ID order matters.** Iceberg matches by field ID, not name. If `resample_timestamp` is dropped and re-added, it gets a new field ID and lands at the end of the table. The CDK schema and the Flink row mapper must list columns in the same physical order: `resample_value, resample_method, resample_timestamp`.
 
 ### Existing column semantics
 
@@ -65,9 +65,9 @@ Notes:
 |---|---|---|
 | `timestamp` | original reading time, un-floored (behavior change — old `binTimestamp` floor removed) | original reading time, un-floored |
 | `value` | instantaneous reading (after unit normalization) | computed delta (after unit normalization) |
-| `bin_timestamp` | each bin boundary in `(prev_ts, current_ts]` | each bin boundary whose **window** overlaps `[prev_ts, current_ts]` |
-| `bin_value` | linearly interpolated (unit-normalized) | time-proportional share of delta (unit-normalized) |
-| `bin_method` | `"linear_interpolation"` | `"time_proportional"` |
+| `resample_timestamp` | each bin boundary in `(prev_ts, current_ts]` | each bin boundary whose **window** overlaps `[prev_ts, current_ts]` |
+| `resample_value` | linearly interpolated (unit-normalized) | time-proportional share of delta (unit-normalized) |
+| `resample_method` | `"linear_interpolation"` | `"time_proportional"` |
 
 ### Meters with `resample_minutes IS NULL`
 
@@ -114,23 +114,23 @@ Both paths produce identical output rows for the same input (see [Output parity 
 
 ### Consumer query
 
-Bins can have multiple contributing rows. The dedup key is `(logical_id, timestamp, bin_timestamp)` (newest `ingested_time` wins for a given source-reading + bin), then sum `bin_value` per `(logical_id, bin_timestamp)`:
+Bins can have multiple contributing rows. The dedup key is `(logical_id, timestamp, resample_timestamp)` (newest `ingested_time` wins for a given source-reading + bin), then sum `resample_value` per `(logical_id, resample_timestamp)`:
 
 ```sql
-SELECT logical_id, bin_timestamp, unit, SUM(bin_value) AS energy
+SELECT logical_id, resample_timestamp, unit, SUM(resample_value) AS energy
 FROM (
-  SELECT logical_id, timestamp, bin_timestamp, bin_value, unit,
+  SELECT logical_id, timestamp, resample_timestamp, resample_value, unit,
          ROW_NUMBER() OVER (
-           PARTITION BY logical_id, timestamp, bin_timestamp
+           PARTITION BY logical_id, timestamp, resample_timestamp
            ORDER BY ingested_time DESC
          ) AS rn
   FROM all.logical_meter_data
-  WHERE bin_timestamp IS NOT NULL
+  WHERE resample_timestamp IS NOT NULL
 ) WHERE rn = 1
-GROUP BY logical_id, bin_timestamp, unit;
+GROUP BY logical_id, resample_timestamp, unit;
 ```
 
-For gauges (where each reading contributes one row per bin and bins don't accumulate), `MAX(bin_value)` is equivalent to `SUM(bin_value)` after dedup. The query above works for both meter types.
+For gauges (where each reading contributes one row per bin and bins don't accumulate), `MAX(resample_value)` is equivalent to `SUM(resample_value)` after dedup. The query above works for both meter types.
 
 ## Flink: `ResampleFunction` Operator
 
@@ -179,7 +179,7 @@ emitFromBuffer(eventTs, ctx, out):
       binBoundaries = enumerateBinsIn(prev.ts, eventTs, binSize)
       for B in binBoundaries:
         binValue = prev.value + (record.value - prev.value) * (B - prev.ts) / (eventTs - prev.ts)
-        out.collect(record.copy(bin_timestamp = B, bin_value = binValue, bin_method = "linear_interpolation"))
+        out.collect(record.copy(resample_timestamp = B, resample_value = binValue, resample_method = "linear_interpolation"))
 
     case "counter":
       delta = record.value - prev.value
@@ -191,7 +191,7 @@ emitFromBuffer(eventTs, ctx, out):
         binEnd   = min(eventTs, B)
         overlap  = binEnd - binStart
         binValue = delta * (overlap / totalPeriod)
-        out.collect(record.copy(value = delta, bin_timestamp = B, bin_value = binValue, bin_method = "time_proportional"))
+        out.collect(record.copy(value = delta, resample_timestamp = B, resample_value = binValue, resample_method = "time_proportional"))
 
   update lastEmittedTs
 ```
@@ -219,7 +219,7 @@ The gauge enumeration is right-inclusive of `currentTs` and left-exclusive of `p
 
 ### Unit normalization in the row mapper
 
-`Main.scala` calls `Extensions.normalizeUnit(record.unit, record.value)` to convert the raw sensor unit (e.g., `"Energy (100 Wh)"`) to a canonical unit (`"Wh"`) and scale the value by the same factor. `bin_value` **must** use the same factor — otherwise `value` and `bin_value` end up in different units and consumer math breaks. Implemented as:
+`Main.scala` calls `Extensions.normalizeUnit(record.unit, record.value)` to convert the raw sensor unit (e.g., `"Energy (100 Wh)"`) to a canonical unit (`"Wh"`) and scale the value by the same factor. `resample_value` **must** use the same factor — otherwise `value` and `resample_value` end up in different units and consumer math breaks. Implemented as:
 
 ```scala
 val (normalizedUnit, normalizedValue) = Extensions.normalizeUnit(record.unit, record.value)
@@ -273,19 +273,19 @@ resampled = counters.filter(F.col("resampling").isNotNull()) \
         (F.unix_timestamp("timestamp") * 1000).cast("long"),
         F.col("resampling"),
     )) \
-    .withColumn("bin_timestamp_ms", F.explode("bins")) \
-    .withColumn("bin_timestamp", (F.col("bin_timestamp_ms") / 1000).cast(TimestampType()))
+    .withColumn("resample_timestamp_ms", F.explode("bins")) \
+    .withColumn("resample_timestamp", (F.col("resample_timestamp_ms") / 1000).cast(TimestampType()))
 
 bin_size_ms = F.col("resampling").cast("long") * F.lit(60 * 1000)
 prev_ts_ms  = F.unix_timestamp("prev_ts") * 1000
 cur_ts_ms   = F.unix_timestamp("timestamp") * 1000
 resampled = resampled.withColumn(
-    "bin_value",
+    "resample_value",
     F.col("delta") *
-    (F.least(cur_ts_ms, F.col("bin_timestamp_ms")) - F.greatest(prev_ts_ms, F.col("bin_timestamp_ms") - bin_size_ms))
+    (F.least(cur_ts_ms, F.col("resample_timestamp_ms")) - F.greatest(prev_ts_ms, F.col("resample_timestamp_ms") - bin_size_ms))
         .cast("double") /
     (cur_ts_ms - prev_ts_ms).cast("double"),
-).withColumn("bin_method", F.lit("time_proportional"))
+).withColumn("resample_method", F.lit("time_proportional"))
 ```
 
 ### Gauges
@@ -296,14 +296,14 @@ gauges = gauges.filter(F.col("prev_ts").isNotNull())   # first reading per meter
 
 # Fan out across bins in (prev_ts, current_ts] with linear interpolation
 gauges = gauges.withColumn("bins", F.expr("enumerate_bins(prev_ts, timestamp, resampling)")) \
-               .withColumn("bin_timestamp", F.explode("bins"))
+               .withColumn("resample_timestamp", F.explode("bins"))
 
-gauges = gauges.withColumn("bin_value",
+gauges = gauges.withColumn("resample_value",
     F.col("prev_value") + (F.col("value") - F.col("prev_value")) *
-    (F.unix_timestamp("bin_timestamp") - F.unix_timestamp("prev_ts")) /
+    (F.unix_timestamp("resample_timestamp") - F.unix_timestamp("prev_ts")) /
     (F.unix_timestamp("timestamp") - F.unix_timestamp("prev_ts"))
 )
-gauges = gauges.withColumn("bin_method", F.lit("linear_interpolation"))
+gauges = gauges.withColumn("resample_method", F.lit("linear_interpolation"))
 ```
 
 This matches the Flink operator exactly: each bin in `(prev_ts, current_ts]` emits one row with linear interpolation. A meter with only a single reading in the dataset produces no bin rows (consistent with Flink's one-reading-lag model). The `nearest_neighbor` method is defined in the rules for future use (e.g., a batch-tail edge-fill enhancement) but is not actively emitted by either Flink or Glue under the current design.
@@ -312,11 +312,11 @@ This matches the Flink operator exactly: each bin in `(prev_ts, current_ts]` emi
 
 ```python
 result = counters.unionByName(gauges, allowMissingColumns=True)
-output = build_output(result)   # applies normalize_unit to value AND bin_value
+output = build_output(result)   # applies normalize_unit to value AND resample_value
 output.writeTo("all.logical_meter_data").append()
 ```
 
-`build_output` projects the final schema and applies `normalize_unit` (Python port of Scala `Extensions.normalizeUnit`) to both `value` and `bin_value` with the same factor. The `unit` column is replaced with the canonical unit name. This mirrors what Flink's row mapper does — required by the [output parity invariant](#output-parity-invariant).
+`build_output` projects the final schema and applies `normalize_unit` (Python port of Scala `Extensions.normalizeUnit`) to both `value` and `resample_value` with the same factor. The `unit` column is replaced with the canonical unit name. This mirrors what Flink's row mapper does — required by the [output parity invariant](#output-parity-invariant).
 
 ### Meters with `resample_minutes IS NULL`
 
@@ -326,7 +326,7 @@ Skip the bin enumeration; emit one row per reading with the three bin columns NU
 
 - `enumerate_overlapping_bins(prev_ts, current_ts, resample_minutes)` — for counters; bins `B` whose window `[B-binSize, B]` overlaps with `[prev_ts, current_ts]`. Mirrors `ResampleFunction.enumerateOverlappingBins`.
 - `enumerate_bins(prev_ts, current_ts, resample_minutes)` — for gauges; bins `B` where `prev_ts < B <= current_ts`. Mirrors `ResampleFunction.enumerateBinsIn`.
-- `_normalize_unit_name`, `_normalize_unit_factor` — port of Scala `Extensions.normalizeUnit`; applied to both `value` and `bin_value` in `build_output`.
+- `_normalize_unit_name`, `_normalize_unit_factor` — port of Scala `Extensions.normalizeUnit`; applied to both `value` and `resample_value` in `build_output`.
 
 ### Output parity invariant
 
@@ -337,7 +337,7 @@ This is non-negotiable: late-arriving rows reprocessed by Glue replace Flink's e
 - The same bin enumeration (`enumerate_overlapping_bins` for counters; `enumerate_bins` for gauges)
 - The same overlap formula (`min(currentTs, B) - max(prevTs, B - binSize)`)
 - The same unit-normalization table (Scala `Extensions.UnitConversions` ↔ Python `_UNIT_CONVERSIONS`)
-- The same per-bin row layout (`(timestamp, value=delta, bin_timestamp, bin_value, bin_method)`)
+- The same per-bin row layout (`(timestamp, value=delta, resample_timestamp, resample_value, resample_method)`)
 
 Any change to one side must be mirrored in the other in the same commit.
 
@@ -350,8 +350,8 @@ Three layers extend the existing scenario-test framework (`docs/superpowers/spec
 - `ResampleFunction.computeBins` — pure function; no Flink state
 - `enumerateBinsIn` (gauge) — single bin, multi-bin gap, exact boundary alignment, empty period
 - `enumerateOverlappingBins` (counter) — same set of cases plus *period straddles a bin boundary mid-period* (one reading contributes to two bins)
-- Linear interpolation: known prev/current pairs; expected `bin_value` at known boundaries
-- Time-proportional split: assert `sum(bin_values) == delta` per reading (energy-conservation invariant)
+- Linear interpolation: known prev/current pairs; expected `resample_value` at known boundaries
+- Time-proportional split: assert `sum(resample_values) == delta` per reading (energy-conservation invariant)
 - Bin-boundary alignment: reading whose `timestamp` is exactly on a bin boundary (right-inclusive: included as the bin emitted by that reading, excluded as predecessor anchor for the next)
 - Meter with `resample_minutes=null` → raw row only, bin columns null
 - First reading per meter → no emission, state populated
@@ -364,7 +364,7 @@ Full operator chain via `MiniClusterWithClientResource`:
 - Gauge end-to-end (3 readings, normal spacing) → 2 emitted bins after first; correct interpolation
 - Counter end-to-end (3 readings, normal spacing) → 2 emitted bins; sum invariant per period
 - Gauge with gap (prev 10:00, next 10:45, 15-min bins) → 3 bins (10:15, 10:30, 10:45), each linearly interpolated
-- Counter with gap → 3 bins; `bin_value` summed equals delta
+- Counter with gap → 3 bins; `resample_value` summed equals delta
 - Out-of-order within watermark → buffered, emitted correctly post-watermark
 - Late arrival (predecessor purged) → `LATE_ARRIVAL` side output for both gauge and counter
 - Counter negative delta → `ANOMALY`
@@ -375,7 +375,7 @@ Full operator chain via `MiniClusterWithClientResource`:
 - Same scenarios as mini-cluster, in batch
 - Single-reading-only meter → no bin rows emitted (consistent with Flink behavior)
 - Energy conservation invariant on counters
-- Idempotency: running Glue twice on the same input produces identical `bin_value`s (only `ingested_time` differs)
+- Idempotency: running Glue twice on the same input produces identical `resample_value`s (only `ingested_time` differs)
 
 ### Cross-implementation parity
 
@@ -383,13 +383,13 @@ A parametrised test feeds the same `(prev, current, resampling, meter_type)` tup
 - The Scala `ResampleFunction.computeBins` pure function
 - The Python equivalent used by Glue UDFs
 
-Asserts equal `bin_timestamp` / `bin_value` / `bin_method` outputs. Catches drift between implementations.
+Asserts equal `resample_timestamp` / `resample_value` / `resample_method` outputs. Catches drift between implementations.
 
 ### Smoke tests
 
 Extend the existing 4 smoke scenarios:
-- Inject a counter with a 45-min gap → query Athena → assert 3 bin rows; `SUM(bin_value)` equals delta
-- Inject a gauge → query Athena → assert correct interpolated `bin_value`
+- Inject a counter with a 45-min gap → query Athena → assert 3 bin rows; `SUM(resample_value)` equals delta
+- Inject a gauge → query Athena → assert correct interpolated `resample_value`
 
 ## Documentation Updates
 
@@ -405,9 +405,9 @@ Implementation plan must include updates to:
 1. **Iceberg schema migration via Athena** (do NOT redeploy `S3TablesStack` — `CfnTable` doesn't support schema evolution and would replace the table → data loss). Run:
    ```sql
    ALTER TABLE all.logical_meter_data ADD COLUMNS (
-     bin_value     double,
-     bin_method    string,
-     bin_timestamp timestamp
+     resample_value     double,
+     resample_method    string,
+     resample_timestamp timestamp
    );
    ```
    Update the CDK schema in the same column order so future fresh deploys stay in sync.
@@ -426,5 +426,5 @@ Implementation plan must include updates to:
 
 - Backfilling bin columns for already-written historical rows in `logical_meter_data`
 - Changing the bin-size definition for any meter (operational concern, separate workflow)
-- Real-time alerts on missing bins (consumers can detect via gaps in `bin_timestamp` series)
+- Real-time alerts on missing bins (consumers can detect via gaps in `resample_timestamp` series)
 - Sub-minute bin sizes (current `resample_minutes` column is integer minutes; sufficient for the foreseeable need)

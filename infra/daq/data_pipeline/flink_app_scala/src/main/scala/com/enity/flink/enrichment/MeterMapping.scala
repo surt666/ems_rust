@@ -51,8 +51,9 @@ case class IdMappingChange(
   * Uses java.lang.Integer / java.lang.Long / java.lang.Double for nullable fields
   * to avoid Flink Kryo serialization corrupting Scala Option across operator boundaries.
   *
-  * `binTimestamp` (epoch millis) / `binValue` / `binMethod` are populated by ResampleFunction.
-  * For meters with `resampleMinutes=null`, all three are null and only the raw row is emitted. */
+  * `resampleTimestamp` (epoch millis) / `resampleValue` / `resampleMethod` are populated by
+  * ResampleFunction. For meters with `resampleMinutes=null`, all three are null and only the
+  * raw row is emitted. */
 case class EnrichedRecord(
   logicalId: Int,
   timestamp: String,
@@ -69,9 +70,9 @@ case class EnrichedRecord(
   hn8: java.lang.Integer,
   hn9: java.lang.Integer,
   purpose: String,
-  binTimestamp: java.lang.Long = null,
-  binValue: java.lang.Double = null,
-  binMethod: String = null
+  resampleTimestamp: java.lang.Long = null,
+  resampleValue: java.lang.Double = null,
+  resampleMethod: String = null
 ) extends Serializable
 
 /** Error/dead-letter record for the error Kinesis stream.

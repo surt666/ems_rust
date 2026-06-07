@@ -68,17 +68,13 @@ let run_attach_sensor json =
   in
   (* resample_minutes is optional. JSON callers send a number; the HTML form
      posts it as a string ("15"), and an empty number input posts "". Accept
-     both, plus the legacy "binning" key, and treat empty/absent as unset.
-     Out-of-range values (<= 0) are rejected downstream in Sensors.attach. *)
+     both and treat empty/absent as unset. Out-of-range values (<= 0) are
+     rejected downstream in Sensors.attach. *)
   let resample_minutes =
-    let parse = function
-      | Some (`Int i) -> Some i
-      | Some (`String s) -> int_of_string_opt (String.trim s)
-      | _ -> None
-    in
-    match parse (field json "resample_minutes") with
-    | Some _ as v -> v
-    | None -> parse (field json "binning")
+    match field json "resample_minutes" with
+    | Some (`Int i) -> Some i
+    | Some (`String s) -> int_of_string_opt (String.trim s)
+    | _ -> None
   in
   let* formula = Api_json.formula_of_json (field json "formula") in
   let* parent     = Node_id.of_string parent_s in

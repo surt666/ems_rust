@@ -68,13 +68,15 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
 
 - `DaqPipelineStack` updates the MSF Flink application (`flink-iceberg-processor`) **in place**
   — it snapshots and restarts (brief processing pause), restoring from snapshot. This only works
-  while the operator `uid` and keyed-state descriptor names are unchanged (they're deliberately
-  kept as `"binning"`/`"binning-*"`); if those ever change, the restore fails and you must start
-  fresh (`SKIP_RESTORE_FROM_SNAPSHOT`) and accept state loss.
+  while the operator `uid` and keyed-state descriptor names are unchanged (currently `"resample"`
+  / `"resample-*"`); if those change, the restore fails and you must start fresh
+  (`SKIP_RESTORE_FROM_SNAPSHOT`, state loss) — as the 2026-06-07 de-binning rename deliberately did.
 - `RUN_NR` (a timestamp) is what forces the `DeployFlinkApp` custom resource to push a new JAR.
-- `LateRecomputationStack` swaps the Glue script (`late-data-recomputation` job). `S3TablesStack`
-  (Iceberg `bin_*` columns) and `OcamlBridgeWriterRoleStack` (the IAM role the bridge assumes)
-  are normally unchanged.
+- `LateRecomputationStack` swaps the Glue script (`late-data-recomputation` job).
+  `OcamlBridgeWriterRoleStack` (the IAM role the bridge assumes) is normally unchanged.
+  `S3TablesStack` owns the Iceberg tables; deploying it with **changed columns replaces the table**
+  (data loss) — that's how `logical_meter_data` (columns `resample_value/resample_method/resample_timestamp`)
+  gets recreated.
 - Verify the live Flink JAR is the one you built:
   `aws kinesisanalyticsv2 describe-application --application-name flink-iceberg-processor`
   → download the `FileKey` jar from `s3://flink-code-891377204778-eu-central-1/...` and
@@ -83,14 +85,15 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
 
 ### Cross-account ordering (important)
 
-The bridge writes the per-sensor resample interval to `meter-identity` as **`resample_minutes`**
-(falling back to a source `binning` attribute). The Flink/Glue pipeline reads `resample_minutes`
-**and** falls back to legacy `binning`. So:
+The bridge writes the per-sensor resample interval to `meter-identity` as **`resample_minutes`**,
+and the Flink/Glue pipeline reads **only** `resample_minutes`. There is **no `binning` fallback
+anymore** (removed 2026-06-07), so the two sides are a strict contract:
 
-- Deploying the **pipeline** is always safe — its new code reads both attribute names.
-- If you deploy the **hierarchy bridge** (now writing `resample_minutes`) while the pipeline is
-  still pre-rename (reads only `binning`), newly created/modified sensors lose resample propagation.
-  So deploy/confirm the pipeline reads `resample_minutes` before (or together with) the bridge.
+- The bridge (hierarchy account) and the pipeline (daq account) must both be on the post-rename
+  code. They are; keep them that way — a sensor whose `meter-identity` row lacks `resample_minutes`
+  simply gets no resampling (raw passthrough).
+- Because there's no fallback, any future rename of this attribute must deploy both sides together
+  and re-write the affected `meter-identity` rows.
 
 See `memory/cross_account_bridge.md` for the full field contract.
 

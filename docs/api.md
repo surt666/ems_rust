@@ -183,7 +183,7 @@ in the owning `hn2`'s `schema.sensors`.
 | purpose     | yes      |                                                    |
 | meter_type  | yes      | `counter` or `gauge`                               |
 | unit        | no       |                                                    |
-| resample_minutes | no    | resample interval in minutes, `> 0`; accepts an int or a numeric string (legacy key `binning` still accepted) |
+| resample_minutes | no    | resample interval in minutes, `> 0`; accepts an int or a numeric string |
 | formula          | no    | `{"kind":"identity"\|"zero"\|"expr", "expr": <text>, "refs": <object or JSON string>}`; default `identity`. For `expr`, `expr` is a text formula over `self`, numbers, `+ - * /`, `abs()`, and aliases; `refs` maps each alias to a sensor id (`"S#<n>"`). Every alias used in the expression must be bound; refs with unused aliases are rejected. Cross-sensor references are scoped to the owning HN2 company. |
 
 Response — the created sensor (mirrors `Api_json.sensor_to_json`). `path` is

@@ -278,8 +278,7 @@ object Main:
       val resampledStream = enrichedStream
         .keyBy((t: (EnrichedRecord, MeterMapping)) => java.lang.Integer.valueOf(t._1.logicalId))
         .process(new ResampleFunction(bufferRetentionMs))
-        // uid kept as "binning" to preserve savepoint/checkpoint restore identity.
-        .uid("binning")
+        .uid("resample")
 
       val anomalies = resampledStream.getSideOutput(SideOutputTags.ANOMALY)
       val lateArrivals = resampledStream.getSideOutput(SideOutputTags.LATE_ARRIVAL)
@@ -303,9 +302,9 @@ object Main:
         .field("hn8", DataTypes.INT())
         .field("hn9", DataTypes.INT())
         .field("purpose", DataTypes.STRING())
-        .field("bin_value", DataTypes.DOUBLE())
-        .field("bin_method", DataTypes.STRING())
-        .field("bin_timestamp", DataTypes.TIMESTAMP(6))
+        .field("resample_value", DataTypes.DOUBLE())
+        .field("resample_method", DataTypes.STRING())
+        .field("resample_timestamp", DataTypes.TIMESTAMP(6))
         .build()
 
       val enrichedTableId = TableIdentifier.of(Namespace.of("all"), "logical_meter_data")
@@ -315,13 +314,13 @@ object Main:
         .map { (record: EnrichedRecord) =>
           val (normalizedUnit, factor) = Extensions.unitFactor(record.unit)
           val normalizedValue = record.value * factor
-          val normalizedBinValue: java.lang.Double =
-            if record.binValue == null then null
-            else java.lang.Double.valueOf(record.binValue.doubleValue() * factor)
-          val binTs: java.time.LocalDateTime =
-            if record.binTimestamp == null then null
+          val normalizedResampleValue: java.lang.Double =
+            if record.resampleValue == null then null
+            else java.lang.Double.valueOf(record.resampleValue.doubleValue() * factor)
+          val resampleTs: java.time.LocalDateTime =
+            if record.resampleTimestamp == null then null
             else java.time.LocalDateTime.ofInstant(
-              Instant.ofEpochMilli(record.binTimestamp.longValue()),
+              Instant.ofEpochMilli(record.resampleTimestamp.longValue()),
               java.time.ZoneOffset.UTC
             )
           Row.of(
@@ -335,15 +334,15 @@ object Main:
             record.hn3, record.hn4, record.hn5,
             record.hn6, record.hn7, record.hn8, record.hn9,
             record.purpose,
-            normalizedBinValue,
-            record.binMethod,
-            binTs
+            normalizedResampleValue,
+            record.resampleMethod,
+            resampleTs
           )
         }
         .returns(Types.ROW_NAMED(
           Array("logical_id", "timestamp", "value", "unit", "ingested_time",
                 "hn1", "hn2", "hn3", "hn4", "hn5", "hn6", "hn7", "hn8", "hn9",
-                "purpose", "bin_value", "bin_method", "bin_timestamp"),
+                "purpose", "resample_value", "resample_method", "resample_timestamp"),
           Types.INT, Types.INSTANT, Types.DOUBLE, Types.STRING, Types.INSTANT,
           Types.INT, Types.INT, Types.INT, Types.INT, Types.INT,
           Types.INT, Types.INT, Types.INT, Types.INT,
