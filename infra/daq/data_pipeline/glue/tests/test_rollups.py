@@ -12,6 +12,7 @@ def _input(spark):
         T.StructField("hn6", T.IntegerType()), T.StructField("hn7", T.IntegerType()),
         T.StructField("hn8", T.IntegerType()), T.StructField("hn9", T.IntegerType()),
         T.StructField("logical_id", T.IntegerType()), T.StructField("purpose", T.StringType()),
+        T.StructField("unit", T.StringType()),
         T.StructField("resample_value", T.DoubleType()), T.StructField("value", T.DoubleType()),
         T.StructField("timestamp", T.TimestampType()),
         T.StructField("resample_timestamp", T.TimestampType()),
@@ -19,9 +20,9 @@ def _input(spark):
     def ts(h, mi=0):
         return datetime(2026, 6, 7, h, mi, tzinfo=timezone.utc)
     rows = [
-        (2, 9, 456, None, None, None, None, None, 10009, "Electricity", 4.0, 100.0, ts(8, 15), ts(8, 15)),
-        (2, 9, 456, None, None, None, None, None, 10009, "Electricity", 6.0, 106.0, ts(8, 45), ts(8, 45)),
-        (2, 9, None, None, None, None, None, None, 10010, "Electricity", 5.0, 50.0, ts(8, 30), ts(8, 30)),
+        (2, 9, 456, None, None, None, None, None, 10009, "Electricity", "kWh", 4.0, 100.0, ts(8, 15), ts(8, 15)),
+        (2, 9, 456, None, None, None, None, None, 10009, "Electricity", "kWh", 6.0, 106.0, ts(8, 45), ts(8, 45)),
+        (2, 9, None, None, None, None, None, None, 10010, "Electricity", "kWh", 5.0, 50.0, ts(8, 30), ts(8, 30)),
     ]
     return spark.createDataFrame(rows, schema)
 
@@ -36,7 +37,7 @@ def test_rollup_sums_at_every_level(spark):
     assert out["HN2#2|HN3#9#Electricity#h#2026-06-07T08"]["sum"] == 15.0
     assert out["HN2#2|HN3#9|HN4#456#Electricity#h#2026-06-07T08"]["sum"] == 10.0
     leaf = out["HN2#2|HN3#9|HN4#456|L#10009#Electricity#h#2026-06-07T08"]
-    assert leaf["sum"] == 10.0 and leaf["count"] == 2 and leaf["last_value"] == 106.0
+    assert leaf["sum"] == 10.0 and leaf["count"] == 2 and leaf["last_value"] == 106.0 and leaf["unit"] == "kWh"
     assert out["HN2#2#Electricity#d#2026-06-07"]["sum"] == 15.0
 
 

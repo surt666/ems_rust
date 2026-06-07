@@ -77,14 +77,14 @@ A node's row is the sum across **all** meters beneath it (siblings collapse in t
 | `min`, `max` | number | min/max `resample_value` in the bucket |
 | `last_value` | number | `value` (cumulative reading) at `max(timestamp)` in the bucket |
 | `last_ts` | string | `max(timestamp)` in the bucket (ISO-8601) |
+| `unit` | string | measurement unit (from `logical_meter_data`), needed to interpret `sum` |
 | `purpose` | string | e.g. `"Electricity"` (also encoded in the sk; kept for convenience) |
 | `bucket` | string | the bucket label (also in the sk; kept for convenience) |
 | `updated_at` | string | when the job last wrote this item |
 | `ttl` | number | epoch seconds: bucket-end + 90d (hourly) / + 730d (daily) |
 
 (`level` and `gran` are deliberately **not** stored — `gran` is in the sk and `level` is derivable
-from the path. `unit` is **not** carried yet; it isn't redundant, so it's a candidate to add to the
-read if consumers need it to interpret `sum`.)
+from the path.)
 
 ### TTL / retention
 

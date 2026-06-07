@@ -79,10 +79,10 @@ _SK_UDF = F.udf(build_sk, T.StringType())
 def build_rollups(df: DataFrame, run_at_iso: str) -> DataFrame:
     """Aggregate counter rows into per-node/purpose/granularity/bucket rollup items.
 
-    Input columns: hn2..hn9 (int), logical_id (int), purpose (str), resample_value (double),
-    value (double), timestamp (ts), resample_timestamp (ts).
+    Input columns: hn2..hn9 (int), logical_id (int), purpose (str), unit (str),
+    resample_value (double), value (double), timestamp (ts), resample_timestamp (ts).
     Output columns: pk ('HN2#<id>'), sk ('<full hierarchy path>#<purpose>#<gran>#<bucket>'),
-    purpose, bucket, sum, count, min, max, last_value, last_ts, updated_at, ttl.
+    purpose, bucket, unit, sum, count, min, max, last_value, last_ts, updated_at, ttl.
     NOTE: caller must set spark.sql.session.timeZone='UTC' so the bucket labels are UTC.
     """
     with_buckets = df.withColumn(
@@ -109,12 +109,13 @@ def build_rollups(df: DataFrame, run_at_iso: str) -> DataFrame:
         F.min("resample_value").alias("min"),
         F.max("resample_value").alias("max"),
         F.max(F.struct(F.col("timestamp"), F.col("value"))).alias("_last"),
+        F.max("unit").alias("unit"),
     )
 
     return grouped.select(
         F.concat(F.lit("HN2#"), F.col("hn2").cast("string")).alias("pk"),
         _SK_UDF("node_path", "purpose", "gran", "bucket").alias("sk"),
-        "purpose", "bucket", "sum", "count", "min", "max",
+        "purpose", "bucket", "unit", "sum", "count", "min", "max",
         F.col("_last.value").alias("last_value"),
         F.date_format(F.col("_last.timestamp"), "yyyy-MM-dd'T'HH:mm:ssXXX").alias("last_ts"),
         F.lit(run_at_iso).alias("updated_at"),
@@ -157,14 +158,14 @@ def read_counters(spark, window_start: str):
     points whose resample_timestamp is older than the window are not picked up (documented hook;
     widen --lookback_days to recompute them)."""
     raw = spark.sql(f"""
-        SELECT hn2, hn3, hn4, hn5, hn6, hn7, hn8, hn9, logical_id, purpose,
+        SELECT hn2, hn3, hn4, hn5, hn6, hn7, hn8, hn9, logical_id, purpose, unit,
                resample_value, value, timestamp, resample_timestamp,
                resample_method, ingested_time
         FROM all.logical_meter_data
         WHERE resample_timestamp >= TIMESTAMP '{window_start}'
     """)
     return latest_counters(raw).select(
-        "hn2", "hn3", "hn4", "hn5", "hn6", "hn7", "hn8", "hn9", "logical_id", "purpose",
+        "hn2", "hn3", "hn4", "hn5", "hn6", "hn7", "hn8", "hn9", "logical_id", "purpose", "unit",
         "resample_value", "value", "timestamp", "resample_timestamp")
 
 
