@@ -597,8 +597,8 @@
         <tr><td>13</td><td>Job restart</td><td><span class="dot" style="background:var(--orange)"></span>Re-read</td><td><span class="dot" style="background:var(--orange)"></span>Possible dup</td><td>None</td><td>Checkpoint</td></tr>
         <tr><td>14</td><td>Source idle</td><td><span class="dot" style="background:var(--muted)"></span>&mdash;</td><td><span class="dot" style="background:var(--muted)"></span>&mdash;</td><td>None</td><td>Resumes</td></tr>
         <tr><td>15</td><td>New mapping backfill</td><td><span class="dot" style="background:var(--green)"></span>Written</td><td><span class="dot" style="background:var(--green)"></span>Backfilled</td><td>None</td><td>Auto Glue</td></tr>
-        <tr><td>16</td><td>Timestamp resampling</td><td><span class="dot" style="background:var(--green)"></span>Raw ts</td><td><span class="dot" style="background:var(--green)"></span>Per-bin rows</td><td>None</td><td>Opt-in</td></tr>
-        <tr><td>17</td><td>Sensor gap fill</td><td><span class="dot" style="background:var(--green)"></span>Written</td><td><span class="dot" style="background:var(--green)"></span>Bins fan-out</td><td>None</td><td>Implicit</td></tr>
+        <tr><td>16</td><td>Timestamp resampling</td><td><span class="dot" style="background:var(--green)"></span>Raw ts</td><td><span class="dot" style="background:var(--green)"></span>Resampled rows</td><td>None</td><td>Opt-in</td></tr>
+        <tr><td>17</td><td>Sensor gap fill</td><td><span class="dot" style="background:var(--green)"></span>Written</td><td><span class="dot" style="background:var(--green)"></span>Resample fan-out</td><td>None</td><td>Implicit</td></tr>
       </tbody>
     </table>
   </div>
@@ -1892,7 +1892,7 @@
 
           <!-- Binned timeline -->
           <line x1="40" y1="130" x2="400" y2="130" stroke="var(--border)" stroke-width="1"/>
-          <text x="220" y="152" text-anchor="middle" fill="var(--muted)" font-size="9">Binned timestamps (15 min)</text>
+          <text x="220" y="152" text-anchor="middle" fill="var(--muted)" font-size="9">Resampled timestamps (15 min)</text>
 
           <circle cx="60" cy="130" r="5" fill="var(--green)"/>
           <circle cx="145" cy="130" r="5" fill="var(--green)"/>
@@ -1918,20 +1918,20 @@
       <h3>How It Works</h3>
       <ul>
         <li>Optional <span class="code-inline">resample_minutes</span> column (integer minutes) on <span class="code-inline">meter-identity</span> &mdash; populated by the ems_ocaml bridge</li>
-        <li>Absent or null &rarr; raw row written, <span class="code-inline">bin_*</span> columns NULL</li>
-        <li><span class="code-inline">ResampleFunction</span> (replaces <span class="code-inline">CounterDeltaFunction</span>) holds one-reading lag per meter; emits per-bin rows when next reading arrives</li>
+        <li>Absent or null &rarr; raw row written, <span class="code-inline">resample_*</span> columns NULL</li>
+        <li><span class="code-inline">ResampleFunction</span> (replaces <span class="code-inline">CounterDeltaFunction</span>) holds one-reading lag per meter; emits one row per resample grid point when next reading arrives</li>
         <li>Original <span class="code-inline">timestamp</span> &amp; <span class="code-inline">value</span> preserved; <span class="code-inline">resample_timestamp</span>/<span class="code-inline">resample_value</span>/<span class="code-inline">resample_method</span> added</li>
       </ul>
       <h3 style="margin-top:16px">Counter Meters</h3>
       <ul>
-        <li>For each bin window <span class="code-inline">[B&minus;binSize, B]</span> overlapping <span class="code-inline">(prev_ts, current_ts]</span>: emit one row</li>
+        <li>For each resample window <span class="code-inline">[B&minus;step, B]</span> overlapping <span class="code-inline">(prev_ts, current_ts]</span>: emit one row</li>
         <li><span class="code-inline">resample_value = delta &times; overlap / total_period</span></li>
         <li>Energy conservation: <span class="code-inline">SUM(resample_value)</span> per reading equals delta; consumers SUM per <span class="code-inline">(logical_id, resample_timestamp)</span> after dedup</li>
         <li>Method: <span class="code-inline">"time_proportional"</span></li>
       </ul>
       <h3 style="margin-top:16px">Gauge Meters</h3>
       <ul>
-        <li>One row per bin boundary <span class="code-inline">B</span> in <span class="code-inline">(prev_ts, current_ts]</span></li>
+        <li>One row per resample grid point <span class="code-inline">B</span> in <span class="code-inline">(prev_ts, current_ts]</span></li>
         <li>Linear interpolation between (prev, current) evaluated at <span class="code-inline">B</span></li>
         <li>Method: <span class="code-inline">"linear_interpolation"</span></li>
       </ul>
@@ -1975,7 +1975,7 @@
         <tr><td>13</td><td>Job restart</td><td><span class="dot" style="background:var(--orange)"></span>Re-read window</td><td><span class="dot" style="background:var(--orange)"></span>Possible duplicates</td><td>None</td><td>Checkpoint recovery</td></tr>
         <tr><td>14</td><td>Source idle</td><td><span class="dot" style="background:var(--muted)"></span>Nothing</td><td><span class="dot" style="background:var(--muted)"></span>Nothing</td><td>None</td><td>Resumes on reactivation</td></tr>
         <tr><td>15</td><td>Backfill on new mapping</td><td><span class="dot" style="background:var(--green)"></span>Written</td><td><span class="dot" style="background:var(--green)"></span>Backfilled by Glue</td><td>None</td><td>Auto (DDB Stream &rarr; Lambda &rarr; Glue)</td></tr>
-        <tr><td>16</td><td>Timestamp resampling</td><td><span class="dot" style="background:var(--green)"></span>Written (raw ts)</td><td><span class="dot" style="background:var(--green)"></span>Per-bin rows w/ resample_value</td><td>None</td><td>Opt-in per meter via DDB</td></tr>
+        <tr><td>16</td><td>Timestamp resampling</td><td><span class="dot" style="background:var(--green)"></span>Written (raw ts)</td><td><span class="dot" style="background:var(--green)"></span>Resampled rows w/ resample_value</td><td>None</td><td>Opt-in per meter via DDB</td></tr>
         <tr><td>17</td><td>Sensor gap fill</td><td><span class="dot" style="background:var(--green)"></span>Written</td><td><span class="dot" style="background:var(--green)"></span>Fan-out across missing bins</td><td>None</td><td>Implicit (overlap enumeration)</td></tr>
       </tbody>
     </table>
