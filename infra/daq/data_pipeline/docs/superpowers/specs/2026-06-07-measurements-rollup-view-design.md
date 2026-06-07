@@ -174,8 +174,9 @@ A new CDK stack in `infra/daq/data_pipeline` (Go CDK, matching the existing stac
 
 - **Pure functions:** UTC hour/day bucket derivation; `sk` construction incl. the `#`-vs-`|`
   delimiter invariant; `ttl` math (3-month / 2-year offsets).
-- **Aggregation:** given sample `logical_meter_data` rows, assert `GROUPING SETS` produce correct
-  per-level sums/stats, and that a **re-run yields byte-identical items** (idempotency).
+- **Aggregation:** given sample rows, assert the ancestor-explode rollup produces correct per-level
+  sums/stats, that `latest_counters` keeps the **newest `ingested_time`** per point (and drops
+  gauges / null-`hn2`), and that a re-run yields identical items (idempotency).
 - **Query invariant:** assert a node's `BETWEEN` range excludes descendant rows (the `#` < `|`
   ordering holds).
 
