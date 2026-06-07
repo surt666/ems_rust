@@ -63,6 +63,7 @@ def build_sk(node_path: str, purpose: str, gran: str, bucket: str) -> str:
 # ── Spark transform ──
 
 from pyspark.sql import DataFrame, functions as F, types as T  # noqa: E402
+from pyspark.sql.window import Window  # noqa: E402
 
 _ANCESTOR_SCHEMA = T.ArrayType(T.StructType([
     T.StructField("level", T.StringType()),
@@ -136,17 +137,41 @@ def window_start_iso(now: datetime, lookback_days: int) -> str:
         .strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
 
+def latest_counters(df: DataFrame) -> DataFrame:
+    """logical_meter_data is event-sourced (append-only): for a given
+    (logical_id, resample_timestamp) the newest ingested_time row supersedes older ones. Keep only
+    that newest row per point, then filter to resampled counters that carry a company id.
+    Input must include ingested_time and resample_method (plus the rollup columns)."""
+    newest = Window.partitionBy("logical_id", "resample_timestamp") \
+        .orderBy(F.col("ingested_time").desc())
+    return (
+        df.withColumn("_rn", F.row_number().over(newest))
+        .filter((F.col("_rn") == 1)
+                & (F.col("resample_method") == "time_proportional")
+                & F.col("resample_value").isNotNull()
+                & F.col("hn2").isNotNull())
+        .drop("_rn")
+    )
+
+
 def read_counters(spark, window_start: str):
-    """Resampled counter rows in [window_start, now], by ingested_time so restatements are caught."""
-    return spark.sql(f"""
+    """Newest-ingested resampled counter rows for buckets at/after window_start.
+
+    Windows by resample_timestamp (the bucket axis) so whole hour/day buckets are recomputed from
+    all their points, and dedups to the newest ingested_time per (logical_id, resample_timestamp)
+    — matching how every consumer reads the event-sourced logical_meter_data table. Restatements of
+    points whose resample_timestamp is older than the window are not picked up (documented hook;
+    widen --lookback_days to recompute them)."""
+    raw = spark.sql(f"""
         SELECT hn2, hn3, hn4, hn5, hn6, hn7, hn8, hn9, logical_id, purpose,
-               resample_value, value, timestamp, resample_timestamp
+               resample_value, value, timestamp, resample_timestamp,
+               resample_method, ingested_time
         FROM all.logical_meter_data
-        WHERE resample_method = 'time_proportional'
-          AND resample_value IS NOT NULL
-          AND hn2 IS NOT NULL
-          AND ingested_time >= TIMESTAMP '{window_start}'
+        WHERE resample_timestamp >= TIMESTAMP '{window_start}'
     """)
+    return latest_counters(raw).select(
+        "hn2", "hn3", "hn4", "hn5", "hn6", "hn7", "hn8", "hn9", "logical_id", "purpose",
+        "resample_value", "value", "timestamp", "resample_timestamp")
 
 
 def write_to_dynamo(df: DataFrame, table_name: str, region: str) -> None:
