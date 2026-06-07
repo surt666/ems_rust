@@ -1937,7 +1937,7 @@
       </ul>
       <div class="outcome-box ok-box" style="margin-top:16px">
         <h3 style="color:var(--green)">Glue Parity Invariant</h3>
-        <p style="font-size:14px">Late-recomputation Glue job applies identical bin formula + unit normalization &mdash; bit-for-bit same output as Flink for the same input.</p>
+        <p style="font-size:14px">Late-recomputation Glue job applies the identical resample formula + unit normalization &mdash; bit-for-bit same output as Flink for the same input.</p>
       </div>
     </div>
   </div>
@@ -1976,7 +1976,7 @@
         <tr><td>14</td><td>Source idle</td><td><span class="dot" style="background:var(--muted)"></span>Nothing</td><td><span class="dot" style="background:var(--muted)"></span>Nothing</td><td>None</td><td>Resumes on reactivation</td></tr>
         <tr><td>15</td><td>Backfill on new mapping</td><td><span class="dot" style="background:var(--green)"></span>Written</td><td><span class="dot" style="background:var(--green)"></span>Backfilled by Glue</td><td>None</td><td>Auto (DDB Stream &rarr; Lambda &rarr; Glue)</td></tr>
         <tr><td>16</td><td>Timestamp resampling</td><td><span class="dot" style="background:var(--green)"></span>Written (raw ts)</td><td><span class="dot" style="background:var(--green)"></span>Resampled rows w/ resample_value</td><td>None</td><td>Opt-in per meter via DDB</td></tr>
-        <tr><td>17</td><td>Sensor gap fill</td><td><span class="dot" style="background:var(--green)"></span>Written</td><td><span class="dot" style="background:var(--green)"></span>Fan-out across missing bins</td><td>None</td><td>Implicit (overlap enumeration)</td></tr>
+        <tr><td>17</td><td>Sensor gap fill</td><td><span class="dot" style="background:var(--green)"></span>Written</td><td><span class="dot" style="background:var(--green)"></span>Fan-out across missing grid points</td><td>None</td><td>Implicit (overlap enumeration)</td></tr>
       </tbody>
     </table>
   </div>
