@@ -10,13 +10,21 @@ RUN sudo apk add --no-cache gmp-dev libev-dev linux-headers openssl-dev openssl-
 RUN opam pin add -n lambda-runtime git+https://github.com/surt666/ocaml-lambda-runtime.git \
  && opam pin add -n lambda-runtime-api-gateway git+https://github.com/surt666/ocaml-lambda-runtime.git
 
-# Patch smaws (preview): strip the unconditional `Fmt.pr "Response body: %s"` in the AwsJson
-# protocol, which dumps every DynamoDB response to stdout -> CloudWatch on every call (log
-# bloat + per-call latency, esp. for large subtree responses). Fetch the monorepo source,
-# remove the debug print, and pin both packages so opam builds the patched copy.
+# Patch smaws (preview) before building. Two fixes:
+#  1. AwsJson protocol: strip the unconditional `Fmt.pr "Response body: %s"` that dumps every
+#     DynamoDB response to stdout -> CloudWatch on every call (log bloat + per-call latency).
+#  2. http/dns.ml: `resolve_address` returns getaddrinfo's FIRST address with no IPv4 preference,
+#     no fallback, and no connect timeout. On Lambda (IPv4-only egress) an IPv6 address returned
+#     first hangs the TCP connect until the 30s function timeout -> intermittent 503s. Prefer the
+#     first IPv4 address instead.
+# Fetch the monorepo source, apply both patches, and pin both packages so opam builds the patched copy.
 RUN opam source smaws-lib.0.1~preview1 --dir=/home/opam/smaws \
  && find /home/opam/smaws -path '*protocols_gen*' -name '*.ml' \
       -exec sed -i '/Fmt\.pr "Response body/d' {} + \
+ && sed -i 's@List.hd_opt addresses@List.hd_opt (List.filter (function `Tcp (ip, _) -> Eio.Net.Ipaddr.fold ~v4:(fun _ -> true) ~v6:(fun _ -> false) ip | _ -> false) addresses)@' \
+      /home/opam/smaws/awssdklib/http/dns.ml \
+ && grep -q 'Eio.Net.Ipaddr.fold' /home/opam/smaws/awssdklib/http/dns.ml \
+ && ! grep -q 'Fmt.pr "Response body' /home/opam/smaws/awssdklib/protocols_gen/AwsJson.ml \
  && opam pin add -yn smaws-lib /home/opam/smaws \
  && opam pin add -yn smaws-clients /home/opam/smaws
 
