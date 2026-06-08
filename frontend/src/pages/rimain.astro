@@ -16,7 +16,6 @@ import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
 						type="datetime-local"
 						id="fromDate"
 						class="form-input"
-						value="2025-09-24T00:00"
 					/>
 				</div>
 
@@ -26,7 +25,6 @@ import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
 						type="datetime-local"
 						id="toDate"
 						class="form-input"
-						value="2025-10-03T00:00"
 					/>
 				</div>
 
@@ -84,11 +82,26 @@ import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
 		window.dispatchEvent(event);
 	}
 
+	function toLocalInput(d: Date): string {
+		const pad = (n: number) => String(n).padStart(2, '0');
+		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+	}
+
 	document.addEventListener('DOMContentLoaded', () => {
+		// Default range: 1 week back from now → now.
+		const now = new Date();
+		const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+		const fromInput = document.getElementById('fromDate') as HTMLInputElement | null;
+		const toInput = document.getElementById('toDate') as HTMLInputElement | null;
+		if (fromInput) fromInput.value = toLocalInput(weekAgo);
+		if (toInput) toInput.value = toLocalInput(now);
+
 		const updateButton = document.getElementById('updateChart');
 		if (updateButton) {
 			updateButton.addEventListener('click', updateChart);
 		}
+		// Load the chart immediately for the default week + currently selected node.
+		updateChart();
 	});
 </script>
 

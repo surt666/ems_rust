@@ -113,12 +113,11 @@ def _query_node(pk, sk_path, start_bucket, end_bucket):
 
 
 def _resp(status, body):
+    # CORS headers are added by the Function URL's CORS config — do NOT set
+    # Access-Control-Allow-Origin here too, or the browser sees duplicate headers.
     return {
         "statusCode": status,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-        },
+        "headers": {"Content-Type": "application/json"},
         "body": json.dumps(body),
     }
 

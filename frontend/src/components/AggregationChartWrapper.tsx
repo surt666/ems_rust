@@ -3,8 +3,8 @@ import AggregationChart from './AggregationChart';
 
 export default function AggregationChartWrapper() {
   const [levelId, setLevelId] = useState('');
-  const [startDate, setStartDate] = useState('2025-09-24T00:00:00Z');
-  const [endDate, setEndDate] = useState('2025-10-03T00:00:00Z');
+  const [startDate, setStartDate] = useState(() => new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+  const [endDate, setEndDate] = useState(() => new Date().toISOString());
   const [resolution, setResolution] = useState('hourly');
 
   useEffect(() => {
