@@ -18,3 +18,5 @@ cdk.out/
 
 # Stray screenshots dropped at the project root by Playwright
 /*.png
+
+__pycache__
