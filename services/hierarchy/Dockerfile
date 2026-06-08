@@ -10,6 +10,16 @@ RUN sudo apk add --no-cache gmp-dev libev-dev linux-headers openssl-dev openssl-
 RUN opam pin add -n lambda-runtime git+https://github.com/surt666/ocaml-lambda-runtime.git \
  && opam pin add -n lambda-runtime-api-gateway git+https://github.com/surt666/ocaml-lambda-runtime.git
 
+# Patch smaws (preview): strip the unconditional `Fmt.pr "Response body: %s"` in the AwsJson
+# protocol, which dumps every DynamoDB response to stdout -> CloudWatch on every call (log
+# bloat + per-call latency, esp. for large subtree responses). Fetch the monorepo source,
+# remove the debug print, and pin both packages so opam builds the patched copy.
+RUN opam source smaws-lib.0.1~preview1 --dir=/home/opam/smaws \
+ && find /home/opam/smaws -path '*protocols_gen*' -name '*.ml' \
+      -exec sed -i '/Fmt\.pr "Response body/d' {} + \
+ && opam pin add -yn smaws-lib /home/opam/smaws \
+ && opam pin add -yn smaws-clients /home/opam/smaws
+
 # Copy opam file first for layer caching
 COPY --chown=opam:opam dune-project ocaml-lambda-hierarchy.opam ./
 
