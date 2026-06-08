@@ -197,5 +197,34 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		Description: jsii.String("Public Function URL for GET /aggregations (Resource Insights chart)"),
 	})
 
+	// ── Go / Graviton (arm64) variant of the same read API, for a head-to-head comparison ──
+	// Same logic as the Python handler; built to ./lambda/aggregations-go/aggregations-go.zip
+	// (a `bootstrap` binary, GOARCH=arm64) via that dir's Makefile.
+	aggFnGo := awslambda.NewFunction(stack, jsii.String("AggregationsFnGo"), &awslambda.FunctionProps{
+		FunctionName: jsii.String("measurements-aggregations-api-go"),
+		Runtime:      awslambda.Runtime_PROVIDED_AL2023(),
+		Architecture: awslambda.Architecture_ARM_64(),
+		Handler:      jsii.String("bootstrap"),
+		Code:         awslambda.Code_FromAsset(jsii.String("./lambda/aggregations-go/aggregations-go.zip"), nil),
+		Timeout:      awscdk.Duration_Seconds(jsii.Number(30)),
+		MemorySize:   jsii.Number(256),
+		Environment:  &map[string]*string{"ROLLUP_TABLE": table.TableName()},
+		LogRetention: awslogs.RetentionDays_ONE_WEEK,
+	})
+	table.GrantReadData(aggFnGo)
+
+	aggUrlGo := aggFnGo.AddFunctionUrl(&awslambda.FunctionUrlOptions{
+		AuthType: awslambda.FunctionUrlAuthType_NONE,
+		Cors: &awslambda.FunctionUrlCorsOptions{
+			AllowedOrigins: jsii.Strings("*"),
+			AllowedMethods: &[]awslambda.HttpMethod{awslambda.HttpMethod_GET},
+			AllowedHeaders: jsii.Strings("*"),
+		},
+	})
+	awscdk.NewCfnOutput(stack, jsii.String("AggregationsUrlGo"), &awscdk.CfnOutputProps{
+		Value:       aggUrlGo.Url(),
+		Description: jsii.String("Public Function URL for the Go/Graviton aggregations API (comparison)"),
+	})
+
 	return stack
 }

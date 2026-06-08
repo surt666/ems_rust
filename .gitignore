@@ -20,3 +20,7 @@ cdk.out/
 /*.png
 
 __pycache__
+
+# Go aggregations lambda build artifacts
+infra/daq/data_pipeline/lambda/aggregations-go/bootstrap
+infra/daq/data_pipeline/lambda/aggregations-go/aggregations-go.zip
