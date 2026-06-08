@@ -8,6 +8,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,16 +27,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 )
 
-var hnRe = regexp.MustCompile(`HN(\d+)#(\d+)`)
-
-func getenv(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
-
-var rollupTable = getenv("ROLLUP_TABLE", "measurements_aggregate")
+var (
+	hnRe        = regexp.MustCompile(`HN(\d+)#(\d+)`)
+	rollupTable = cmp.Or(os.Getenv("ROLLUP_TABLE"), "measurements_aggregate")
+)
 
 // ── pure helpers ──
 
@@ -137,13 +132,17 @@ type row struct {
 
 // toRows groups items by purpose (keeping only the requested granularity), time-sorted.
 func toRows(items []aggItem, levelID, resolution, gran string) []row {
-	byPurpose := map[string][]aggItem{}
+	type entry struct {
+		bucket string
+		it     aggItem
+	}
+	byPurpose := map[string][]entry{}
 	for _, it := range items {
-		_, purpose, g, _ := parseSK(it.SK)
+		_, purpose, g, bucket := parseSK(it.SK)
 		if g != gran {
 			continue
 		}
-		byPurpose[purpose] = append(byPurpose[purpose], it)
+		byPurpose[purpose] = append(byPurpose[purpose], entry{bucket, it})
 	}
 	purposes := make([]string, 0, len(byPurpose))
 	for p := range byPurpose {
@@ -153,22 +152,17 @@ func toRows(items []aggItem, levelID, resolution, gran string) []row {
 
 	rows := []row{}
 	for _, purpose := range purposes {
-		its := byPurpose[purpose]
-		sort.SliceStable(its, func(i, j int) bool {
-			_, _, _, bi := parseSK(its[i].SK)
-			_, _, _, bj := parseSK(its[j].SK)
-			return bi < bj
-		})
-		for _, it := range its {
-			_, _, _, bucket := parseSK(it.SK)
+		es := byPurpose[purpose]
+		sort.SliceStable(es, func(i, j int) bool { return es[i].bucket < es[j].bucket })
+		for _, e := range es {
 			rows = append(rows, row{
 				LevelID:          levelID,
 				Purpose:          purpose,
-				Unit:             it.Unit,
+				Unit:             e.it.Unit,
 				Resolution:       resolution,
-				Timestamp:        bucketToISO(bucket, gran),
-				Value:            it.Sum,
-				ContributorCount: it.Count,
+				Timestamp:        bucketToISO(e.bucket, gran),
+				Value:            e.it.Sum,
+				ContributorCount: e.it.Count,
 			})
 		}
 	}
@@ -180,19 +174,17 @@ func toRows(items []aggItem, levelID, resolution, gran string) []row {
 var ddb *dynamodb.Client
 
 func queryNode(ctx context.Context, pk, skPath, gran, startBucket, endBucket, purpose string) ([]aggItem, error) {
+	pkEq := expression.Key("pk").Equal(expression.Value(pk))
 	var builder expression.Builder
-	keyOf := func(extra expression.KeyConditionBuilder) expression.KeyConditionBuilder {
-		return expression.Key("pk").Equal(expression.Value(pk)).And(extra)
-	}
 	if purpose != "" {
 		// Efficient range query: fix <path>#<purpose>#<gran># and range the trailing bucket.
 		prefix := skPath + "#" + purpose + "#" + gran + "#"
-		kc := keyOf(expression.Key("sk").Between(
+		kc := pkEq.And(expression.Key("sk").Between(
 			expression.Value(prefix+startBucket), expression.Value(prefix+endBucket)))
 		builder = expression.NewBuilder().WithKeyCondition(kc)
 	} else {
 		// No purpose: all purposes for the node, narrowed to the bucket range.
-		kc := keyOf(expression.Key("sk").BeginsWith(skPath + "#"))
+		kc := pkEq.And(expression.Key("sk").BeginsWith(skPath + "#"))
 		filt := expression.Name("bucket").Between(
 			expression.Value(startBucket), expression.Value(endBucket))
 		builder = expression.NewBuilder().WithKeyCondition(kc).WithFilter(filt)
