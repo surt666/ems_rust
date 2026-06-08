@@ -21,8 +21,8 @@ confirm the changeset is non-destructive (no DynamoDB table / Kinesis stream / F
 
 | Account | Id | Owns |
 |---|---|---|
-| Hierarchy / backend | `339712745226` | `ocaml-lambda-hierarchy` API lambda, `hierarchy_new` table, the cross-account bridge lambda |
-| DAQ / pipeline | `891377204778` | Flink (MSF) app, Glue late-recomputation, `meter-identity` table, S3 Iceberg tables |
+| Hierarchy / backend | `339712745226` | `ocaml-lambda-hierarchy` API lambda, `hierarchy_new` table, the cross-account bridge lambda, the **frontend** (S3 + CloudFront) |
+| DAQ / pipeline | `891377204778` | Flink (MSF) app, Glue late-recomputation, `meter-identity` table, S3 Iceberg tables, `measurements_aggregate` + the aggregations Lambda |
 
 ### Stack 1 — Hierarchy service (account `339712745226`)
 
@@ -108,6 +108,33 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
   `--run-configuration '{"FlinkRunConfiguration":{"AllowNonRestoredState":true},"ApplicationRestoreConfiguration":{"ApplicationRestoreType":"RESTORE_FROM_LATEST_SNAPSHOT"}}'`.
   Prefer `RESTORE_FROM_LATEST_SNAPSHOT` over `SKIP_RESTORE_FROM_SNAPSHOT` — the source is
   `TRIM_HORIZON`, so SKIP reprocesses the full Kinesis retention (24h) and **duplicates `raw_data`**.
+
+### Stack 3 — Frontend (account `339712745226`)
+
+Astro static site → S3 + CloudFront (`OcamlFrontendStack`, in `infra/frontend`). CloudFront proxies
+`/command`, `/query/*`, `/hierarchy/*` to the hierarchy API, so those frontend calls are **relative**
+(`PUBLIC_API_BASE_URL` stays **empty** by design). Cross-account endpoints (e.g. the daq
+aggregations Function URL) need an **absolute** URL baked in at build time.
+
+```bash
+# 1. Set frontend/.env — Astro inlines PUBLIC_* vars into the build:
+#    PUBLIC_API_BASE_URL=                     # EMPTY — CloudFront proxies the hierarchy API
+#    PUBLIC_AGG_API_BASE_URL=https://<fn-id>.lambda-url.eu-central-1.on.aws   # no trailing slash
+#    PUBLIC_USER_POOL_ID / PUBLIC_USER_POOL_CLIENT_ID   (Cognito)
+cd frontend && npm run build          # -> frontend/dist (env baked in; REBUILD after any .env change)
+
+# 2. Deploy (Go CDK). Uploads dist to S3 + invalidates CloudFront /*.
+cd ../infra/frontend
+unset GOROOT
+cdk deploy OcamlFrontendStack --require-approval never
+```
+
+- Content-only deploy: the `DeployFrontend` BucketDeployment asset changes; the S3 bucket (RETAIN)
+  and CloudFront distribution are unchanged.
+- Live URL = the `DistributionDomainName` output (currently `https://d24beiqs2cj89y.cloudfront.net`).
+- **Rebuild before deploying** — `PUBLIC_*` values are compiled into the static JS, so a `.env`
+  change only takes effect after `npm run build`.
+- Verify a value is baked in: `curl -s https://<cf-domain>/_astro/AggregationChartWrapper.*.js | grep lambda-url`.
 
 ### Cross-account ordering (important)
 
