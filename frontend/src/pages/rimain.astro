@@ -36,6 +36,15 @@ import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
 					</select>
 				</div>
 
+				<div class="form-field">
+					<label for="purpose" class="form-label">Type:</label>
+					<select id="purpose" class="form-select">
+						<option value="Energy" selected>Energi</option>
+						<option value="Water">Vand</option>
+						<option value="Heat">Varme</option>
+					</select>
+				</div>
+
 				<div class="form-field" style="justify-content: end;">
 					<button id="updateChart" class="btn-primary">
 						Opdater Graf
@@ -65,6 +74,7 @@ import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
 		const fromDate = (document.getElementById('fromDate') as HTMLInputElement).value;
 		const toDate = (document.getElementById('toDate') as HTMLInputElement).value;
 		const resolution = (document.getElementById('resolution') as HTMLSelectElement).value;
+		const purpose = (document.getElementById('purpose') as HTMLSelectElement).value;
 		// The aggregate table is keyed by the node's full hierarchy path, so send
 		// "<ancestor path>#<node id>" (not just the node id).
 		const nodeId = sessionStorage.getItem('selectedNodeId') || '';
@@ -76,6 +86,7 @@ import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
 				startDate: toUTC(fromDate),
 				endDate: toUTC(toDate),
 				resolution: resolution,
+				purpose: purpose,
 				levelId: levelId,
 			},
 		});
@@ -87,22 +98,26 @@ import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
 		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 	}
 
-	document.addEventListener('DOMContentLoaded', () => {
-		// Default range: 1 week back from now → now.
+	function initRiPage() {
+		// Default range: 1 week back from now → now (only if not already chosen).
 		const now = new Date();
 		const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 		const fromInput = document.getElementById('fromDate') as HTMLInputElement | null;
 		const toInput = document.getElementById('toDate') as HTMLInputElement | null;
-		if (fromInput) fromInput.value = toLocalInput(weekAgo);
-		if (toInput) toInput.value = toLocalInput(now);
+		if (fromInput && !fromInput.value) fromInput.value = toLocalInput(weekAgo);
+		if (toInput && !toInput.value) toInput.value = toLocalInput(now);
 
+		// onclick (not addEventListener) so re-running this on every navigation can't double-bind.
 		const updateButton = document.getElementById('updateChart');
-		if (updateButton) {
-			updateButton.addEventListener('click', updateChart);
-		}
+		if (updateButton) (updateButton as HTMLButtonElement).onclick = updateChart;
+
 		// Load the chart immediately for the default week + currently selected node.
 		updateChart();
-	});
+	}
+
+	// Runs on the initial load AND after every Astro view-transition navigation
+	// (DOMContentLoaded does NOT fire on client-side swaps).
+	document.addEventListener('astro:page-load', initRiPage);
 </script>
 
 <style>

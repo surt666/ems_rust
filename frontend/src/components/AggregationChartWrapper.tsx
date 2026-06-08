@@ -6,6 +6,7 @@ export default function AggregationChartWrapper() {
   const [startDate, setStartDate] = useState(() => new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
   const [endDate, setEndDate] = useState(() => new Date().toISOString());
   const [resolution, setResolution] = useState('hourly');
+  const [purpose, setPurpose] = useState('Energy');
 
   useEffect(() => {
     const display = document.getElementById('nodeIdDisplay');
@@ -40,6 +41,7 @@ export default function AggregationChartWrapper() {
       setStartDate(e.detail.startDate);
       setEndDate(e.detail.endDate);
       setResolution(e.detail.resolution);
+      setPurpose(e.detail.purpose);
       setLevelId(e.detail.levelId);
     }) as EventListener;
 
@@ -57,6 +59,7 @@ export default function AggregationChartWrapper() {
       endDate={endDate}
       levelId={levelId}
       resolution={resolution}
+      purpose={purpose}
     />
   );
 }

@@ -92,15 +92,24 @@ def to_rows(items, level_id, resolution, gran):
 # ── DynamoDB query + handler ──
 
 
-def _query_node(pk, sk_path, start_bucket, end_bucket):
+def _query_node(pk, sk_path, gran, start_bucket, end_bucket, purpose=None):
     import boto3
     from boto3.dynamodb.conditions import Key, Attr
 
     table = boto3.resource("dynamodb", region_name=REGION).Table(ROLLUP_TABLE)
-    kwargs = {
-        "KeyConditionExpression": Key("pk").eq(pk) & Key("sk").begins_with(sk_path + "#"),
-        "FilterExpression": Attr("bucket").between(start_bucket, end_bucket),
-    }
+    if purpose:
+        # Efficient range query: fix <path>#<purpose>#<gran># and range the trailing bucket.
+        prefix = "%s#%s#%s#" % (sk_path, purpose, gran)
+        kwargs = {
+            "KeyConditionExpression":
+                Key("pk").eq(pk) & Key("sk").between(prefix + start_bucket, prefix + end_bucket),
+        }
+    else:
+        # No purpose: return all purposes for the node, narrowed to the bucket range.
+        kwargs = {
+            "KeyConditionExpression": Key("pk").eq(pk) & Key("sk").begins_with(sk_path + "#"),
+            "FilterExpression": Attr("bucket").between(start_bucket, end_bucket),
+        }
     items = []
     while True:
         resp = table.query(**kwargs)
@@ -126,6 +135,7 @@ def handler(event, _context):
     qs = (event or {}).get("queryStringParameters") or {}
     level_id = qs.get("level_id", "")
     resolution = qs.get("resolution", "hourly")
+    purpose = qs.get("purpose") or None
     start = qs.get("start")
     end = qs.get("end")
     if not start or not end:
@@ -144,5 +154,5 @@ def handler(event, _context):
     except ValueError:
         return _resp(400, {"error": "start/end must be ISO-8601 timestamps"})
 
-    items = _query_node(pk, sk_path, start_bucket, end_bucket)
+    items = _query_node(pk, sk_path, gran, start_bucket, end_bucket, purpose)
     return _resp(200, to_rows(items, level_id, resolution, gran))

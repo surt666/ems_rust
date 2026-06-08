@@ -16,9 +16,10 @@ interface ChartProps {
   endDate: string;
   levelId: string;
   resolution: string;
+  purpose: string;
 }
 
-export default function AggregationChart({ startDate, endDate, levelId, resolution }: ChartProps) {
+export default function AggregationChart({ startDate, endDate, levelId, resolution, purpose }: ChartProps) {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -40,6 +41,7 @@ export default function AggregationChart({ startDate, endDate, levelId, resoluti
         const params = new URLSearchParams({
           level_id: levelId,
           resolution: resolution,
+          purpose: purpose,
           start: startDate,
           end: endDate,
         });
@@ -80,7 +82,7 @@ export default function AggregationChart({ startDate, endDate, levelId, resoluti
     };
 
     fetchData();
-  }, [startDate, endDate, levelId, resolution]);
+  }, [startDate, endDate, levelId, resolution, purpose]);
 
   if (loading) {
     return (
@@ -125,6 +127,17 @@ export default function AggregationChart({ startDate, endDate, levelId, resoluti
         }}
         yFormat=" >-.2f"
         curve="monotoneX"
+        theme={{
+          text: { fill: '#cbd5e1', fontSize: 11 },
+          axis: {
+            domain: { line: { stroke: '#475569' } },
+            ticks: { line: { stroke: '#475569' }, text: { fill: '#cbd5e1' } },
+            legend: { text: { fill: '#e2e8f0', fontSize: 12 } },
+          },
+          legends: { text: { fill: '#cbd5e1' } },
+          grid: { line: { stroke: '#334155', strokeWidth: 1 } },
+          tooltip: { container: { background: '#1e293b', color: '#e2e8f0' } },
+        }}
         axisTop={null}
         axisRight={null}
         axisBottom={{
