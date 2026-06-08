@@ -8,24 +8,28 @@ export default function AggregationChartWrapper() {
   const [resolution, setResolution] = useState('hourly');
 
   useEffect(() => {
-    // Get initial values from sessionStorage and form inputs
-    const storedLevelId = sessionStorage.getItem('selectedNodeId') || '';
-    setLevelId(storedLevelId);
-
-    // Update displayed node ID
     const display = document.getElementById('nodeIdDisplay');
-    if (display) {
-      display.textContent = storedLevelId || 'Ingen valgt';
-    }
 
-    // Listen for sessionStorage changes
+    // The aggregate is keyed by the node's full hierarchy path, so levelId is
+    // "<ancestor path>#<node id>"; the display shows just the node id.
+    const computeLevelId = () => {
+      const id = sessionStorage.getItem('selectedNodeId') || '';
+      const path = sessionStorage.getItem('selectedNodePath') || '';
+      return path ? `${path}#${id}` : id;
+    };
+    const refreshDisplay = () => {
+      const id = sessionStorage.getItem('selectedNodeId') || '';
+      if (display) display.textContent = id || 'Ingen valgt';
+    };
+
+    setLevelId(computeLevelId());
+    refreshDisplay();
+
+    // Listen for sessionStorage changes (either key affects the path)
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'selectedNodeId') {
-        const newLevelId = e.newValue || '';
-        setLevelId(newLevelId);
-        if (display) {
-          display.textContent = newLevelId || 'Ingen valgt';
-        }
+      if (e.key === 'selectedNodeId' || e.key === 'selectedNodePath') {
+        setLevelId(computeLevelId());
+        refreshDisplay();
       }
     };
 

@@ -6,7 +6,10 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsglue"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslakeformation"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3deployment"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
@@ -165,6 +168,33 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		Actions: &[]interface{}{
 			&awsglue.CfnTrigger_ActionProperty{JobName: jsii.String("measurements-aggregate")},
 		},
+	})
+
+	// ── Read API: Lambda behind a public Function URL (Resource Insights chart) ──
+	aggFn := awslambda.NewFunction(stack, jsii.String("AggregationsFn"), &awslambda.FunctionProps{
+		FunctionName: jsii.String("measurements-aggregations-api"),
+		Runtime:      awslambda.Runtime_PYTHON_3_12(),
+		Handler:      jsii.String("handler.handler"),
+		Code: awslambda.Code_FromAsset(jsii.String("./lambda/aggregations"),
+			&awss3assets.AssetOptions{Exclude: jsii.Strings("test_*.py", "__pycache__")}),
+		Timeout:      awscdk.Duration_Seconds(jsii.Number(30)),
+		MemorySize:   jsii.Number(256),
+		Environment:  &map[string]*string{"ROLLUP_TABLE": table.TableName()},
+		LogRetention: awslogs.RetentionDays_ONE_WEEK,
+	})
+	table.GrantReadData(aggFn)
+
+	aggUrl := aggFn.AddFunctionUrl(&awslambda.FunctionUrlOptions{
+		AuthType: awslambda.FunctionUrlAuthType_NONE,
+		Cors: &awslambda.FunctionUrlCorsOptions{
+			AllowedOrigins: jsii.Strings("*"),
+			AllowedMethods: &[]awslambda.HttpMethod{awslambda.HttpMethod_GET},
+			AllowedHeaders: jsii.Strings("*"),
+		},
+	})
+	awscdk.NewCfnOutput(stack, jsii.String("AggregationsUrl"), &awscdk.CfnOutputProps{
+		Value:       aggUrl.Url(),
+		Description: jsii.String("Public Function URL for GET /aggregations (Resource Insights chart)"),
 	})
 
 	return stack

@@ -67,7 +67,11 @@ import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
 		const fromDate = (document.getElementById('fromDate') as HTMLInputElement).value;
 		const toDate = (document.getElementById('toDate') as HTMLInputElement).value;
 		const resolution = (document.getElementById('resolution') as HTMLSelectElement).value;
-		const levelId = sessionStorage.getItem('selectedNodeId') || '';
+		// The aggregate table is keyed by the node's full hierarchy path, so send
+		// "<ancestor path>#<node id>" (not just the node id).
+		const nodeId = sessionStorage.getItem('selectedNodeId') || '';
+		const nodePath = sessionStorage.getItem('selectedNodePath') || '';
+		const levelId = nodePath ? `${nodePath}#${nodeId}` : nodeId;
 
 		const event = new CustomEvent('updateChart', {
 			detail: {

@@ -2,8 +2,8 @@ import { ResponsiveLine } from '@nivo/line';
 import { useEffect, useState } from 'react';
 
 interface AggregationData {
-  level: string;
   level_id: string;
+  purpose: string;
   unit: string;
   resolution: string;
   timestamp: string;
@@ -35,46 +35,41 @@ export default function AggregationChart({ startDate, endDate, levelId, resoluti
         setLoading(true);
         setError(null);
 
-        // Fetch data for both kWh and m3
-        const units = ['kWh', 'm3'];
+        // One request; the aggregate is keyed by purpose, so we group the returned rows
+        // into one cumulative series per purpose (e.g. "Energy (Wh)", "Water (m3)").
+        const params = new URLSearchParams({
+          level_id: levelId,
+          resolution: resolution,
+          start: startDate,
+          end: endDate,
+        });
+        const AGG_API_BASE_URL = import.meta.env.PUBLIC_AGG_API_BASE_URL || '';
+        const url = `${AGG_API_BASE_URL}/aggregations?${params.toString()}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+          setError(`Request failed: ${response.statusText}`);
+          setLoading(false);
+          return;
+        }
+        const rows = (await response.json()) as AggregationData[];
 
-        const responses = await Promise.all(
-          units.map(async (unit) => {
-            const params = new URLSearchParams({
-              level_id: levelId,
-              unit: unit,
-              resolution: resolution,
-              start: startDate,
-              end: endDate,
-            });
-            const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
-            const url = `${API_BASE_URL}/aggregations?${params.toString()}`;
-            const response = await fetch(url);
-            if (!response.ok) {
-              console.error(`Failed to fetch ${unit} data:`, response.statusText);
-              return { unit, data: [] };
-            }
-            const jsonData = await response.json() as AggregationData[];
-            return { unit, data: jsonData };
-          })
-        );
-
-        // Transform data to Nivo format with cumulative values
-        const chartData = responses
-          .filter(({ data: aggregations }) => aggregations && aggregations.length > 0)
-          .map(({ unit, data: aggregations }) => {
-            let cumulative = 0;
-            return {
-              id: unit,
-              data: aggregations.map((agg) => {
-                cumulative += agg.value;
-                return {
-                  x: new Date(agg.timestamp),
-                  y: cumulative,
-                };
-              }),
-            };
-          });
+        const byPurpose = new Map<string, AggregationData[]>();
+        for (const r of rows) {
+          const key = r.unit ? `${r.purpose} (${r.unit})` : r.purpose;
+          const arr = byPurpose.get(key) ?? [];
+          arr.push(r);
+          byPurpose.set(key, arr);
+        }
+        const chartData = Array.from(byPurpose.entries()).map(([id, aggregations]) => {
+          let cumulative = 0;
+          return {
+            id,
+            data: aggregations.map((agg) => {
+              cumulative += agg.value;
+              return { x: new Date(agg.timestamp), y: cumulative };
+            }),
+          };
+        });
 
         setData(chartData);
       } catch (err) {
