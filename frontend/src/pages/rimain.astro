@@ -127,4 +127,17 @@ import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
 		gap: 1rem;
 		align-items: end;
 	}
+
+	/* Render the native date+time controls (calendar icon + popup) for a dark UI,
+	   so the picker icon is visible against the dark input. */
+	#fromDate,
+	#toDate {
+		color-scheme: dark;
+	}
+	/* WebKit/Blink: ensure the calendar-picker icon is light + clickable. */
+	#fromDate::-webkit-calendar-picker-indicator,
+	#toDate::-webkit-calendar-picker-indicator {
+		opacity: 0.9;
+		cursor: pointer;
+	}
 </style>
