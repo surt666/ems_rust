@@ -1210,8 +1210,6 @@ mod tests {
     /// kind="reads" and decodes back.
     #[test]
     fn edge_reads_codec_roundtrip() {
-        use chrono::DateTime;
-
         let user_s = "U#reader@ex";
         let node_s = "HN2#10002";
         let created: chrono::DateTime<chrono::Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
