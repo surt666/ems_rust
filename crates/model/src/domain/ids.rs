@@ -59,17 +59,28 @@ impl<'de> Deserialize<'de> for SensorId {
 // ---------------------------------------------------------------------------
 
 /// Hierarchy level, Hn0 (root) through Hn9.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, Serialize, Deserialize,
+         strum::Display, strum::EnumString)]
 pub enum Level {
+    #[strum(serialize = "hn0")]
     Hn0,
+    #[strum(serialize = "hn1")]
     Hn1,
+    #[strum(serialize = "hn2")]
     Hn2,
+    #[strum(serialize = "hn3")]
     Hn3,
+    #[strum(serialize = "hn4")]
     Hn4,
+    #[strum(serialize = "hn5")]
     Hn5,
+    #[strum(serialize = "hn6")]
     Hn6,
+    #[strum(serialize = "hn7")]
     Hn7,
+    #[strum(serialize = "hn8")]
     Hn8,
+    #[strum(serialize = "hn9")]
     Hn9,
 }
 
@@ -112,24 +123,7 @@ impl Level {
     /// Matches OCaml `Level.of_string`: must be length 3, first two chars `hn`,
     /// third char a digit 0-9.
     pub fn parse(s: &str) -> Result<Level, String> {
-        let bytes = s.as_bytes();
-        if bytes.len() != 3 || bytes[0] != b'h' || bytes[1] != b'n' {
-            return Err(format!("bad level {:?}", s));
-        }
-        match bytes[2] {
-            c @ b'0'..=b'9' => {
-                let d = c - b'0';
-                Level::of_depth(d).ok_or_else(|| format!("bad level {:?}", s))
-            }
-            _ => Err(format!("bad level {:?}", s)),
-        }
-    }
-}
-
-impl fmt::Display for Level {
-    /// `"hn<n>"` — matches OCaml `Level.to_string`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "hn{}", self.depth())
+        s.parse::<Level>().map_err(|e| e.to_string())
     }
 }
 

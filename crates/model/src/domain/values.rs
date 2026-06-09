@@ -86,10 +86,15 @@ impl fmt::Display for EdgeKind {
 ///
 /// Faithfully ported from `services/hierarchy/lib/domain/cognito_group.ml`.
 /// Canonical `to_string` is capitalised; `parse` is case-insensitive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq,
+         strum::Display, strum::EnumString)]
+#[strum(ascii_case_insensitive)]
 pub enum CognitoGroup {
+    #[strum(serialize = "Reader")]
     Reader,
+    #[strum(serialize = "Writer")]
     Writer,
+    #[strum(serialize = "Admin")]
     Admin,
 }
 
@@ -97,24 +102,7 @@ impl CognitoGroup {
     /// Case-insensitive parse; accepts `"reader"`, `"Reader"`, `"READER"`, etc.
     /// Matches OCaml `Cognito_group.of_string`.
     pub fn parse(s: &str) -> Result<CognitoGroup, String> {
-        match s.to_lowercase().as_str() {
-            "reader" => Ok(CognitoGroup::Reader),
-            "writer" => Ok(CognitoGroup::Writer),
-            "admin" => Ok(CognitoGroup::Admin),
-            _ => Err(format!("bad cognito group {:?}", s)),
-        }
-    }
-}
-
-impl fmt::Display for CognitoGroup {
-    /// Capitalised — matches real Cognito group names and OCaml `to_string`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            CognitoGroup::Reader => "Reader",
-            CognitoGroup::Writer => "Writer",
-            CognitoGroup::Admin => "Admin",
-        };
-        write!(f, "{}", s)
+        s.parse::<CognitoGroup>().map_err(|e| e.to_string())
     }
 }
 
@@ -125,12 +113,18 @@ impl fmt::Display for CognitoGroup {
 /// User-facing access profiles (UI/input concept, never stored directly).
 ///
 /// Faithfully ported from `services/hierarchy/lib/domain/profile.ml`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter,
+         strum::Display, strum::EnumString)]
 pub enum Profile {
+    #[strum(serialize = "SysAdm")]
     Sysadm,
+    #[strum(serialize = "Developer")]
     Developer,
+    #[strum(serialize = "Standard")]
     Standard,
+    #[strum(serialize = "Technician")]
     Technician,
+    #[strum(serialize = "Reader")]
     Reader,
 }
 
@@ -162,14 +156,7 @@ impl Profile {
 
     /// Case-sensitive parse, matching OCaml `Profile.of_string`.
     pub fn parse(s: &str) -> Result<Profile, String> {
-        match s {
-            "SysAdm" => Ok(Profile::Sysadm),
-            "Developer" => Ok(Profile::Developer),
-            "Standard" => Ok(Profile::Standard),
-            "Technician" => Ok(Profile::Technician),
-            "Reader" => Ok(Profile::Reader),
-            _ => Err(format!("bad profile {:?}", s)),
-        }
+        s.parse::<Profile>().map_err(|e| e.to_string())
     }
 
     /// Map a profile to its Cognito group.
@@ -183,11 +170,6 @@ impl Profile {
     }
 }
 
-impl fmt::Display for Profile {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_str())
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Currency
@@ -196,12 +178,18 @@ impl fmt::Display for Profile {
 /// Supported currencies.
 ///
 /// Faithfully ported from `services/hierarchy/lib/domain/currency.ml`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq,
+         strum::Display, strum::EnumString)]
 pub enum Currency {
+    #[strum(serialize = "DKK")]
     Dkk,
+    #[strum(serialize = "SEK")]
     Sek,
+    #[strum(serialize = "NOK")]
     Nok,
+    #[strum(serialize = "USD")]
     Usd,
+    #[strum(serialize = "EUR")]
     Eur,
 }
 
@@ -219,14 +207,7 @@ impl Currency {
 
     /// Matches OCaml `Currency.of_string`.
     pub fn parse(s: &str) -> Result<Currency, String> {
-        match s {
-            "DKK" => Ok(Currency::Dkk),
-            "SEK" => Ok(Currency::Sek),
-            "NOK" => Ok(Currency::Nok),
-            "USD" => Ok(Currency::Usd),
-            "EUR" => Ok(Currency::Eur),
-            _ => Err(format!("bad currency {:?}", s)),
-        }
+        s.parse::<Currency>().map_err(|e| e.to_string())
     }
 }
 
@@ -237,11 +218,6 @@ impl Default for Currency {
     }
 }
 
-impl fmt::Display for Currency {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_str())
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Language
@@ -250,12 +226,18 @@ impl fmt::Display for Currency {
 /// Supported UI languages.
 ///
 /// Faithfully ported from `services/hierarchy/lib/domain/language.ml`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq,
+         strum::Display, strum::EnumString)]
 pub enum Language {
+    #[strum(serialize = "danish")]
     Danish,
+    #[strum(serialize = "swedish")]
     Swedish,
+    #[strum(serialize = "norwegian")]
     Norwegian,
+    #[strum(serialize = "english")]
     English,
+    #[strum(serialize = "german")]
     German,
 }
 
@@ -273,14 +255,7 @@ impl Language {
 
     /// Matches OCaml `Language.of_string`.
     pub fn parse(s: &str) -> Result<Language, String> {
-        match s {
-            "danish" => Ok(Language::Danish),
-            "swedish" => Ok(Language::Swedish),
-            "norwegian" => Ok(Language::Norwegian),
-            "english" => Ok(Language::English),
-            "german" => Ok(Language::German),
-            _ => Err(format!("bad language {:?}", s)),
-        }
+        s.parse::<Language>().map_err(|e| e.to_string())
     }
 }
 
@@ -291,11 +266,6 @@ impl Default for Language {
     }
 }
 
-impl fmt::Display for Language {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_str())
-    }
-}
 
 // ---------------------------------------------------------------------------
 // MeterType
@@ -305,9 +275,12 @@ impl fmt::Display for Language {
 ///
 /// Faithfully ported from `services/hierarchy/lib/domain/sensor.ml`
 /// (`meter_type` type + `meter_type_to_string` / `meter_type_of_string`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq,
+         strum::Display, strum::EnumString)]
 pub enum MeterType {
+    #[strum(serialize = "counter")]
     Counter,
+    #[strum(serialize = "gauge")]
     Gauge,
 }
 
@@ -322,17 +295,7 @@ impl MeterType {
 
     /// Matches OCaml `meter_type_of_string`.
     pub fn parse(s: &str) -> Result<MeterType, String> {
-        match s {
-            "counter" => Ok(MeterType::Counter),
-            "gauge" => Ok(MeterType::Gauge),
-            _ => Err(format!("unknown meter type {:?}", s)),
-        }
-    }
-}
-
-impl fmt::Display for MeterType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_str())
+        s.parse::<MeterType>().map_err(|e| e.to_string())
     }
 }
 
