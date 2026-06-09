@@ -1,5 +1,6 @@
 use model::domain::ids::NodeId;
 use model::domain::node::Node;
+use model::domain::values::CognitoGroup;
 use hierarchy::html::node::render_node;
 use hierarchy::html::forms::{
     render_currencies, render_languages, render_permissions, render_profiles, render_timezones,
@@ -147,8 +148,8 @@ fn make_hn2_10003_node() -> Node {
 #[test]
 fn node_detail_matches_golden() {
     let node = make_hn2_10003_node();
-    // show_sensors=false: the golden has no sensor block
-    let rendered = render_node(&node, false).into_string();
+    // Admin case: show_sensors=false; golden was captured from full-permissions OCaml output.
+    let rendered = render_node(&node, false, Some(CognitoGroup::Admin)).into_string();
     let expected = golden("node_detail.html");
     assert_golden(&rendered, &expected, "node_detail.html");
 }
@@ -188,7 +189,7 @@ fn permissions_matches_golden() {
 #[test]
 fn node_detail_hx_vals_quot_escaped() {
     let node = make_hn2_10003_node();
-    let html = render_node(&node, false).into_string();
+    let html = render_node(&node, false, Some(CognitoGroup::Admin)).into_string();
     // data-hx-vals must NOT have a raw `{"` after the `=`
     assert!(
         !html.contains(r#"data-hx-vals="{""#),
@@ -204,7 +205,7 @@ fn node_detail_hx_vals_quot_escaped() {
 #[test]
 fn node_detail_hx_request_quot_escaped() {
     let node = make_hn2_10003_node();
-    let html = render_node(&node, false).into_string();
+    let html = render_node(&node, false, Some(CognitoGroup::Admin)).into_string();
     assert!(
         !html.contains(r#"data-hx-request="{""#),
         "invalid HTML: unescaped double-quote in data-hx-request"
@@ -222,7 +223,7 @@ fn node_detail_hx_request_quot_escaped() {
 #[test]
 fn add_child_form_action_and_fields() {
     let node = make_hn2_10003_node();
-    let html = render_node(&node, false).into_string();
+    let html = render_node(&node, false, Some(CognitoGroup::Admin)).into_string();
     assert!(html.contains("add-child-dialog"), "add-child-dialog id missing");
     assert!(html.contains("add-child-body"), "add-child-body id missing");
     assert!(html.contains("/hierarchy/query/add_child_form"), "form URL missing");

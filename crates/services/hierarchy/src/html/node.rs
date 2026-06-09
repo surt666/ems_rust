@@ -1,6 +1,7 @@
 use maud::{html, Markup, PreEscaped};
 use model::domain::node::Node;
 use model::domain::sensor::Sensor;
+use model::domain::values::CognitoGroup;
 
 
 // ---------------------------------------------------------------------------
@@ -139,13 +140,26 @@ fn add_child_block(parent_id_str: &str) -> Markup {
 /// When `show_sensors` is true, `parent_str` is used to build the sensor URLs
 /// (e.g. `"HN1#10001#HN2#10003"`); when false it is unused.
 ///
+/// `capability` gates which controls are visible:
+/// - `Some(Admin)`:  add-child + add-sensor shown; metadata editable; name editable.
+///   (Kept byte-identical to the current output so the golden test passes.)
+/// - `Some(Writer)`: no add-child, no add-sensor; metadata editable; name editable.
+/// - `Some(Reader)` / `None`: no add-child, no add-sensor; metadata and name are
+///   read-only; no Save button.
+///
 /// Mirrors OCaml `api_html.ml :: render_node` (the inner `html` value).
-pub fn render_node(node: &Node, show_sensors: bool) -> Markup {
+pub fn render_node(node: &Node, show_sensors: bool, capability: Option<CognitoGroup>) -> Markup {
     let nid_str = node.id.to_string();
     let parent_str = match &node.parent {
         None => nid_str.clone(),
         Some(p) => format!("{}#{}", p, nid_str),
     };
+
+    let is_admin = capability == Some(CognitoGroup::Admin);
+    let can_write = matches!(capability, Some(CognitoGroup::Admin) | Some(CognitoGroup::Writer));
+    // Admin output must be byte-identical to the current (pre-capability) output:
+    // the OCaml golden has the name input as readonly, so we keep readonly for Admin too.
+    let name_readonly = !can_write || is_admin;
 
     let metadata_section = match &node.metadata {
         serde_json::Value::Object(m) if m.is_empty() => {
@@ -181,14 +195,16 @@ pub fn render_node(node: &Node, show_sensors: bool) -> Markup {
                     }
                     div class="form-row-2col" {
                         label class="form-label" data-i18n="common.name" { "Name" }
-                        input type="text" id="name" value=(node.name) readonly class="form-input";
+                        input type="text" id="name" value=(node.name) readonly[name_readonly] class="form-input";
                     }
                 }
-                (add_child_block(&nid_str))
+                @if is_admin {
+                    (add_child_block(&nid_str))
+                }
                 div style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-medium);" {
                     h2 class="section-title" data-i18n="node.metadata" { "Metadata" }
                     (metadata_section)
-                    @if show_sensors {
+                    @if show_sensors && is_admin {
                         (sensor_block(&nid_str, &parent_str))
                     }
                 }
@@ -519,7 +535,7 @@ mod tests {
     #[test]
     fn render_node_contains_id_and_name() {
         let node = make_hn2_node();
-        let html = render_node(&node, false).into_string();
+        let html = render_node(&node, false, Some(CognitoGroup::Admin)).into_string();
         assert!(html.contains("HN2#10003"), "node id missing");
         assert!(html.contains("SeedCo01"), "node name missing");
     }
@@ -527,14 +543,14 @@ mod tests {
     #[test]
     fn render_node_no_metadata_message() {
         let node = make_hn2_node();
-        let html = render_node(&node, false).into_string();
+        let html = render_node(&node, false, Some(CognitoGroup::Admin)).into_string();
         assert!(html.contains("No metadata available"), "no-metadata msg missing");
     }
 
     #[test]
     fn render_node_has_add_child_dialog() {
         let node = make_hn2_node();
-        let html = render_node(&node, false).into_string();
+        let html = render_node(&node, false, Some(CognitoGroup::Admin)).into_string();
         assert!(html.contains("add-child-dialog"), "add-child-dialog missing");
         assert!(html.contains("Add child"), "Add child button missing");
         assert!(html.contains("ADD CHILD"), "dialog title missing");
@@ -543,7 +559,7 @@ mod tests {
     #[test]
     fn render_node_hx_vals_quot_escaped() {
         let node = make_hn2_node();
-        let html = render_node(&node, false).into_string();
+        let html = render_node(&node, false, Some(CognitoGroup::Admin)).into_string();
         // data-hx-vals with JSON must not have unescaped " after ={
         assert!(
             !html.contains(r#"data-hx-vals="{""#),
@@ -552,6 +568,79 @@ mod tests {
         assert!(
             html.contains("&quot;parent&quot;"),
             "&quot;-escaped parent key missing from hx-vals"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Capability-gating tests
+    // -------------------------------------------------------------------------
+
+    /// Admin: add-child block is present.
+    #[test]
+    fn render_node_admin_has_add_child() {
+        let node = make_hn2_node();
+        let html = render_node(&node, false, Some(CognitoGroup::Admin)).into_string();
+        assert!(html.contains("add-child-dialog"), "Admin should show add-child-dialog");
+        assert!(html.contains("Add child"), "Admin should show Add child button");
+    }
+
+    /// Writer: no add-child block, no add-sensor; name input is editable (no readonly).
+    #[test]
+    fn render_node_writer_no_add_child_or_sensor() {
+        let node = make_hn2_node();
+        let html = render_node(&node, true, Some(CognitoGroup::Writer)).into_string();
+        assert!(
+            !html.contains("add-child-dialog"),
+            "Writer should NOT have add-child-dialog"
+        );
+        assert!(
+            !html.contains("Add child"),
+            "Writer should NOT have Add child button"
+        );
+        assert!(
+            !html.contains("add-sensor-dialog"),
+            "Writer should NOT have add-sensor-dialog"
+        );
+        assert!(
+            !html.contains("Add sensor"),
+            "Writer should NOT have Add sensor button"
+        );
+        // Name input should be editable (no readonly attribute).
+        assert!(
+            !html.contains(r#"id="name" value="SeedCo01" readonly"#),
+            "Writer name input should not be readonly"
+        );
+    }
+
+    /// Reader: no add-child block, no add-sensor; name input carries readonly.
+    #[test]
+    fn render_node_reader_no_add_child_or_sensor_and_readonly() {
+        let node = make_hn2_node();
+        let html = render_node(&node, true, Some(CognitoGroup::Reader)).into_string();
+        assert!(
+            !html.contains("add-child-dialog"),
+            "Reader should NOT have add-child-dialog"
+        );
+        assert!(
+            !html.contains("add-sensor-dialog"),
+            "Reader should NOT have add-sensor-dialog"
+        );
+        assert!(
+            html.contains(r#"id="name" value="SeedCo01" readonly"#),
+            "Reader name input should be readonly"
+        );
+    }
+
+    /// None capability: same as Reader — no add-child/sensor, name readonly.
+    #[test]
+    fn render_node_none_capability_is_readonly() {
+        let node = make_hn2_node();
+        let html = render_node(&node, true, None).into_string();
+        assert!(!html.contains("add-child-dialog"), "None should not show add-child-dialog");
+        assert!(!html.contains("add-sensor-dialog"), "None should not show add-sensor-dialog");
+        assert!(
+            html.contains(r#"id="name" value="SeedCo01" readonly"#),
+            "None capability: name input should be readonly"
         );
     }
 

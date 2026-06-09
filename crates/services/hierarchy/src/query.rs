@@ -21,7 +21,7 @@ use model::domain::ids::{NodeId, SensorId, UserId};
 use model::domain::node::Node;
 use model::domain::sensor::Sensor;
 use model::domain::user::User;
-use model::domain::values::EdgeKind;
+use model::domain::values::{CognitoGroup, EdgeKind};
 use model::errors::RepositoryError;
 use model::logic::{access, hierarchy, users};
 #[cfg(test)]
@@ -401,16 +401,56 @@ where
     }
 }
 
-/// `GET /hierarchy/query/node?id=HN2#...`
-pub async fn handle_node<FGN, FGNFut>(id_s: &str, get_node: FGN) -> (u16, String)
+/// `GET /hierarchy/query/node?id=HN2#...&user=U#...`
+///
+/// Computes the acting user's effective capability on the node and passes it
+/// to `render_node` so the UI is gated correctly.
+pub async fn handle_node<FGN, FGNFut, FGU, FGUFut, FLB, FLBFut, FLA, FLAFut>(
+    id_s: &str,
+    user_s: &str,
+    get_node: FGN,
+    get_user: FGU,
+    list_blocked_nodes: FLB,
+    list_access_edges: FLA,
+) -> (u16, String)
 where
-    FGN: FnOnce(NodeId) -> FGNFut,
+    FGN: FnOnce(NodeId) -> FGNFut + Clone,
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
+    FGU: FnOnce(UserId) -> FGUFut,
+    FGUFut: Future<Output = Result<Option<User>, RepositoryError>>,
+    FLB: FnOnce(UserId) -> FLBFut,
+    FLBFut: Future<Output = Result<Vec<NodeId>, RepositoryError>>,
+    FLA: FnOnce(UserId) -> FLAFut,
+    FLAFut: Future<Output = Result<Vec<(NodeId, EdgeKind)>, RepositoryError>>,
 {
     let nid = match NodeId::parse(id_s) {
         Ok(id) => id,
         Err(e) => return html_error(&format!("bad id: {}", e)),
     };
+
+    // Compute capability: normalise user string to "U#..." prefix.
+    let normalized_user = if user_s.starts_with("U#") {
+        user_s.to_string()
+    } else if user_s.is_empty() {
+        String::new()
+    } else {
+        format!("U#{}", user_s)
+    };
+
+    let capability: Option<CognitoGroup> = match UserId::parse(&normalized_user) {
+        Ok(uid) => access::effective_permission(
+            uid,
+            nid.clone(),
+            get_user,
+            get_node.clone(),
+            list_blocked_nodes,
+            list_access_edges,
+        )
+        .await
+        .unwrap_or(None),
+        Err(_) => None,
+    };
+
     match hierarchy::get_node(nid, get_node).await {
         Ok(n) => {
             // show_sensors: whether the schema allows sensors at this node's level.
@@ -421,7 +461,7 @@ where
                 .as_ref()
                 .map(|s| s.allows_sensors(level))
                 .unwrap_or(false);
-            html_ok(html_node::render_node(&n, show_sensors))
+            html_ok(html_node::render_node(&n, show_sensors, capability))
         }
         Err(e) => html_repo_error(e),
     }
@@ -979,10 +1019,27 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
                 Some(s) => s,
                 None => return html_error("missing id"),
             };
-            handle_node(id_s, {
-                let t = table.clone();
-                move |nid| async move { ddb_node::get_node(ddb, &t, &nid).await }
-            })
+            let user_s = p(params, "user").unwrap_or("");
+            handle_node(
+                id_s,
+                user_s,
+                {
+                    let t = table.clone();
+                    move |nid| async move { ddb_node::get_node(ddb, &t, &nid).await }
+                },
+                {
+                    let t = table.clone();
+                    move |uid| async move { user::get_user(ddb, &t, &uid).await }
+                },
+                {
+                    let t = table.clone();
+                    move |uid| async move { user::list_blocked_nodes(ddb, &t, &uid).await }
+                },
+                {
+                    let t = table.clone();
+                    move |uid| async move { user::list_access_edges(ddb, &t, &uid).await }
+                },
+            )
             .await
         }
 
@@ -1583,6 +1640,135 @@ mod tests {
             html.contains("HN2#10002"),
             "tree should show the administrated HN2 node, got html snippet: {:?}",
             &html[..html.len().min(500)]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers for handle_node tests
+    // -----------------------------------------------------------------------
+
+    fn make_list_blocked_nodes_once(
+        s: Rc<Store>,
+    ) -> impl FnOnce(UserId) -> std::future::Ready<Result<Vec<NodeId>, RepositoryError>> {
+        move |uid| std::future::ready(Ok(s.list_blocked_nodes(&uid)))
+    }
+
+    fn make_list_access_edges_once(
+        s: Rc<Store>,
+    ) -> impl FnOnce(UserId)
+           -> std::future::Ready<Result<Vec<(NodeId, EdgeKind)>, RepositoryError>> {
+        move |uid| std::future::ready(Ok(s.list_access_edges(&uid)))
+    }
+
+    /// Seed a minimal HN2 node and return its NodeId.
+    fn make_simple_hn2(store: &Rc<Store>) -> NodeId {
+        let nid = NodeId::make(Level::Hn2, 10003);
+        let n = node::make(
+            10003,
+            Level::Hn2,
+            "TestCo",
+            NodeId::root(),
+            &format!("{}|HN1#10001", NodeId::root()),
+            ts(),
+            json!({}),
+            None,
+        );
+        store.put_node(&n);
+        nid
+    }
+
+    /// Grant an edge of a given kind and return the UserId.
+    async fn seed_user_with_edge(
+        store: &Rc<Store>,
+        email: &str,
+        node_id: &NodeId,
+        kind: EdgeKind,
+    ) -> UserId {
+        let uid = seed_user(store, email, "Test").await;
+        store.put_edge(RepoEdgeSpec {
+            from_: uid.to_string(),
+            to_: node_id.to_string(),
+            kind,
+            name: String::new(),
+        });
+        uid
+    }
+
+    // -----------------------------------------------------------------------
+    // test: handle_node with Writes edge → Writer capability → no add-child/sensor
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn handle_node_writer_omits_add_child_and_sensor() {
+        let store = Rc::new(Store::new());
+        let nid = make_simple_hn2(&store);
+        let uid = seed_user_with_edge(&store, "writer@ex", &nid, EdgeKind::Writes).await;
+
+        let (status, html) = handle_node(
+            &nid.to_string(),
+            &uid.to_string(),
+            make_get_node(store.clone()),
+            // get_user: FnOnce
+            {
+                let s = store.clone();
+                move |u| std::future::ready(Ok(s.get_user(&u)))
+            },
+            make_list_blocked_nodes_once(store.clone()),
+            make_list_access_edges_once(store.clone()),
+        )
+        .await;
+
+        assert_eq!(status, 200, "status 200");
+        assert!(
+            !html.contains("add-child-dialog"),
+            "Writer should not see add-child-dialog"
+        );
+        assert!(
+            !html.contains("Add child"),
+            "Writer should not see Add child button"
+        );
+        assert!(
+            !html.contains("add-sensor-dialog"),
+            "Writer should not see add-sensor-dialog"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // test: handle_node with Reads edge → Reader capability → no add-child/sensor, readonly
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn handle_node_reader_omits_add_child_and_sensor_and_is_readonly() {
+        let store = Rc::new(Store::new());
+        let nid = make_simple_hn2(&store);
+        let uid = seed_user_with_edge(&store, "reader@ex", &nid, EdgeKind::Reads).await;
+
+        let (status, html) = handle_node(
+            &nid.to_string(),
+            &uid.to_string(),
+            make_get_node(store.clone()),
+            {
+                let s = store.clone();
+                move |u| std::future::ready(Ok(s.get_user(&u)))
+            },
+            make_list_blocked_nodes_once(store.clone()),
+            make_list_access_edges_once(store.clone()),
+        )
+        .await;
+
+        assert_eq!(status, 200, "status 200");
+        assert!(
+            !html.contains("add-child-dialog"),
+            "Reader should not see add-child-dialog"
+        );
+        assert!(
+            !html.contains("add-sensor-dialog"),
+            "Reader should not see add-sensor-dialog"
+        );
+        // Name input should be readonly for Reader.
+        assert!(
+            html.contains(r#"id="name" value="TestCo" readonly"#),
+            "Reader: name input should be readonly"
         );
     }
 }
