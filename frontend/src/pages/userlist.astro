@@ -146,7 +146,23 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 					</div>
 
 					<!-- Hierarchy table -->
-					<div class="card" style="padding: 0;" id="permission-grid">
+					<!-- Delegated fold handler for the permission tree (analogous to Hierarchy.astro's
+					     sidebar one, but for this tree's shape: .permission-row + sibling .child-rows
+					     that lazy-loads on the `loadChildren` htmx trigger). -->
+					<div class="card" style="padding: 0;" id="permission-grid"
+						_="on click
+						     set tog to closest .tree-toggle to event.target
+						     if tog is null then exit end
+						     set row to closest .permission-row to tog
+						     set list to the next .child-rows from row
+						     if list is null then exit end
+						     toggle .tree-toggle-expanded on tog
+						     if the @style of list is 'display:none;' then
+						       if the innerHTML of list is '' then send loadChildren to list end
+						       set the @style of list to ''
+						     else
+						       set the @style of list to 'display:none;'
+						     end">
 						<div class="table-section-header" style="display: grid; grid-template-columns: auto auto auto auto auto 1fr; gap: 0.5rem; align-items: center;">
 							<div style="width: 20px;"></div>
 							<div style="width: 16px;"></div>
