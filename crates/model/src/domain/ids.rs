@@ -1,4 +1,5 @@
 use std::fmt;
+use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
 // ---------------------------------------------------------------------------
@@ -6,7 +7,7 @@ use strum::EnumIter;
 // ---------------------------------------------------------------------------
 
 /// Hierarchy level, Hn0 (root) through Hn9.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, Serialize, Deserialize)]
 pub enum Level {
     Hn0,
     Hn1,
