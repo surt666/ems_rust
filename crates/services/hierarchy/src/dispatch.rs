@@ -29,6 +29,7 @@ use model::logic::{access, hierarchy, sensors, users};
 use model::repository::EdgeSpec;
 
 use crate::command::Command;
+use crate::json;
 
 // ---------------------------------------------------------------------------
 // Response helpers (mirror api_json.ml ok_response / error_response)
@@ -90,351 +91,32 @@ fn repo_error_response(e: RepositoryError) -> Value {
 }
 
 // ---------------------------------------------------------------------------
-// JSON serialisers (mirror api_json.ml)
+// JSON serialisers — delegate to json::* (single authoritative implementation)
 // ---------------------------------------------------------------------------
 
 pub fn user_to_json(u: &User) -> Value {
-    json!({
-        "id":            u.id.to_string(),
-        "email":         u.email,
-        "name":          u.name,
-        "cognito_group": u.cognito_group.to_string(),
-        "language":      u.language.to_string(),
-        "currency":      u.currency.to_string(),
-        "created":       u.created.to_rfc3339(),
-    })
+    json::user_to_json(u)
 }
 
 /// Mirrors OCaml `api_json.ml :: node_ref_to_json`.
 pub fn node_ref_to_json(id: &NodeId, name: &str) -> Value {
-    json!({
-        "id":   id.to_string(),
-        "name": name,
-    })
+    json::node_ref_to_json(id, name)
 }
 
 pub fn node_to_json(n: &Node) -> Value {
-    let parent = n
-        .parent
-        .as_ref()
-        .map(|p| Value::String(p.to_string()))
-        .unwrap_or(Value::Null);
-    json!({
-        "id":       n.id.to_string(),
-        "name":     n.name,
-        "parent":   parent,
-        "created":  n.created.to_rfc3339(),
-        "metadata": n.metadata,
-    })
+    json::node_to_json(n)
 }
 
 pub fn sensor_to_json(s: &Sensor) -> Value {
-    json!({
-        "id":               s.id.to_string(),
-        "created":          s.created.to_rfc3339(),
-        "daq_id":           s.daq_id,
-        "path":             s.path,
-        "purpose":          s.purpose,
-        "meter_type":       s.meter_type.to_string(),
-        "unit":             s.unit.as_ref().map(|u| Value::String(u.clone())).unwrap_or(Value::Null),
-        "resample_minutes": s.resample_minutes.map(|v| json!(v)).unwrap_or(Value::Null),
-        "formula":          formula_to_json(&s.formula),
-    })
-}
-
-fn formula_to_json(f: &model::domain::formula::Formula) -> Value {
-    use model::domain::formula::Formula;
-    match f {
-        Formula::Identity => json!({ "kind": "identity" }),
-        Formula::Zero => json!({ "kind": "zero" }),
-        Formula::Expr { refs, expr } => {
-            let refs_obj: serde_json::Map<String, Value> = refs
-                .iter()
-                .map(|(a, sid)| (a.clone(), Value::String(sid.to_string())))
-                .collect();
-            json!({
-                "kind": "expr",
-                "expr": expr_to_string(expr),
-                "refs": Value::Object(refs_obj),
-            })
-        }
-    }
-}
-
-fn expr_to_string(e: &model::domain::formula::Expr) -> String {
-    use model::domain::formula::Expr;
-    match e {
-        Expr::Num(n) => format!("{}", n),
-        Expr::SelfRef => "self".to_string(),
-        Expr::Ref(a) => a.clone(),
-        Expr::Abs(inner) => format!("abs({})", expr_to_string(inner)),
-        Expr::Add(l, r) => format!("{} + {}", expr_to_string(l), expr_to_string(r)),
-        Expr::Sub(l, r) => format!("{} - {}", expr_to_string(l), expr_to_string(r)),
-        Expr::Mul(l, r) => format!("{} * {}", expr_to_string(l), expr_to_string(r)),
-        Expr::Div(l, r) => format!("{} / {}", expr_to_string(l), expr_to_string(r)),
-    }
+    json::sensor_to_json(s)
 }
 
 // ---------------------------------------------------------------------------
-// Formula parsing
+// Formula parsing — delegate to json::formula_of_json
 // ---------------------------------------------------------------------------
 
 fn parse_formula(v: Option<Value>) -> Result<model::domain::formula::Formula, String> {
-    use model::domain::formula::Formula;
-
-    match v {
-        None | Some(Value::Null) => Ok(Formula::Identity),
-        Some(Value::String(ref s)) if s == "identity" => Ok(Formula::Identity),
-        Some(Value::String(ref s)) if s == "zero" => Ok(Formula::Zero),
-        Some(Value::Object(ref map)) => {
-            let kind = map.get("kind").and_then(|v| v.as_str());
-            match kind {
-                Some("identity") | None => Ok(Formula::Identity),
-                Some("zero") => Ok(Formula::Zero),
-                Some("expr") => parse_expr_formula(map),
-                Some(other) => Err(format!("unknown formula kind {:?}", other)),
-            }
-        }
-        Some(_) => Err("formula must be an object or string".to_string()),
-    }
-}
-
-fn parse_expr_formula(
-    map: &serde_json::Map<String, Value>,
-) -> Result<model::domain::formula::Formula, String> {
-    use model::domain::formula::Formula;
-    use model::domain::ids::SensorId;
-
-    let expr_s = map
-        .get("expr")
-        .and_then(|v| v.as_str())
-        .ok_or("formula.expr must be a string")?;
-
-    // Parse refs: { alias: "S#n", ... }
-    let refs: Vec<(String, SensorId)> = match map.get("refs") {
-        None | Some(Value::Null) => vec![],
-        Some(Value::Object(refs_map)) => {
-            let mut out = Vec::new();
-            for (alias, id_val) in refs_map {
-                let id_s = id_val
-                    .as_str()
-                    .ok_or_else(|| format!("ref {} must be a string", alias))?;
-                let sid = SensorId::parse(id_s)
-                    .map_err(|e| format!("bad sensor id for alias {}: {}", alias, e))?;
-                out.push((alias.clone(), sid));
-            }
-            out
-        }
-        _ => return Err("formula.refs must be an object".to_string()),
-    };
-
-    let ast = parse_expr_string(expr_s)?;
-
-    // Validate: all aliases in expr must be in refs.
-    let expr_aliases = collect_aliases(&ast);
-    for alias in &expr_aliases {
-        if !refs.iter().any(|(a, _)| a == alias) {
-            return Err(format!("formula references unbound alias {:?}", alias));
-        }
-    }
-    // Validate: no unused refs.
-    for (alias, _) in &refs {
-        if !expr_aliases.contains(alias) {
-            return Err(format!("formula.refs has unused alias {:?}", alias));
-        }
-    }
-
-    Ok(Formula::Expr { refs, expr: ast })
-}
-
-/// Collect all alias names (Ref nodes) from an expression.
-fn collect_aliases(expr: &model::domain::formula::Expr) -> Vec<String> {
-    use model::domain::formula::Expr;
-    match expr {
-        Expr::Ref(a) => vec![a.clone()],
-        Expr::Abs(inner) => collect_aliases(inner),
-        Expr::Add(l, r) | Expr::Sub(l, r) | Expr::Mul(l, r) | Expr::Div(l, r) => {
-            let mut out = collect_aliases(l);
-            out.extend(collect_aliases(r));
-            out
-        }
-        Expr::Num(_) | Expr::SelfRef => vec![],
-    }
-}
-
-/// Minimal recursive-descent parser for formula expressions.
-/// Supports: literals, `self`, identifiers (aliases), `abs(...)`,
-/// `+` `-` `*` `/` with standard left-to-right precedence, parentheses.
-fn parse_expr_string(s: &str) -> Result<model::domain::formula::Expr, String> {
-    let tokens = tokenise(s)?;
-    let (expr, pos) = parse_additive(&tokens, 0)?;
-    if pos != tokens.len() {
-        return Err(format!("unexpected token at position {}", pos));
-    }
-    Ok(expr)
-}
-
-#[derive(Debug, Clone)]
-enum Token {
-    Num(f64),
-    Ident(String),
-    Plus,
-    Minus,
-    Star,
-    Slash,
-    LParen,
-    RParen,
-}
-
-fn tokenise(s: &str) -> Result<Vec<Token>, String> {
-    let mut tokens = Vec::new();
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        match chars[i] {
-            ' ' | '\t' | '\n' => {
-                i += 1;
-            }
-            '+' => {
-                tokens.push(Token::Plus);
-                i += 1;
-            }
-            '-' => {
-                tokens.push(Token::Minus);
-                i += 1;
-            }
-            '*' => {
-                tokens.push(Token::Star);
-                i += 1;
-            }
-            '/' => {
-                tokens.push(Token::Slash);
-                i += 1;
-            }
-            '(' => {
-                tokens.push(Token::LParen);
-                i += 1;
-            }
-            ')' => {
-                tokens.push(Token::RParen);
-                i += 1;
-            }
-            c if c.is_ascii_digit() || c == '.' => {
-                let start = i;
-                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
-                    i += 1;
-                }
-                let num_s: String = chars[start..i].iter().collect();
-                let n: f64 = num_s
-                    .parse()
-                    .map_err(|_| format!("bad number {:?}", num_s))?;
-                tokens.push(Token::Num(n));
-            }
-            c if c.is_alphabetic() || c == '_' => {
-                let start = i;
-                while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
-                    i += 1;
-                }
-                let ident: String = chars[start..i].iter().collect();
-                tokens.push(Token::Ident(ident));
-            }
-            c => return Err(format!("unexpected character {:?}", c)),
-        }
-    }
-    Ok(tokens)
-}
-
-fn parse_additive(
-    tokens: &[Token],
-    pos: usize,
-) -> Result<(model::domain::formula::Expr, usize), String> {
-    use model::domain::formula::Expr;
-    let (mut lhs, mut pos) = parse_multiplicative(tokens, pos)?;
-    loop {
-        match tokens.get(pos) {
-            Some(Token::Plus) => {
-                let (rhs, new_pos) = parse_multiplicative(tokens, pos + 1)?;
-                lhs = Expr::Add(Box::new(lhs), Box::new(rhs));
-                pos = new_pos;
-            }
-            Some(Token::Minus) => {
-                let (rhs, new_pos) = parse_multiplicative(tokens, pos + 1)?;
-                lhs = Expr::Sub(Box::new(lhs), Box::new(rhs));
-                pos = new_pos;
-            }
-            _ => break,
-        }
-    }
-    Ok((lhs, pos))
-}
-
-fn parse_multiplicative(
-    tokens: &[Token],
-    pos: usize,
-) -> Result<(model::domain::formula::Expr, usize), String> {
-    use model::domain::formula::Expr;
-    let (mut lhs, mut pos) = parse_unary(tokens, pos)?;
-    loop {
-        match tokens.get(pos) {
-            Some(Token::Star) => {
-                let (rhs, new_pos) = parse_unary(tokens, pos + 1)?;
-                lhs = Expr::Mul(Box::new(lhs), Box::new(rhs));
-                pos = new_pos;
-            }
-            Some(Token::Slash) => {
-                let (rhs, new_pos) = parse_unary(tokens, pos + 1)?;
-                lhs = Expr::Div(Box::new(lhs), Box::new(rhs));
-                pos = new_pos;
-            }
-            _ => break,
-        }
-    }
-    Ok((lhs, pos))
-}
-
-fn parse_unary(
-    tokens: &[Token],
-    pos: usize,
-) -> Result<(model::domain::formula::Expr, usize), String> {
-    use model::domain::formula::Expr;
-    // abs(...)
-    if let Some(Token::Ident(name)) = tokens.get(pos) {
-        if name == "abs" && matches!(tokens.get(pos + 1), Some(Token::LParen)) {
-            let (inner, new_pos) = parse_additive(tokens, pos + 2)?;
-            if matches!(tokens.get(new_pos), Some(Token::RParen)) {
-                return Ok((Expr::Abs(Box::new(inner)), new_pos + 1));
-            }
-            return Err("expected ')' after abs(...)".to_string());
-        }
-    }
-    parse_primary(tokens, pos)
-}
-
-fn parse_primary(
-    tokens: &[Token],
-    pos: usize,
-) -> Result<(model::domain::formula::Expr, usize), String> {
-    use model::domain::formula::Expr;
-    match tokens.get(pos) {
-        Some(Token::Num(n)) => Ok((Expr::Num(*n), pos + 1)),
-        Some(Token::Ident(name)) if name == "self" => Ok((Expr::SelfRef, pos + 1)),
-        Some(Token::Ident(name)) => Ok((Expr::Ref(name.clone()), pos + 1)),
-        Some(Token::LParen) => {
-            let (inner, new_pos) = parse_additive(tokens, pos + 1)?;
-            match tokens.get(new_pos) {
-                Some(Token::RParen) => Ok((inner, new_pos + 1)),
-                _ => Err("expected ')'".to_string()),
-            }
-        }
-        Some(Token::Minus) => {
-            let (inner, new_pos) = parse_primary(tokens, pos + 1)?;
-            Ok((
-                Expr::Sub(Box::new(Expr::Num(0.0)), Box::new(inner)),
-                new_pos,
-            ))
-        }
-        t => Err(format!("unexpected token {:?}", t)),
-    }
+    json::formula_of_json(v.as_ref())
 }
 
 // ---------------------------------------------------------------------------

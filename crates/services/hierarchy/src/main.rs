@@ -1,6 +1,7 @@
 mod command;
 mod dispatch;
 mod html;
+mod json;
 mod query;
 
 use lambda_http::{http::Method, run, service_fn, Body, Error, Request, Response};
