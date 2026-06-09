@@ -10,4 +10,6 @@ pub enum RepositoryError {
     NotFound(NodeId),
     #[error("user {0} not found")]
     NotFoundUser(UserId),
+    #[error("conflict: {0}")]
+    Conflict(String),
 }
