@@ -492,6 +492,26 @@ impl Store {
             .collect()
     }
 
+    /// List all `(node_id, edge_kind)` access edges for `user_id`.
+    ///
+    /// Returns edges with kind `Administrates`, `Reads`, or `Writes`.
+    pub fn list_access_edges(&self, user_id: &UserId) -> Vec<(NodeId, EdgeKind)> {
+        let inner = self.inner.borrow();
+        let user_s = user_id.to_string();
+        inner
+            .edges
+            .iter()
+            .filter(|e| {
+                e.from_ == user_s
+                    && matches!(
+                        e.kind,
+                        EdgeKind::Administrates | EdgeKind::Reads | EdgeKind::Writes
+                    )
+            })
+            .filter_map(|e| NodeId::parse(&e.to_).ok().map(|nid| (nid, e.kind.clone())))
+            .collect()
+    }
+
     // -----------------------------------------------------------------------
     // Convenience seeding API
     // -----------------------------------------------------------------------

@@ -255,12 +255,13 @@ where
 }
 
 /// `GET /query/effective_permission?user=U#...&node=HN2#...`
-pub async fn handle_effective_permission<FGU, FGUFut, FGN, FGNFut, FLB, FLBFut>(
+pub async fn handle_effective_permission<FGU, FGUFut, FGN, FGNFut, FLB, FLBFut, FLA, FLAFut>(
     user_s: &str,
     node_s: &str,
     get_user: FGU,
     get_node: FGN,
     list_blocked: FLB,
+    list_access_edges: FLA,
 ) -> (u16, String)
 where
     FGU: FnOnce(UserId) -> FGUFut,
@@ -269,6 +270,8 @@ where
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
     FLB: FnOnce(UserId) -> FLBFut,
     FLBFut: Future<Output = Result<Vec<NodeId>, RepositoryError>>,
+    FLA: FnOnce(UserId) -> FLAFut,
+    FLAFut: Future<Output = Result<Vec<(NodeId, EdgeKind)>, RepositoryError>>,
 {
     let uid = match UserId::parse(user_s) {
         Ok(id) => id,
@@ -278,7 +281,7 @@ where
         Ok(id) => id,
         Err(e) => return bad_request(&format!("bad node: {}", e)),
     };
-    match access::effective_permission(uid, nid, get_user, get_node, list_blocked).await {
+    match access::effective_permission(uid, nid, get_user, get_node, list_blocked, list_access_edges).await {
         Ok(Some(g)) => ok(json!({ "capability": g.to_string() })),
         Ok(None) => ok(json!({ "capability": null, "reason": "blocked" })),
         Err(e) => repo_error(e),
@@ -926,6 +929,10 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
                     let t = table.clone();
                     move |uid| async move { user::list_blocked_nodes(ddb, &t, &uid).await }
                 },
+                {
+                    let t = table.clone();
+                    move |uid| async move { user::list_access_edges(ddb, &t, &uid).await }
+                },
             )
             .await
         }
@@ -1119,6 +1126,13 @@ mod tests {
         s: Rc<Store>,
     ) -> impl FnOnce(UserId) -> std::future::Ready<Result<Vec<NodeId>, RepositoryError>> {
         move |uid| std::future::ready(Ok(s.list_blocked_nodes(&uid)))
+    }
+
+    fn make_list_access_edges(
+        s: Rc<Store>,
+    ) -> impl FnOnce(UserId)
+           -> std::future::Ready<Result<Vec<(NodeId, EdgeKind)>, RepositoryError>> {
+        move |uid| std::future::ready(Ok(s.list_access_edges(&uid)))
     }
 
     fn make_list_blocked_users_fn(
@@ -1422,15 +1436,26 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // test: effective_permission before/after block
+    //
+    // Updated to edge-based semantics: capability comes from the user's
+    // access edge kind, not the global cognito group.
     // -----------------------------------------------------------------------
 
     #[tokio::test]
     async fn effective_permission_before_and_after_block() {
         let store = Rc::new(Store::new());
         let c2 = seed_with_one_child(&store).await;
-        seed_user(&store, "frank@ex", "Frank").await;
+        let frank_uid = seed_user(&store, "frank@ex", "Frank").await;
 
-        // Before block: writer capability.
+        // Grant a Writes edge on c2 so frank has Writer capability there.
+        store.put_edge(RepoEdgeSpec {
+            from_: frank_uid.to_string(),
+            to_: c2.to_string(),
+            kind: EdgeKind::Writes,
+            name: String::new(),
+        });
+
+        // Before block: Writer capability (from the Writes edge).
         let (status, body) = handle_effective_permission(
             "U#frank@ex",
             &c2.to_string(),
@@ -1440,6 +1465,7 @@ mod tests {
                 move |nid| std::future::ready(Ok(s.get_node(&nid)))
             },
             make_list_blocked_nodes_fn(store.clone()),
+            make_list_access_edges(store.clone()),
         )
         .await;
         assert_eq!(status, 200, "status 200 before block");
@@ -1474,6 +1500,7 @@ mod tests {
                 move |nid| std::future::ready(Ok(s.get_node(&nid)))
             },
             make_list_blocked_nodes_fn(store.clone()),
+            make_list_access_edges(store.clone()),
         )
         .await;
         assert_eq!(status2, 200, "status 200 after block");

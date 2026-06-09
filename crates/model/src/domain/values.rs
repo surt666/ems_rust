@@ -18,6 +18,10 @@ pub enum EdgeKind {
     Blocked,
     #[strum(serialize = "administrates")]
     Administrates,
+    #[strum(serialize = "reads")]
+    Reads,
+    #[strum(serialize = "writes")]
+    Writes,
 }
 
 impl EdgeKind {
@@ -29,6 +33,8 @@ impl EdgeKind {
             EdgeKind::HasSensor => "has_sensor".to_string(),
             EdgeKind::Blocked => "blocked".to_string(),
             EdgeKind::Administrates => "administrates".to_string(),
+            EdgeKind::Reads => "reads".to_string(),
+            EdgeKind::Writes => "writes".to_string(),
         }
     }
 
@@ -45,6 +51,8 @@ impl EdgeKind {
         match self {
             EdgeKind::Blocked => Some("blocks"),
             EdgeKind::Administrates => Some("administrators"),
+            EdgeKind::Reads => Some("readers"),
+            EdgeKind::Writes => Some("writers"),
             EdgeKind::HasLabel(_) | EdgeKind::HasSensor => None,
         }
     }
@@ -61,12 +69,31 @@ impl EdgeKind {
         if s == "administrates" {
             return Ok(EdgeKind::Administrates);
         }
+        if s == "reads" {
+            return Ok(EdgeKind::Reads);
+        }
+        if s == "writes" {
+            return Ok(EdgeKind::Writes);
+        }
         // Try "has_label:<l>"
         let parts: Vec<&str> = s.splitn(2, ':').collect();
         if parts.len() == 2 && parts[0] == "has_label" && !parts[1].is_empty() {
             return Ok(EdgeKind::HasLabel(parts[1].to_string()));
         }
         Err(format!("bad edge_kind {:?}", s))
+    }
+
+    /// Return the `CognitoGroup` capability this edge kind confers, if any.
+    ///
+    /// Only `Administrates`, `Reads`, and `Writes` confer a capability;
+    /// `Blocked`, `HasLabel`, and `HasSensor` return `None`.
+    pub fn capability(&self) -> Option<CognitoGroup> {
+        match self {
+            EdgeKind::Administrates => Some(CognitoGroup::Admin),
+            EdgeKind::Writes => Some(CognitoGroup::Writer),
+            EdgeKind::Reads => Some(CognitoGroup::Reader),
+            _ => None,
+        }
     }
 }
 
@@ -88,6 +115,26 @@ pub enum CognitoGroup {
     Writer,
     #[strum(serialize = "Admin")]
     Admin,
+}
+
+impl CognitoGroup {
+    /// Return the `EdgeKind` that should be used when granting access to a
+    /// node for a user belonging to this group.
+    ///
+    /// `Admin → Administrates`, `Writer → Writes`, `Reader → Reads`.
+    pub fn access_edge(&self) -> EdgeKind {
+        match self {
+            CognitoGroup::Admin => EdgeKind::Administrates,
+            CognitoGroup::Writer => EdgeKind::Writes,
+            CognitoGroup::Reader => EdgeKind::Reads,
+        }
+    }
+
+    /// Reverse of `EdgeKind::capability`: given an access edge kind return the
+    /// corresponding group, or `None` for non-access edge kinds.
+    pub fn from_edge_kind(k: &EdgeKind) -> Option<CognitoGroup> {
+        k.capability()
+    }
 }
 
 
@@ -275,6 +322,22 @@ mod tests {
         assert_eq!(k.gsi_verb(), Some("administrators"));
     }
 
+    #[test]
+    fn edge_kind_reads_verbs() {
+        let k = EdgeKind::Reads;
+        assert_eq!(k.sk_verb(), "reads");
+        assert_eq!(k.gsi_verb(), Some("readers"));
+        assert_eq!(k.kind_string(), "reads");
+    }
+
+    #[test]
+    fn edge_kind_writes_verbs() {
+        let k = EdgeKind::Writes;
+        assert_eq!(k.sk_verb(), "writes");
+        assert_eq!(k.gsi_verb(), Some("writers"));
+        assert_eq!(k.kind_string(), "writes");
+    }
+
     /// Port of `test_domain_edge_kind.ml :: roundtrip_to_string`
     #[test]
     fn edge_kind_roundtrip() {
@@ -283,6 +346,8 @@ mod tests {
             EdgeKind::HasSensor,
             EdgeKind::Blocked,
             EdgeKind::Administrates,
+            EdgeKind::Reads,
+            EdgeKind::Writes,
         ];
         for k in &kinds {
             let s = k.kind_string();
@@ -299,6 +364,18 @@ mod tests {
         assert_eq!(EdgeKind::HasSensor.sk_verb(), "has_sensor");
         assert_eq!(EdgeKind::Administrates.sk_verb(), "administrates");
         assert_eq!(EdgeKind::Blocked.sk_verb(), "blocked");
+        assert_eq!(EdgeKind::Reads.sk_verb(), "reads");
+        assert_eq!(EdgeKind::Writes.sk_verb(), "writes");
+    }
+
+    #[test]
+    fn edge_kind_capability_roundtrip() {
+        assert_eq!(EdgeKind::Administrates.capability(), Some(CognitoGroup::Admin));
+        assert_eq!(EdgeKind::Writes.capability(), Some(CognitoGroup::Writer));
+        assert_eq!(EdgeKind::Reads.capability(), Some(CognitoGroup::Reader));
+        assert_eq!(EdgeKind::Blocked.capability(), None);
+        assert_eq!(EdgeKind::HasSensor.capability(), None);
+        assert_eq!(EdgeKind::HasLabel("x".into()).capability(), None);
     }
 
     /// Parse errors for bad inputs.
@@ -357,6 +434,29 @@ mod tests {
     fn cognito_group_parse_error() {
         assert!("superuser".parse::<CognitoGroup>().is_err());
         assert!("".parse::<CognitoGroup>().is_err());
+    }
+
+    #[test]
+    fn cognito_group_access_edge_roundtrip() {
+        // access_edge then capability forms a round-trip
+        for (g, expected_kind) in [
+            (CognitoGroup::Admin, EdgeKind::Administrates),
+            (CognitoGroup::Writer, EdgeKind::Writes),
+            (CognitoGroup::Reader, EdgeKind::Reads),
+        ] {
+            let kind = g.access_edge();
+            assert_eq!(kind, expected_kind, "access_edge for {:?}", g);
+            let back = kind.capability();
+            assert_eq!(back, Some(g), "capability round-trip for {:?}", g);
+            let back2 = CognitoGroup::from_edge_kind(&kind);
+            assert_eq!(back2, Some(g), "from_edge_kind round-trip for {:?}", g);
+        }
+    }
+
+    #[test]
+    fn cognito_group_from_edge_kind_non_access() {
+        assert_eq!(CognitoGroup::from_edge_kind(&EdgeKind::Blocked), None);
+        assert_eq!(CognitoGroup::from_edge_kind(&EdgeKind::HasSensor), None);
     }
 
     // ---- Profile ------------------------------------------------------------

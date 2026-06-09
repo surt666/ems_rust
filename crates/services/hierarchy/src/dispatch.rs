@@ -337,16 +337,19 @@ where
     let user_id = UserId::of_email(&email);
 
     // 3 & 4. Best-effort access grants (mirrors OCaml `ignore (f ...)` pattern).
-    // access::grant_administrates / block each take FnOnce closures; we drive
-    // them manually so that `get_node` and `put_edge` (Fn) can be called once
-    // per iteration.
+    // grant_access / block each take FnOnce closures; we drive them manually so
+    // that `get_node` and `put_edge` (Fn) can be called once per iteration.
+    // The edge kind is determined by the user's cognito group.
+    let access_kind = cognito_group.access_edge();
     for node_s in &allowed {
         if let Ok(node_id) = NodeId::parse(node_s) {
             let uid = user_id.clone();
             let u_clone = user.clone();
-            let _ = access::grant_administrates(
+            let kind = access_kind.clone();
+            let _ = access::grant_access(
                 uid,
                 node_id,
+                kind,
                 move |_id| {
                     let u = u_clone;
                     async move { Ok(Some(u)) }

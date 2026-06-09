@@ -1203,6 +1203,98 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Reads / Writes edge codec unit tests (new access edge kinds)
+    // -----------------------------------------------------------------------
+
+    /// A `Reads` edge encodes to sk="reads#<node>", gsi1sk="readers#<user>",
+    /// kind="reads" and decodes back.
+    #[test]
+    fn edge_reads_codec_roundtrip() {
+        use chrono::DateTime;
+
+        let user_s = "U#reader@ex";
+        let node_s = "HN2#10002";
+        let created: chrono::DateTime<chrono::Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
+
+        let item = edge_to_item(EdgeParams {
+            from_: user_s,
+            to_: node_s,
+            kind: &EdgeKind::Reads,
+            name: "",
+            created: &created,
+        });
+
+        // sk = "reads#HN2#10002"
+        assert_eq!(
+            item.get("sk").and_then(|v| if let AttributeValue::S(s) = v { Some(s.as_str()) } else { None }),
+            Some("reads#HN2#10002"),
+            "Reads sk"
+        );
+        // kind = "reads"
+        assert_eq!(
+            item.get("kind").and_then(|v| if let AttributeValue::S(s) = v { Some(s.as_str()) } else { None }),
+            Some("reads"),
+            "Reads kind"
+        );
+        // gsi1pk = node_s, gsi1sk = "readers#<user>"
+        assert_eq!(
+            item.get("gsi1pk").and_then(|v| if let AttributeValue::S(s) = v { Some(s.as_str()) } else { None }),
+            Some(node_s),
+            "Reads gsi1pk"
+        );
+        assert_eq!(
+            item.get("gsi1sk").and_then(|v| if let AttributeValue::S(s) = v { Some(s.as_str()) } else { None }),
+            Some("readers#U#reader@ex"),
+            "Reads gsi1sk"
+        );
+
+        // Decode round-trip.
+        let (from_, to_, kind, _name, _created, _gsi1pk, gsi1sk) =
+            edge_of_item(&item).expect("decode Reads edge");
+        assert_eq!(from_, user_s);
+        assert_eq!(to_, node_s);
+        assert_eq!(kind, EdgeKind::Reads);
+        assert_eq!(gsi1sk.as_deref(), Some("readers#U#reader@ex"));
+    }
+
+    /// A `Writes` edge encodes to sk="writes#<node>", gsi1sk="writers#<user>",
+    /// kind="writes" and decodes back.
+    #[test]
+    fn edge_writes_codec_roundtrip() {
+        let user_s = "U#writer@ex";
+        let node_s = "HN2#10003";
+        let created: chrono::DateTime<chrono::Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
+
+        let item = edge_to_item(EdgeParams {
+            from_: user_s,
+            to_: node_s,
+            kind: &EdgeKind::Writes,
+            name: "",
+            created: &created,
+        });
+
+        assert_eq!(
+            item.get("sk").and_then(|v| if let AttributeValue::S(s) = v { Some(s.as_str()) } else { None }),
+            Some("writes#HN2#10003"),
+        );
+        assert_eq!(
+            item.get("kind").and_then(|v| if let AttributeValue::S(s) = v { Some(s.as_str()) } else { None }),
+            Some("writes"),
+        );
+        assert_eq!(
+            item.get("gsi1sk").and_then(|v| if let AttributeValue::S(s) = v { Some(s.as_str()) } else { None }),
+            Some("writers#U#writer@ex"),
+        );
+
+        let (from_, to_, kind, _name, _created, _gsi1pk, gsi1sk) =
+            edge_of_item(&item).expect("decode Writes edge");
+        assert_eq!(from_, user_s);
+        assert_eq!(to_, node_s);
+        assert_eq!(kind, EdgeKind::Writes);
+        assert_eq!(gsi1sk.as_deref(), Some("writers#U#writer@ex"));
+    }
+
+    // -----------------------------------------------------------------------
     // edge_administrates fixture
     // -----------------------------------------------------------------------
 

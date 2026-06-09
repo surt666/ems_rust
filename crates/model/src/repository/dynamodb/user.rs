@@ -9,6 +9,7 @@ use aws_sdk_dynamodb::{types::AttributeValue, Client};
 
 use crate::domain::ids::{NodeId, UserId};
 use crate::domain::user::User;
+use crate::domain::values::EdgeKind;
 use crate::errors::RepositoryError;
 use crate::repository::dynamodb::codec;
 
@@ -197,6 +198,56 @@ pub async fn list_administrated_nodes(
         })
         .collect();
     Ok(ids)
+}
+
+// ---------------------------------------------------------------------------
+// list_access_edges — query pk = user_id for administrates / reads / writes
+//
+// Runs three queries (one per verb prefix) and merges the results.
+// ---------------------------------------------------------------------------
+
+pub async fn list_access_edges(
+    client: &Client,
+    table: &str,
+    user_id: &UserId,
+) -> Result<Vec<(NodeId, EdgeKind)>, RepositoryError> {
+    let pk_val = AttributeValue::S(user_id.to_string());
+
+    let prefixes: &[(&str, EdgeKind)] = &[
+        ("administrates#", EdgeKind::Administrates),
+        ("reads#",         EdgeKind::Reads),
+        ("writes#",        EdgeKind::Writes),
+    ];
+
+    let mut result = Vec::new();
+
+    for (prefix, kind) in prefixes {
+        let resp = client
+            .query()
+            .table_name(table)
+            .key_condition_expression("#pk = :pk AND begins_with(#sk, :sk)")
+            .expression_attribute_names("#pk", "pk")
+            .expression_attribute_names("#sk", "sk")
+            .expression_attribute_values(":pk", pk_val.clone())
+            .expression_attribute_values(":sk", AttributeValue::S(prefix.to_string()))
+            .send()
+            .await
+            .map_err(|e| RepositoryError::Aws(e.to_string()))?;
+
+        let plen = prefix.len();
+        for item in resp.items.unwrap_or_default() {
+            if let Some(AttributeValue::S(sk)) = item.get("sk") {
+                if sk.starts_with(prefix) {
+                    let rest = &sk[plen..];
+                    if let Ok(nid) = NodeId::parse(rest) {
+                        result.push((nid, kind.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
