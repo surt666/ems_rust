@@ -22,4 +22,7 @@ pub enum RepositoryError {
     /// Bad request — mirrors OCaml `Errors.Bad_request`.
     #[error("{0}")]
     BadRequest(String),
+    /// AWS SDK call failed.
+    #[error("aws: {0}")]
+    Aws(String),
 }
