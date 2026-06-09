@@ -299,6 +299,13 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 	awscdk.NewCfnOutput(stack, jsii.String("RustApiUrl"), &awscdk.CfnOutputProps{
 		Value: rustApi.Url(),
 	})
+	// SSM param the frontend CloudFront origin reads to route /command, /query/*, /hierarchy/*
+	// to the Rust lambda. Flip the frontend back to the OCaml param to roll back.
+	awsssm.NewStringParameter(stack, jsii.String("RustHierarchyApiUrlParameter"), &awsssm.StringParameterProps{
+		ParameterName: jsii.String("/api/rust-hierarchy-api-url"),
+		StringValue:   rustApi.Url(),
+		Description:   jsii.String("Rust Hierarchy API Gateway URL (frontend origin)"),
+	})
 
 	// ── Cross-account bridge: hierarchy_new DDB stream → EMS meter-identity ──
 	// Triggered by sensor-row changes in this account; assumes a role in EMS account A

@@ -39,11 +39,12 @@ func NewFrontendStack(scope constructs.Construct, id string, props *FrontendStac
 		Versioned:            jsii.Bool(false),
 	})
 
-	// Pull the OCaml hierarchy API Gateway URL from SSM (set by OcamlHierarchyStack).
+	// Pull the Rust hierarchy API Gateway URL from SSM (set by OcamlHierarchyStack).
+	// Switch this to "/api/ocaml-hierarchy-api-url" to roll the frontend back to the OCaml lambda.
 	apiUrlParam := awsssm.StringParameter_FromStringParameterName(
 		stack,
-		jsii.String("OcamlHierarchyApiUrlParameter"),
-		jsii.String("/api/ocaml-hierarchy-api-url"),
+		jsii.String("RustHierarchyApiUrlParameter"),
+		jsii.String("/api/rust-hierarchy-api-url"),
 	)
 	apiUrl := apiUrlParam.StringValue()
 	apiDomain := awscdk.Fn_Select(jsii.Number(1), awscdk.Fn_Split(jsii.String("://"), apiUrl, nil))
