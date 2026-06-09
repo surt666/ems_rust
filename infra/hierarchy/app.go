@@ -20,10 +20,10 @@ import (
 
 // EMS account A — owns meter-identity. The role + table ARNs are stable.
 const (
-	emsAccount             = "891377204778"
-	emsRegion              = "eu-central-1"
-	emsWriterRoleArn       = "arn:aws:iam::" + emsAccount + ":role/OcamlBridgeWriterRole"
-	emsMeterIdentityTable  = "meter-identity"
+	emsAccount            = "891377204778"
+	emsRegion             = "eu-central-1"
+	emsWriterRoleArn      = "arn:aws:iam::" + emsAccount + ":role/OcamlBridgeWriterRole"
+	emsMeterIdentityTable = "meter-identity"
 
 	// Cognito user pool in THIS account that the frontend authenticates against.
 	userPoolID = "eu-central-1_gADB2vK24"
@@ -95,127 +95,6 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 		ProjectionType: awsdynamodb.ProjectionType_ALL,
 	})
 
-	// IAM role for Lambda — DynamoDB access only (no Cognito, no SSM).
-	lambdaRole := awsiam.NewRole(stack, jsii.String("OcamlHierarchyLambdaRole"), &awsiam.RoleProps{
-		AssumedBy: awsiam.NewServicePrincipal(jsii.String("lambda.amazonaws.com"), nil),
-		ManagedPolicies: &[]awsiam.IManagedPolicy{
-			awsiam.ManagedPolicy_FromAwsManagedPolicyName(jsii.String("service-role/AWSLambdaBasicExecutionRole")),
-		},
-		InlinePolicies: &map[string]awsiam.PolicyDocument{
-			"DynamoDBAccess": awsiam.NewPolicyDocument(&awsiam.PolicyDocumentProps{
-				Statements: &[]awsiam.PolicyStatement{
-					awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
-						Effect: awsiam.Effect_ALLOW,
-						Actions: &[]*string{
-							jsii.String("dynamodb:GetItem"),
-							jsii.String("dynamodb:PutItem"),
-							jsii.String("dynamodb:UpdateItem"),
-							jsii.String("dynamodb:DeleteItem"),
-							jsii.String("dynamodb:Query"),
-							jsii.String("dynamodb:Scan"),
-							jsii.String("dynamodb:BatchGetItem"),
-							jsii.String("dynamodb:BatchWriteItem"),
-						},
-						Resources: &[]*string{
-							table.TableArn(),
-							jsii.String(*table.TableArn() + "/index/*"),
-						},
-					}),
-				},
-			}),
-		},
-	})
-
-	// OCaml lambda — prebuilt zip produced by `make build` in project root.
-	lambdaFunction := awslambda.NewFunction(stack, jsii.String("OcamlHierarchyFunction"), &awslambda.FunctionProps{
-		FunctionName: jsii.String("ocaml-lambda-hierarchy"),
-		Runtime:      awslambda.Runtime_PROVIDED_AL2023(),
-		Handler:      jsii.String("bootstrap"),
-		Code:         awslambda.Code_FromAsset(jsii.String("../../services/hierarchy/ocaml-lambda-hierarchy.zip"), nil),
-		Role:         lambdaRole,
-		Architecture: awslambda.Architecture_X86_64(),
-		Timeout:      awscdk.Duration_Seconds(jsii.Number(30)),
-		MemorySize:   jsii.Number(512),
-		Environment: &map[string]*string{
-			"HIERARCHY_TABLE": jsii.String(tableName),
-		},
-		Description: jsii.String("EMS OCaml Hierarchy Service Lambda Function"),
-	})
-
-	// HTTP API Gateway — same CORS shape as Rust version (HTMX headers included).
-	httpApi := awsapigatewayv2.NewHttpApi(stack, jsii.String("OcamlHierarchyHttpApi"), &awsapigatewayv2.HttpApiProps{
-		ApiName:     jsii.String("ocaml-hierarchy-api"),
-		Description: jsii.String("EMS OCaml Hierarchy Service API"),
-		CorsPreflight: &awsapigatewayv2.CorsPreflightOptions{
-			AllowOrigins: &[]*string{jsii.String("*")},
-			AllowMethods: &[]awsapigatewayv2.CorsHttpMethod{
-				awsapigatewayv2.CorsHttpMethod_GET,
-				awsapigatewayv2.CorsHttpMethod_POST,
-				awsapigatewayv2.CorsHttpMethod_PUT,
-				awsapigatewayv2.CorsHttpMethod_PATCH,
-				awsapigatewayv2.CorsHttpMethod_DELETE,
-				awsapigatewayv2.CorsHttpMethod_OPTIONS,
-			},
-			AllowHeaders: &[]*string{
-				jsii.String("Content-Type"),
-				jsii.String("X-Amz-Date"),
-				jsii.String("Authorization"),
-				jsii.String("X-Api-Key"),
-				jsii.String("X-Amz-Security-Token"),
-				jsii.String("hx-current-url"),
-				jsii.String("hx-request"),
-				jsii.String("hx-target"),
-				jsii.String("hx-trigger"),
-			},
-			MaxAge: awscdk.Duration_Days(jsii.Number(1)),
-		},
-	})
-
-	integration := awsapigatewayv2integrations.NewHttpLambdaIntegration(
-		jsii.String("OcamlHierarchyIntegration"),
-		lambdaFunction,
-		&awsapigatewayv2integrations.HttpLambdaIntegrationProps{},
-	)
-
-	// Routes match the OCaml handler: GET /query/{action}, POST /command,
-	// plus /hierarchy/* aliases (HTMX pages in the frontend hit those).
-	httpApi.AddRoutes(&awsapigatewayv2.AddRoutesOptions{
-		Path:        jsii.String("/query/{action}"),
-		Methods:     &[]awsapigatewayv2.HttpMethod{awsapigatewayv2.HttpMethod_GET},
-		Integration: integration,
-	})
-
-	httpApi.AddRoutes(&awsapigatewayv2.AddRoutesOptions{
-		Path:        jsii.String("/command"),
-		Methods:     &[]awsapigatewayv2.HttpMethod{awsapigatewayv2.HttpMethod_POST},
-		Integration: integration,
-	})
-
-	httpApi.AddRoutes(&awsapigatewayv2.AddRoutesOptions{
-		Path: jsii.String("/hierarchy/{proxy+}"),
-		Methods: &[]awsapigatewayv2.HttpMethod{
-			awsapigatewayv2.HttpMethod_GET,
-			awsapigatewayv2.HttpMethod_POST,
-			awsapigatewayv2.HttpMethod_PUT,
-			awsapigatewayv2.HttpMethod_DELETE,
-		},
-		Integration: integration,
-	})
-
-	// SSM parameter — distinct from the Rust `/api/hierarchy-api-url`.
-	awsssm.NewStringParameter(stack, jsii.String("OcamlHierarchyApiUrlParameter"), &awsssm.StringParameterProps{
-		ParameterName: jsii.String("/api/ocaml-hierarchy-api-url"),
-		StringValue:   httpApi.Url(),
-		Description:   jsii.String("OCaml Hierarchy API Gateway URL"),
-	})
-
-	awscdk.NewCfnOutput(stack, jsii.String("ApiUrl"), &awscdk.CfnOutputProps{
-		Value: httpApi.Url(),
-	})
-	awscdk.NewCfnOutput(stack, jsii.String("FunctionName"), &awscdk.CfnOutputProps{
-		Value: lambdaFunction.FunctionName(),
-	})
-
 	// ── Rust hierarchy lambda (parallel deploy, arm64) — folds Cognito in synchronously ──
 	rustPoolArn := jsii.String("arn:aws:cognito-idp:" + *stack.Region() + ":" + *stack.Account() + ":userpool/" + userPoolID)
 	rustRole := awsiam.NewRole(stack, jsii.String("RustHierarchyLambdaRole"), &awsiam.RoleProps{
@@ -261,7 +140,7 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 		FunctionName: jsii.String("rust-lambda-hierarchy"),
 		Runtime:      awslambda.Runtime_PROVIDED_AL2023(),
 		Handler:      jsii.String("bootstrap"),
-		Code:         awslambda.Code_FromAsset(jsii.String("../../services/hierarchy/rust-lambda-hierarchy.zip"), nil),
+		Code:         awslambda.Code_FromAsset(jsii.String("../../target/lambda/hierarchy"), nil),
 		Role:         rustRole,
 		Architecture: awslambda.Architecture_ARM_64(),
 		Timeout:      awscdk.Duration_Seconds(jsii.Number(30)),
@@ -394,65 +273,6 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 	})
 	awscdk.NewCfnOutput(stack, jsii.String("BridgeDlqUrl"), &awscdk.CfnOutputProps{
 		Value: bridgeDlq.QueueUrl(),
-	})
-
-	// ── Cognito mirror: hierarchy_new user rows → the Cognito user pool (this account) ──
-	// The OCaml create_user command writes the user row (+ access grants); this Go lambda,
-	// driven by the same stream filtered to type=user, keeps the user pool in sync:
-	// INSERT/MODIFY → AdminCreateUser + AdminAddUserToGroup, REMOVE → AdminDeleteUser.
-	cognitoRole := awsiam.NewRole(stack, jsii.String("CognitoSyncFunctionRole"), &awsiam.RoleProps{
-		AssumedBy: awsiam.NewServicePrincipal(jsii.String("lambda.amazonaws.com"), nil),
-		ManagedPolicies: &[]awsiam.IManagedPolicy{
-			awsiam.ManagedPolicy_FromAwsManagedPolicyName(jsii.String("service-role/AWSLambdaBasicExecutionRole")),
-		},
-	})
-	poolArn := "arn:aws:cognito-idp:" + emsRegion + ":" + *stack.Account() + ":userpool/" + userPoolID
-	cognitoRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
-		Effect: awsiam.Effect_ALLOW,
-		Actions: jsii.Strings(
-			"cognito-idp:AdminCreateUser",
-			"cognito-idp:AdminAddUserToGroup",
-			"cognito-idp:AdminRemoveUserFromGroup",
-			"cognito-idp:AdminDeleteUser",
-			"cognito-idp:AdminGetUser"),
-		Resources: &[]*string{jsii.String(poolArn)},
-	}))
-
-	cognitoFn := awslambda.NewFunction(stack, jsii.String("CognitoSyncFunction"), &awslambda.FunctionProps{
-		FunctionName: jsii.String("ocaml-hierarchy-cognito-sync"),
-		Runtime:      awslambda.Runtime_PROVIDED_AL2023(),
-		Architecture: awslambda.Architecture_ARM_64(),
-		Handler:      jsii.String("bootstrap"),
-		Code:         awslambda.Code_FromAsset(jsii.String("./lambda/cognito-sync/cognito-sync.zip"), nil),
-		Role:         cognitoRole,
-		Timeout:      awscdk.Duration_Seconds(jsii.Number(30)),
-		MemorySize:   jsii.Number(128),
-		LogRetention: awslogs.RetentionDays_ONE_MONTH,
-		Environment:  &map[string]*string{"USER_POOL_ID": jsii.String(userPoolID)},
-		Description:  jsii.String("Mirrors hierarchy user rows into the Cognito user pool"),
-	})
-
-	cognitoDlq := awssqs.NewQueue(stack, jsii.String("CognitoSyncDlq"), &awssqs.QueueProps{
-		QueueName:       jsii.String("ocaml-hierarchy-cognito-sync-dlq"),
-		RetentionPeriod: awscdk.Duration_Days(jsii.Number(14)),
-	})
-
-	cognitoFn.AddEventSource(awslambdaeventsources.NewDynamoEventSource(table, &awslambdaeventsources.DynamoEventSourceProps{
-		StartingPosition:        awslambda.StartingPosition_LATEST,
-		BatchSize:               jsii.Number(10),
-		RetryAttempts:           jsii.Number(5),
-		BisectBatchOnError:      jsii.Bool(true),
-		ReportBatchItemFailures: jsii.Bool(true),
-		OnFailure:               awslambdaeventsources.NewSqsDlq(cognitoDlq),
-		// Only type=user rows (INSERT/MODIFY carry NewImage, REMOVE carries OldImage).
-		Filters: &[]*map[string]interface{}{
-			{"pattern": `{"dynamodb":{"NewImage":{"type":{"S":["user"]}}}}`},
-			{"pattern": `{"dynamodb":{"OldImage":{"type":{"S":["user"]}}}}`},
-		},
-	}))
-
-	awscdk.NewCfnOutput(stack, jsii.String("CognitoSyncFunctionArn"), &awscdk.CfnOutputProps{
-		Value: cognitoFn.FunctionArn(),
 	})
 
 	return stack

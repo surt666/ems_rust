@@ -21,31 +21,39 @@ confirm the changeset is non-destructive (no DynamoDB table / Kinesis stream / F
 
 | Account | Id | Owns |
 |---|---|---|
-| Hierarchy / backend | `339712745226` | `ocaml-lambda-hierarchy` API lambda, `hierarchy_new` table, the cross-account bridge lambda, the **frontend** (S3 + CloudFront) |
+| Hierarchy / backend | `339712745226` | `rust-lambda-hierarchy` API lambda (arm64), `hierarchy_new` table, the cross-account bridge lambda, the **frontend** (S3 + CloudFront) |
 | DAQ / pipeline | `891377204778` | Flink (MSF) app, Glue late-recomputation, `meter-identity` table, S3 Iceberg tables, `measurements_aggregate` + the aggregations Lambda |
 
 ### Stack 1 — Hierarchy service (account `339712745226`)
 
-Builds an OCaml Lambda (static, x86_64) via Docker, then a Go CDK stack.
+Builds a Rust Lambda (arm64/Graviton) with cargo-lambda, then a Go CDK stack. (The service was
+ported from OCaml to Rust in 2026-06; the OCaml service + the Go cognito-sync stream lambda are
+gone — the Rust lambda does Cognito provisioning synchronously in the request path.)
 
 ```bash
-# 1. Build the deploy zip (Docker; produces services/hierarchy/ocaml-lambda-hierarchy.zip,
-#    which infra/hierarchy/app.go references as ../../services/hierarchy/...zip)
-cd services/hierarchy && make build
+# 1. Build the arm64 bootstrap (-> target/lambda/hierarchy/bootstrap, which
+#    infra/hierarchy/app.go references via Code.FromAsset("../../target/lambda/hierarchy")).
+cargo lambda build --release --arm64 -p hierarchy
 
-# 2. Deploy (Go CDK). Stack: OcamlHierarchyStack.
-cd ../../infra/hierarchy
+# 2. Deploy (Go CDK). Stack: OcamlHierarchyStack (name kept so the RETAIN table isn't replaced).
+cd infra/hierarchy
 unset GOROOT
 cdk diff  OcamlHierarchyStack          # confirm only Lambda Code [~] updates
 cdk deploy OcamlHierarchyStack --require-approval never
 ```
 
-- Updates two lambdas: `ocaml-lambda-hierarchy` (the API) and `ocaml-meter-identity-bridge`
+- Updates two lambdas: `rust-lambda-hierarchy` (the API; arm64, `provided.al2023`, synchronous
+  Cognito create/delete with rollback + generated permanent password) and `ocaml-meter-identity-bridge`
   (the cross-account bridge; its Python is inlined in `infra/hierarchy/app.go`).
 - The DynamoDB table is **not** touched by a normal deploy (verify in `cdk diff`).
-- Verify after: `aws lambda get-function-configuration --function-name ocaml-lambda-hierarchy`
-  (`State=Active`, `LastUpdateStatus=Successful`) and a read against the public API
-  `https://doztw28ic6.execute-api.eu-central-1.amazonaws.com` (e.g. `GET /query/list_users`).
+- The frontend reaches the API via CloudFront, whose origin reads SSM `/api/rust-hierarchy-api-url`
+  (set by this stack to the Rust HTTP API). Roll back by pointing `infra/frontend/frontend.go` at
+  `/api/ocaml-hierarchy-api-url` — but note the OCaml lambda/API no longer exist, so a real rollback
+  means restoring the OCaml resources from git history.
+- Verify after: `aws lambda get-function-configuration --function-name rust-lambda-hierarchy`
+  (`State=Active`, `LastUpdateStatus=Successful`) and a read against the Rust API
+  (`RustApiUrl` output, currently `https://xbvb3nzp1h.execute-api.eu-central-1.amazonaws.com`) or
+  the live frontend `https://d24beiqs2cj89y.cloudfront.net` (e.g. `GET /hierarchy/query/profiles`).
 
 ### Stack 2 — Data pipeline (account `891377204778`)
 
@@ -152,6 +160,7 @@ See `memory/cross_account_bridge.md` for the full field contract.
 
 ## Build & test (local)
 
-- Hierarchy service: `cd services/hierarchy && dune build && dune runtest` (Alcotest;
-  warnings are errors).
+- Hierarchy service (Rust): `cargo test` from the repo root (`cargo test -p model` + `-p hierarchy`);
+  `cargo build` + `cargo clippy` should be warning-free. Model layer is `crates/model`, the lambda
+  is `crates/services/hierarchy`.
 - Flink app: `cd infra/daq/data_pipeline/flink_app_scala && sbt test`.
