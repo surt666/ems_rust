@@ -1,3 +1,4 @@
+pub mod cognito;
 pub mod dynamodb;
 
 #[cfg(any(test, feature = "testing"))]
