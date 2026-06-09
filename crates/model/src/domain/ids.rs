@@ -41,6 +41,19 @@ impl fmt::Display for SensorId {
     }
 }
 
+impl Serialize for SensorId {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for SensorId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(d)?;
+        SensorId::parse(&raw).map_err(serde::de::Error::custom)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Level
 // ---------------------------------------------------------------------------
@@ -200,6 +213,64 @@ impl fmt::Display for NodeId {
     }
 }
 
+impl Serialize for NodeId {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for NodeId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(d)?;
+        NodeId::parse(&raw).map_err(serde::de::Error::custom)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// UserId
+// ---------------------------------------------------------------------------
+
+/// A user identifier: a newtype over an email string.
+///
+/// Printed/parsed as `"U#<email>"`.  Ported from `user_id.ml`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct UserId(String);
+
+impl UserId {
+    /// Construct a `UserId` from an email address (no prefix stored).
+    pub fn of_email(email: &str) -> UserId {
+        UserId(email.to_owned())
+    }
+
+    /// Return the raw email address (without any prefix).
+    pub fn email(&self) -> &str {
+        &self.0
+    }
+
+    /// Parse `"U#<email>"` → `Ok(UserId)`, or `Err(message)`.
+    ///
+    /// Rejects: missing `U#` prefix, empty email after prefix.
+    /// Matches OCaml `User_id.of_string`.
+    pub fn parse(s: &str) -> Result<UserId, String> {
+        if let Some(email) = s.strip_prefix("U#") {
+            if email.is_empty() {
+                Err("empty email after U#".to_string())
+            } else {
+                Ok(UserId(email.to_owned()))
+            }
+        } else {
+            Err("user_id must start with U#".to_string())
+        }
+    }
+}
+
+impl fmt::Display for UserId {
+    /// Renders as `"U#<email>"` — matches OCaml `User_id.to_string`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "U#{}", self.0)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests  (ported 1:1 from OCaml test_domain_level.ml / test_domain_node_id.ml)
 // ---------------------------------------------------------------------------
@@ -345,5 +416,33 @@ mod tests {
     #[test]
     fn sensor_id_rejects_bad_id() {
         assert!(SensorId::parse("S#not-an-int").is_err(), "should reject bad id");
+    }
+
+    // --- UserId tests (port of test_domain_user.ml user_id cases) -----------
+
+    /// Port of `user_id_rt`: of_email → to_string → of_string roundtrip.
+    #[test]
+    fn user_id_roundtrip() {
+        let id = UserId::of_email("alice@example.com");
+        assert_eq!(id.to_string(), "U#alice@example.com");
+        match UserId::parse("U#alice@example.com") {
+            Ok(id2) => assert_eq!(id2.email(), "alice@example.com"),
+            Err(e) => panic!("parse failed: {}", e),
+        }
+    }
+
+    /// Port of `user_id_rejects_bad`: missing U# prefix must fail.
+    #[test]
+    fn user_id_rejects_missing_prefix() {
+        assert!(
+            UserId::parse("alice@example.com").is_err(),
+            "missing U# prefix should fail"
+        );
+    }
+
+    /// Extra: empty email after U# must fail.
+    #[test]
+    fn user_id_rejects_empty_email() {
+        assert!(UserId::parse("U#").is_err(), "empty email should fail");
     }
 }
