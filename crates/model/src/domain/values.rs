@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use strum::EnumIter;
+use strum::{EnumIter, IntoEnumIterator};
 
 // ---------------------------------------------------------------------------
 // EdgeKind
@@ -98,11 +98,10 @@ pub enum CognitoGroup {
 /// User-facing access profiles (UI/input concept, never stored directly).
 ///
 /// Faithfully ported from `services/hierarchy/lib/domain/profile.ml`.
+/// Variant order matches OCaml `all` list: `[ Developer; Standard; Technician; Reader; Sysadm ]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter,
          strum::Display, strum::EnumString)]
 pub enum Profile {
-    #[strum(serialize = "SysAdm")]
-    Sysadm,
     #[strum(serialize = "Developer")]
     Developer,
     #[strum(serialize = "Standard")]
@@ -111,32 +110,14 @@ pub enum Profile {
     Technician,
     #[strum(serialize = "Reader")]
     Reader,
+    #[strum(serialize = "SysAdm")]
+    Sysadm,
 }
 
 impl Profile {
     /// All variants in OCaml list order: `[ Developer; Standard; Technician; Reader; Sysadm ]`.
     pub fn all() -> Vec<Profile> {
-        // OCaml order: Developer, Standard, Technician, Reader, Sysadm
-        // We use EnumIter but re-sort to match OCaml's `all` list order.
-        // OCaml: let all = [ Developer; Standard; Technician; Reader; Sysadm ]
-        vec![
-            Profile::Developer,
-            Profile::Standard,
-            Profile::Technician,
-            Profile::Reader,
-            Profile::Sysadm,
-        ]
-    }
-
-    /// Matches OCaml `Profile.to_string`.
-    pub fn to_str(&self) -> &'static str {
-        match self {
-            Profile::Sysadm => "SysAdm",
-            Profile::Developer => "Developer",
-            Profile::Standard => "Standard",
-            Profile::Technician => "Technician",
-            Profile::Reader => "Reader",
-        }
+        Profile::iter().collect()
     }
 
     /// Map a profile to its Cognito group.
@@ -158,9 +139,11 @@ impl Profile {
 /// Supported currencies.
 ///
 /// Faithfully ported from `services/hierarchy/lib/domain/currency.ml`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default,
          strum::Display, strum::EnumString)]
 pub enum Currency {
+    /// Matches OCaml `Currency.default = DKK`.
+    #[default]
     #[strum(serialize = "DKK")]
     Dkk,
     #[strum(serialize = "SEK")]
@@ -173,27 +156,6 @@ pub enum Currency {
     Eur,
 }
 
-impl Currency {
-    /// Matches OCaml `Currency.to_string` (`"DKK"`, `"SEK"`, …).
-    pub fn to_str(&self) -> &'static str {
-        match self {
-            Currency::Dkk => "DKK",
-            Currency::Sek => "SEK",
-            Currency::Nok => "NOK",
-            Currency::Usd => "USD",
-            Currency::Eur => "EUR",
-        }
-    }
-
-}
-
-impl Default for Currency {
-    /// Matches OCaml `Currency.default = DKK`.
-    fn default() -> Self {
-        Currency::Dkk
-    }
-}
-
 
 // ---------------------------------------------------------------------------
 // Language
@@ -202,9 +164,11 @@ impl Default for Currency {
 /// Supported UI languages.
 ///
 /// Faithfully ported from `services/hierarchy/lib/domain/language.ml`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default,
          strum::Display, strum::EnumString)]
 pub enum Language {
+    /// Matches OCaml `Language.default = Danish`.
+    #[default]
     #[strum(serialize = "danish")]
     Danish,
     #[strum(serialize = "swedish")]
@@ -215,27 +179,6 @@ pub enum Language {
     English,
     #[strum(serialize = "german")]
     German,
-}
-
-impl Language {
-    /// Matches OCaml `Language.to_string` (lowercase: `"danish"`, `"swedish"`, …).
-    pub fn to_str(&self) -> &'static str {
-        match self {
-            Language::Danish => "danish",
-            Language::Swedish => "swedish",
-            Language::Norwegian => "norwegian",
-            Language::English => "english",
-            Language::German => "german",
-        }
-    }
-
-}
-
-impl Default for Language {
-    /// Matches OCaml `Language.default = Danish`.
-    fn default() -> Self {
-        Language::Danish
-    }
 }
 
 
@@ -256,16 +199,6 @@ pub enum MeterType {
     Gauge,
 }
 
-impl MeterType {
-    /// Matches OCaml `meter_type_to_string` (`"counter"` / `"gauge"`).
-    pub fn to_str(&self) -> &'static str {
-        match self {
-            MeterType::Counter => "counter",
-            MeterType::Gauge => "gauge",
-        }
-    }
-
-}
 
 // ---------------------------------------------------------------------------
 // FieldType

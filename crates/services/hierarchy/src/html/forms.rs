@@ -10,7 +10,7 @@ use model::domain::values::Profile;
 pub fn render_profiles() -> Markup {
     html! {
         @for p in Profile::all() {
-            @let s = p.to_str();
+            @let s = p.to_string();
             option value=(s) { (s) }
         }
     }

@@ -488,8 +488,8 @@ where
                             td { (u.name) }
                             td { (email) }
                             td { (u.cognito_group.to_string()) }
-                            td { (u.language.to_str()) }
-                            td { (u.currency.to_str()) }
+                            td { (u.language.to_string()) }
+                            td { (u.currency.to_string()) }
                             td {
                                 button
                                     class="btn-danger btn-sm"

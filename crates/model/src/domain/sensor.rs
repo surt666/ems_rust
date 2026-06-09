@@ -126,8 +126,8 @@ mod tests {
     /// Port of `meter_type_to_string`.
     #[test]
     fn meter_type_to_string() {
-        assert_eq!(MeterType::Counter.to_str(), "counter");
-        assert_eq!(MeterType::Gauge.to_str(), "gauge");
+        assert_eq!(MeterType::Counter.to_string(), "counter");
+        assert_eq!(MeterType::Gauge.to_string(), "gauge");
     }
 
     /// Port of `meter_type_of_string`.

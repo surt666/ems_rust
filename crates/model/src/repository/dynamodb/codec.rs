@@ -830,7 +830,7 @@ pub fn sensor_to_item(sn: &Sensor) -> Item {
     item.insert("purpose".to_string(), s(sn.purpose.clone()));
     item.insert(
         "meter_type".to_string(),
-        s(sn.meter_type.to_str()),
+        s(sn.meter_type.to_string()),
     );
     item.insert("formula".to_string(), formula_to_av(&sn.formula));
     item.insert("created".to_string(), s(dt_to_rfc3339z(&sn.created)));
@@ -893,8 +893,8 @@ pub fn user_to_item(u: &User) -> Item {
     item.insert("type".to_string(), s("user"));
     item.insert("name".to_string(), s(u.name.clone()));
     item.insert("cognito_group".to_string(), s(u.cognito_group.to_string()));
-    item.insert("language".to_string(), s(u.language.to_str()));
-    item.insert("currency".to_string(), s(u.currency.to_str()));
+    item.insert("language".to_string(), s(u.language.to_string()));
+    item.insert("currency".to_string(), s(u.currency.to_string()));
     item.insert("created".to_string(), s(dt_to_rfc3339z(&u.created)));
     item.insert("gsi1pk".to_string(), s("user"));
     item.insert("gsi1sk".to_string(), s(uid));

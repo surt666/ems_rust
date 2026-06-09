@@ -1,5 +1,4 @@
 use std::fmt;
-use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
 // ---------------------------------------------------------------------------
@@ -41,25 +40,12 @@ impl fmt::Display for SensorId {
     }
 }
 
-impl Serialize for SensorId {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&self.to_string())
-    }
-}
-
-impl<'de> Deserialize<'de> for SensorId {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let raw = String::deserialize(d)?;
-        SensorId::parse(&raw).map_err(serde::de::Error::custom)
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Level
 // ---------------------------------------------------------------------------
 
 /// Hierarchy level, Hn0 (root) through Hn9.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, Serialize, Deserialize,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter,
          strum::Display, strum::EnumString)]
 pub enum Level {
     #[strum(serialize = "hn0")]
@@ -197,19 +183,6 @@ impl fmt::Display for NodeId {
             NodeId::Root => write!(f, "HN0#root"),
             NodeId::Node { level, id } => write!(f, "HN{}#{}", level.depth(), id),
         }
-    }
-}
-
-impl Serialize for NodeId {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&self.to_string())
-    }
-}
-
-impl<'de> Deserialize<'de> for NodeId {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let raw = String::deserialize(d)?;
-        NodeId::parse(&raw).map_err(serde::de::Error::custom)
     }
 }
 

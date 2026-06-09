@@ -1,6 +1,5 @@
 #![allow(clippy::type_complexity)]
 
-use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
 use crate::domain::ids::Level;
@@ -14,7 +13,7 @@ use crate::domain::values::FieldType;
 ///
 /// Faithfully ported from `services/hierarchy/lib/domain/schema.ml`:
 /// `type edge_spec = { label : string; min : int option; max : int option }`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TypedBuilder)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct EdgeSpec {
     pub label: String,
     #[builder(default)]
@@ -31,7 +30,7 @@ pub struct EdgeSpec {
 ///
 /// Faithfully ported from `services/hierarchy/lib/domain/metadata.ml`:
 /// `type field_spec = { typ : field_type; required : bool }`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FieldSpec {
     pub typ: FieldType,
     pub required: bool,
@@ -48,7 +47,7 @@ pub struct FieldSpec {
 ///
 /// The `edges` and `metadata` fields use association-list structure matching OCaml's
 /// `(Level.t * (Level.t * edge_spec list) list) list` / `(Level.t * (string * field_spec) list) list`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TypedBuilder)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Schema {
     pub version: u32,
     /// Association list: parent level → list of (child level → edge specs).

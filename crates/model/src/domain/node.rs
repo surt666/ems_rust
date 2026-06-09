@@ -1,5 +1,4 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
 use crate::domain::ids::{Level, NodeId};
@@ -16,7 +15,7 @@ use crate::domain::schema::Schema;
 /// `path` is a pipe-separated list of ancestor node-ids from root down to and
 /// including self (the `gsi1sk` attribute in DynamoDB).
 /// `metadata` is an arbitrary JSON object.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TypedBuilder)]
+#[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Node {
     pub id: NodeId,
     pub name: String,
