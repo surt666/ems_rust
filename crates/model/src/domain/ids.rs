@@ -3,6 +3,45 @@ use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
 // ---------------------------------------------------------------------------
+// SensorId
+// ---------------------------------------------------------------------------
+
+/// A sensor identifier: a newtype over u32, printed/parsed as `"S#<n>"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SensorId(pub u32);
+
+impl SensorId {
+    /// Construct a `SensorId` from a raw integer.
+    pub fn make(n: u32) -> SensorId {
+        SensorId(n)
+    }
+
+    /// Return the raw integer.
+    pub fn id(&self) -> u32 {
+        self.0
+    }
+
+    /// Parse `"S#<n>"` → `Ok(SensorId(n))`, or `Err(message)`.
+    pub fn parse(s: &str) -> Result<SensorId, String> {
+        if !s.starts_with("S#") {
+            return Err(format!("missing S# prefix in {:?}", s));
+        }
+        let rest = &s[2..];
+        match rest.parse::<u32>() {
+            Ok(n) => Ok(SensorId(n)),
+            Err(_) => Err(format!("bad id in {:?}", s)),
+        }
+    }
+}
+
+impl fmt::Display for SensorId {
+    /// Renders as `"S#<n>"`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "S#{}", self.0)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Level
 // ---------------------------------------------------------------------------
 
@@ -275,5 +314,36 @@ mod tests {
     fn node_id_level_of_root() {
         assert_eq!(NodeId::Root.level(), Level::Hn0);
         assert!(!NodeId::make(Level::Hn1, 1).is_root());
+    }
+
+    // --- SensorId tests (port of test_domain_sensor_id.ml) ------------------
+
+    /// Port of `round_trip`: make → to_string → parse → equal.
+    #[test]
+    fn sensor_id_round_trip() {
+        let id = SensorId::make(10042);
+        let s = id.to_string();
+        assert_eq!(s, "S#10042");
+        let id2 = SensorId::parse(&s).unwrap_or_else(|e| panic!("parse failed: {}", e));
+        assert_eq!(id, id2);
+        assert_eq!(id.id(), id2.id());
+    }
+
+    /// Port of `rejects_missing_prefix`.
+    #[test]
+    fn sensor_id_rejects_missing_prefix() {
+        assert!(SensorId::parse("10042").is_err(), "should reject missing S#");
+    }
+
+    /// Port of `rejects_wrong_prefix`.
+    #[test]
+    fn sensor_id_rejects_wrong_prefix() {
+        assert!(SensorId::parse("HN4#10042").is_err(), "should reject HN4# prefix");
+    }
+
+    /// Port of `rejects_bad_id`.
+    #[test]
+    fn sensor_id_rejects_bad_id() {
+        assert!(SensorId::parse("S#not-an-int").is_err(), "should reject bad id");
     }
 }
