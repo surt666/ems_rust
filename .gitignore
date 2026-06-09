@@ -24,3 +24,6 @@ __pycache__
 # Go aggregations lambda build artifacts
 infra/daq/data_pipeline/lambda/aggregations-go/bootstrap
 infra/daq/data_pipeline/lambda/aggregations-go/aggregations-go.zip
+
+infra/hierarchy/lambda/cognito-sync/bootstrap
+infra/hierarchy/lambda/cognito-sync/cognito-sync.zip

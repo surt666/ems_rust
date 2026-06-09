@@ -24,6 +24,9 @@ const (
 	emsRegion              = "eu-central-1"
 	emsWriterRoleArn       = "arn:aws:iam::" + emsAccount + ":role/OcamlBridgeWriterRole"
 	emsMeterIdentityTable  = "meter-identity"
+
+	// Cognito user pool in THIS account that the frontend authenticates against.
+	userPoolID = "eu-central-1_gADB2vK24"
 )
 
 type OcamlHierarchyStackProps struct {
@@ -300,6 +303,65 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 	})
 	awscdk.NewCfnOutput(stack, jsii.String("BridgeDlqUrl"), &awscdk.CfnOutputProps{
 		Value: bridgeDlq.QueueUrl(),
+	})
+
+	// ── Cognito mirror: hierarchy_new user rows → the Cognito user pool (this account) ──
+	// The OCaml create_user command writes the user row (+ access grants); this Go lambda,
+	// driven by the same stream filtered to type=user, keeps the user pool in sync:
+	// INSERT/MODIFY → AdminCreateUser + AdminAddUserToGroup, REMOVE → AdminDeleteUser.
+	cognitoRole := awsiam.NewRole(stack, jsii.String("CognitoSyncFunctionRole"), &awsiam.RoleProps{
+		AssumedBy: awsiam.NewServicePrincipal(jsii.String("lambda.amazonaws.com"), nil),
+		ManagedPolicies: &[]awsiam.IManagedPolicy{
+			awsiam.ManagedPolicy_FromAwsManagedPolicyName(jsii.String("service-role/AWSLambdaBasicExecutionRole")),
+		},
+	})
+	poolArn := "arn:aws:cognito-idp:" + emsRegion + ":" + *stack.Account() + ":userpool/" + userPoolID
+	cognitoRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect: awsiam.Effect_ALLOW,
+		Actions: jsii.Strings(
+			"cognito-idp:AdminCreateUser",
+			"cognito-idp:AdminAddUserToGroup",
+			"cognito-idp:AdminRemoveUserFromGroup",
+			"cognito-idp:AdminDeleteUser",
+			"cognito-idp:AdminGetUser"),
+		Resources: &[]*string{jsii.String(poolArn)},
+	}))
+
+	cognitoFn := awslambda.NewFunction(stack, jsii.String("CognitoSyncFunction"), &awslambda.FunctionProps{
+		FunctionName: jsii.String("ocaml-hierarchy-cognito-sync"),
+		Runtime:      awslambda.Runtime_PROVIDED_AL2023(),
+		Architecture: awslambda.Architecture_ARM_64(),
+		Handler:      jsii.String("bootstrap"),
+		Code:         awslambda.Code_FromAsset(jsii.String("./lambda/cognito-sync/cognito-sync.zip"), nil),
+		Role:         cognitoRole,
+		Timeout:      awscdk.Duration_Seconds(jsii.Number(30)),
+		MemorySize:   jsii.Number(128),
+		LogRetention: awslogs.RetentionDays_ONE_MONTH,
+		Environment:  &map[string]*string{"USER_POOL_ID": jsii.String(userPoolID)},
+		Description:  jsii.String("Mirrors hierarchy user rows into the Cognito user pool"),
+	})
+
+	cognitoDlq := awssqs.NewQueue(stack, jsii.String("CognitoSyncDlq"), &awssqs.QueueProps{
+		QueueName:       jsii.String("ocaml-hierarchy-cognito-sync-dlq"),
+		RetentionPeriod: awscdk.Duration_Days(jsii.Number(14)),
+	})
+
+	cognitoFn.AddEventSource(awslambdaeventsources.NewDynamoEventSource(table, &awslambdaeventsources.DynamoEventSourceProps{
+		StartingPosition:        awslambda.StartingPosition_LATEST,
+		BatchSize:               jsii.Number(10),
+		RetryAttempts:           jsii.Number(5),
+		BisectBatchOnError:      jsii.Bool(true),
+		ReportBatchItemFailures: jsii.Bool(true),
+		OnFailure:               awslambdaeventsources.NewSqsDlq(cognitoDlq),
+		// Only type=user rows (INSERT/MODIFY carry NewImage, REMOVE carries OldImage).
+		Filters: &[]*map[string]interface{}{
+			{"pattern": `{"dynamodb":{"NewImage":{"type":{"S":["user"]}}}}`},
+			{"pattern": `{"dynamodb":{"OldImage":{"type":{"S":["user"]}}}}`},
+		},
+	}))
+
+	awscdk.NewCfnOutput(stack, jsii.String("CognitoSyncFunctionArn"), &awscdk.CfnOutputProps{
+		Value: cognitoFn.FunctionArn(),
 	})
 
 	return stack
