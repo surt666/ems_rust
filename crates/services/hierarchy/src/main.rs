@@ -1,3 +1,5 @@
+mod command;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     Ok(())

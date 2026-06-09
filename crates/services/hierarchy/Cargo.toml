@@ -14,3 +14,4 @@ maud.workspace = true
 strum.workspace = true
 chrono.workspace = true
 model = { path = "../../model" }
+urlencoding.workspace = true
