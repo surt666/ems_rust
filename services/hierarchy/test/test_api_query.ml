@@ -224,8 +224,44 @@ let effective_permission_before_and_after_block () =
     let reason = Yojson.Safe.Util.(inner |> member "reason" |> to_string) in
     Alcotest.(check string) "reason blocked" "blocked" reason)
 
+(* Top-level tree (render_nodes, no id) for a user whose grants are HN2 nodes
+   (not root/HN1) must show those nodes as start nodes — not an empty tree. *)
+let top_level_shows_administrated_hn2 () =
+  let st = Memory.empty () in
+  let c2 = Node_id.make Level.Hn2 10002 in
+  let parent_path =
+    Node_id.to_string Node_id.root ^ "|"
+    ^ Node_id.to_string (Node_id.make Level.Hn1 10001)
+  in
+  let n2 =
+    Node.make ~id:10002 ~level:Level.Hn2 ~name:"Acme" ~parent:Node_id.root
+      ~parent_path ~created:Ptime.epoch ~metadata:(`Assoc []) ~schema:None
+  in
+  Memory.run st (fun () -> Effects.put_node n2);
+  let uid =
+    Memory.run st (fun () ->
+      match
+        Users.create ~email:"stel@x" ~name:"Stel" ~cognito_group:Cognito_group.Admin ()
+      with
+      | Ok u -> u.User.id
+      | Error e -> Alcotest.failf "create: %s" (Errors.message e))
+  in
+  Memory.run st (fun () ->
+    match Access.grant_administrates ~user_id:uid ~node_id:c2 () with
+    | Ok () -> () | Error e -> Alcotest.failf "grant: %s" (Errors.message e));
+  let body =
+    Memory.run st (fun () ->
+      Api_html.dispatch ~action:"nodes" ~params:[ ("user", User_id.to_string uid) ])
+  in
+  let json = Yojson.Safe.from_string body in
+  Alcotest.(check int) "status" 200 Yojson.Safe.Util.(json |> member "statusCode" |> to_int);
+  let html = Yojson.Safe.Util.(json |> member "body" |> to_string) in
+  Alcotest.(check bool) "tree shows the administrated HN2 node" true
+    (Astring.String.is_infix ~affix:"HN2#10002" html)
+
 let tests =
   [
+    Alcotest.test_case "top-level shows administrated HN2" `Quick top_level_shows_administrated_hn2;
     Alcotest.test_case "get_node" `Quick get_node_returns_node;
     Alcotest.test_case "list_children" `Quick list_children_returns_array;
     Alcotest.test_case "unknown action -> 400" `Quick unknown_action_is_bad_request;

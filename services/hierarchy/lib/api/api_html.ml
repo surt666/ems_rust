@@ -303,14 +303,35 @@ let render_nodes ~params =
         else if user_s = "" then ""
         else "U#" ^ user_s
       in
-      let allowed =
+      let refs_result =
         match User_id.of_string normalized with
-        | Error _ -> false
-        | Ok uid -> Access.has_admin_access ~user_id:uid ~node_id:parent_id
+        | Error _ -> Ok []
+        | Ok uid ->
+            (match id_opt with
+             | Some s when s <> "" ->
+                 (* Drilling into a node: gated by admin access on it or an ancestor. *)
+                 if Access.has_admin_access ~user_id:uid ~node_id:parent_id
+                 then Hierarchy.list_child_refs parent_id
+                 else Ok []
+             | _ ->
+                 (* Top level = the user's start nodes. A grant on root means "everything",
+                    so show root's children (partners); otherwise show each administrated
+                    node directly (e.g. the HN2 companies the user manages). *)
+                 let grants =
+                   match Access.list_administrated_nodes ~user_id:uid with
+                   | Ok ns -> ns | Error _ -> []
+                 in
+                 if List.exists Node_id.is_root grants then
+                   Hierarchy.list_child_refs Node_id.root
+                 else
+                   Ok (List.filter_map
+                         (fun g ->
+                            match Hierarchy.get_node g with
+                            | Ok n -> Some (g, n.Node.name)
+                            | Error _ -> None)
+                         grants))
       in
-      if not allowed then respond (null [])
-      else
-        (match Hierarchy.list_child_refs parent_id with
+      (match refs_result with
          | Error err ->
              respond_error ~status:(Errors.http_status err) (Errors.message err)
          | Ok refs ->
