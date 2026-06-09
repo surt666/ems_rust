@@ -119,64 +119,6 @@ fn opt_f64_of_n(v: Option<&AttributeValue>) -> Option<f64> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// JSON ⟷ AttributeValue (mirrors codec.ml's json_to_attr / attr_to_json)
-// Used only for the free-form `metadata` field on Node.
-// ---------------------------------------------------------------------------
-
-fn json_to_av(j: &serde_json::Value) -> AttributeValue {
-    match j {
-        serde_json::Value::Null => AttributeValue::Null(true),
-        serde_json::Value::Bool(v) => AttributeValue::Bool(*v),
-        serde_json::Value::Number(n) => {
-            // Mirror OCaml: Int → N(string_of_int), Float → N(%.17g)
-            if let Some(i) = n.as_i64() {
-                AttributeValue::N(i.to_string())
-            } else if let Some(f) = n.as_f64() {
-                AttributeValue::N(format_float_g17(f))
-            } else {
-                AttributeValue::N(n.to_string())
-            }
-        }
-        serde_json::Value::String(v) => AttributeValue::S(v.clone()),
-        serde_json::Value::Array(xs) => {
-            AttributeValue::L(xs.iter().map(json_to_av).collect())
-        }
-        serde_json::Value::Object(kvs) => {
-            let m: HashMap<String, AttributeValue> =
-                kvs.iter().map(|(k, v)| (k.clone(), json_to_av(v))).collect();
-            AttributeValue::M(m)
-        }
-    }
-}
-
-fn av_to_json(v: &AttributeValue) -> serde_json::Value {
-    match v {
-        AttributeValue::Null(_) => serde_json::Value::Null,
-        AttributeValue::Bool(b) => serde_json::Value::Bool(*b),
-        AttributeValue::S(s) => serde_json::Value::String(s.clone()),
-        AttributeValue::N(s) => {
-            // Mirror OCaml: try int first, then float
-            if let Ok(i) = s.parse::<i64>() {
-                serde_json::Value::Number(i.into())
-            } else if let Ok(f) = s.parse::<f64>() {
-                serde_json::json!(f)
-            } else {
-                serde_json::Value::String(s.clone())
-            }
-        }
-        AttributeValue::L(xs) => serde_json::Value::Array(xs.iter().map(av_to_json).collect()),
-        AttributeValue::M(kvs) => {
-            let mut map = serde_json::Map::new();
-            for (k, v) in kvs {
-                map.insert(k.clone(), av_to_json(v));
-            }
-            serde_json::Value::Object(map)
-        }
-        _ => serde_json::Value::Null,
-    }
-}
-
 /// OCaml `Printf.sprintf "%.17g"` — 17 significant digits, shortest representation.
 fn format_float_g17(f: f64) -> String {
     if f.is_nan() {
@@ -679,7 +621,12 @@ pub fn node_to_item(nd: &Node) -> Item {
     item.insert("type".to_string(), s("node"));
     item.insert("name".to_string(), s(nd.name.clone()));
     item.insert("created".to_string(), s(dt_to_rfc3339z(&nd.created)));
-    item.insert("metadata".to_string(), json_to_av(&nd.metadata));
+    item.insert(
+        "metadata".to_string(),
+        serde_dynamo::to_attribute_value(&nd.metadata)
+            .map_err(|e| RepositoryError::Codec(format!("metadata encode: {}", e)))
+            .unwrap_or_else(|_| AttributeValue::M(HashMap::new())),
+    );
     item.insert("gsi1pk".to_string(), s(node_gsi1pk(nd.level())));
     item.insert("gsi1sk".to_string(), s(nd.path.clone()));
     if let Some(ref sch) = nd.schema {
@@ -698,7 +645,11 @@ pub fn node_of_item(item: &Item) -> Result<Node, RepositoryError> {
     let created_s = as_s(field(item, "created")?)?;
     let created = parse_ts(created_s);
     let metadata = match item.get("metadata") {
-        Some(v) => av_to_json(v),
+        Some(v) => {
+            let result: Result<serde_json::Value, _> =
+                serde_dynamo::from_attribute_value(v.clone());
+            result.map_err(|e| RepositoryError::Codec(format!("metadata decode: {}", e)))?
+        },
         None => serde_json::json!({}),
     };
     let schema = match item.get("schema") {
