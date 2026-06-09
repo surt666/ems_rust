@@ -105,7 +105,15 @@ pub fn user_to_json(u: &User) -> Value {
     })
 }
 
-fn node_to_json(n: &Node) -> Value {
+/// Mirrors OCaml `api_json.ml :: node_ref_to_json`.
+pub fn node_ref_to_json(id: &NodeId, name: &str) -> Value {
+    json!({
+        "id":   id.to_string(),
+        "name": name,
+    })
+}
+
+pub fn node_to_json(n: &Node) -> Value {
     let parent = n
         .parent
         .as_ref()
@@ -120,7 +128,7 @@ fn node_to_json(n: &Node) -> Value {
     })
 }
 
-fn sensor_to_json(s: &Sensor) -> Value {
+pub fn sensor_to_json(s: &Sensor) -> Value {
     json!({
         "id":               s.id.to_string(),
         "created":          s.created.to_rfc3339(),
@@ -391,14 +399,12 @@ fn parse_unary(
     use model::domain::formula::Expr;
     // abs(...)
     if let Some(Token::Ident(name)) = tokens.get(pos) {
-        if name == "abs" {
-            if matches!(tokens.get(pos + 1), Some(Token::LParen)) {
-                let (inner, new_pos) = parse_additive(tokens, pos + 2)?;
-                if matches!(tokens.get(new_pos), Some(Token::RParen)) {
-                    return Ok((Expr::Abs(Box::new(inner)), new_pos + 1));
-                }
-                return Err("expected ')' after abs(...)".to_string());
+        if name == "abs" && matches!(tokens.get(pos + 1), Some(Token::LParen)) {
+            let (inner, new_pos) = parse_additive(tokens, pos + 2)?;
+            if matches!(tokens.get(new_pos), Some(Token::RParen)) {
+                return Ok((Expr::Abs(Box::new(inner)), new_pos + 1));
             }
+            return Err("expected ')' after abs(...)".to_string());
         }
     }
     parse_primary(tokens, pos)
@@ -452,7 +458,7 @@ where
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
     FLC: FnOnce(NodeId, Option<EdgeKind>) -> FLCFut,
     FLCFut: Future<Output = Result<Vec<Node>, RepositoryError>>,
-    FAN: FnOnce(model::domain::ids::Level, Box<dyn FnOnce(u32) -> (Node, EdgeSpec)>) -> FANFut,
+    FAN: FnOnce(model::domain::ids::Level, Box<dyn FnOnce(u32) -> (Node, EdgeSpec) + Send>) -> FANFut,
     FANFut: Future<Output = Result<Node, RepositoryError>>,
 {
     let parent = match NodeId::parse(&parent_id) {
@@ -665,8 +671,8 @@ where
                     let u = u_clone;
                     async move { Ok(Some(u)) }
                 },
-                |nid| get_node(nid),
-                |spec| put_edge(spec),
+                &get_node,
+                &put_edge,
             )
             .await;
         }
@@ -682,8 +688,8 @@ where
                     let u = u_clone;
                     async move { Ok(Some(u)) }
                 },
-                |nid| get_node(nid),
-                |spec| put_edge(spec),
+                &get_node,
+                &put_edge,
             )
             .await;
         }
@@ -966,7 +972,7 @@ pub async fn handle_attach_sensor<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut>(
 where
     FGN: Fn(NodeId) -> FGNFut,
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
-    FAS: FnOnce(Box<dyn FnOnce(u32) -> (Sensor, EdgeSpec)>) -> FASFut,
+    FAS: FnOnce(Box<dyn FnOnce(u32) -> (Sensor, EdgeSpec) + Send>) -> FASFut,
     FASFut: Future<Output = Result<Sensor, RepositoryError>>,
     FGA: Fn(SensorId) -> Option<Sensor> + Clone + 'static,
     FDS: FnOnce(SensorId, NodeId) -> FDSFut,
@@ -1096,7 +1102,7 @@ pub async fn run(cmd: Command) -> Value {
                 },
                 {
                     let t = table.clone();
-                    move |level, build: Box<dyn FnOnce(u32) -> (Node, EdgeSpec)>| {
+                    move |level, build: Box<dyn FnOnce(u32) -> (Node, EdgeSpec) + Send>| {
                         let t = t.clone();
                         // Wrap the FnOnce in Arc<Mutex<Option>> so it satisfies Fn.
                         let build_cell = std::sync::Arc::new(std::sync::Mutex::new(Some(build)));
@@ -1173,7 +1179,7 @@ pub async fn run(cmd: Command) -> Value {
                 },
                 {
                     let t = table.clone();
-                    move |build: Box<dyn FnOnce(u32) -> (Sensor, EdgeSpec)>| {
+                    move |build: Box<dyn FnOnce(u32) -> (Sensor, EdgeSpec) + Send>| {
                         let t = t.clone();
                         let build_cell =
                             std::sync::Arc::new(std::sync::Mutex::new(Some(build)));
@@ -1619,7 +1625,7 @@ mod tests {
     fn make_add_sensor(
         s: Rc<Store>,
     ) -> impl FnOnce(
-        Box<dyn FnOnce(u32) -> (model::domain::sensor::Sensor, RepoEdgeSpec)>,
+        Box<dyn FnOnce(u32) -> (model::domain::sensor::Sensor, RepoEdgeSpec) + Send>,
     ) -> std::future::Ready<Result<model::domain::sensor::Sensor, RepositoryError>> {
         move |build| {
             let sensor = s.add_sensor(build);
@@ -1646,7 +1652,7 @@ mod tests {
         s: Rc<Store>,
     ) -> impl FnOnce(
         Level,
-        Box<dyn FnOnce(u32) -> (node::Node, RepoEdgeSpec)>,
+        Box<dyn FnOnce(u32) -> (node::Node, RepoEdgeSpec) + Send>,
     ) -> std::future::Ready<Result<node::Node, RepositoryError>> {
         move |level, build| {
             let n = s.add_node(level, build);

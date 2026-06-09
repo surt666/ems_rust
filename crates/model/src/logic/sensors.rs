@@ -108,7 +108,7 @@ pub async fn attach<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut>(
 where
     FGN: Fn(NodeId) -> FGNFut,
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
-    FAS: FnOnce(Box<dyn FnOnce(u32) -> (Sensor, RepoEdgeSpec)>) -> FASFut,
+    FAS: FnOnce(Box<dyn FnOnce(u32) -> (Sensor, RepoEdgeSpec) + Send>) -> FASFut,
     FASFut: Future<Output = Result<Sensor, RepositoryError>>,
     FGA: Fn(SensorId) -> Option<Sensor> + Clone + 'static,
     FDS: FnOnce(SensorId, NodeId) -> FDSFut,
@@ -494,7 +494,7 @@ mod tests {
 
     fn add_sensor_fn(
         s: Rc<Store>,
-    ) -> impl FnOnce(Box<dyn FnOnce(u32) -> (Sensor, TestRepoEdgeSpec)>) -> std::future::Ready<Result<Sensor, RepositoryError>>
+    ) -> impl FnOnce(Box<dyn FnOnce(u32) -> (Sensor, TestRepoEdgeSpec) + Send>) -> std::future::Ready<Result<Sensor, RepositoryError>>
     {
         move |build| {
             let sensor = s.add_sensor(build);

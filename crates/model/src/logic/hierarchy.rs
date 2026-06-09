@@ -121,7 +121,7 @@ where
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
     FLC: FnOnce(NodeId, Option<EdgeKind>) -> FLCFut,
     FLCFut: Future<Output = Result<Vec<Node>, RepositoryError>>,
-    FAN: FnOnce(Level, Box<dyn FnOnce(u32) -> (Node, EdgeSpec)>) -> FANFut,
+    FAN: FnOnce(Level, Box<dyn FnOnce(u32) -> (Node, EdgeSpec) + Send>) -> FANFut,
     FANFut: Future<Output = Result<Node, RepositoryError>>,
 {
     // Reject creating root via add_node.
@@ -501,7 +501,7 @@ mod tests {
         s: Rc<Store>,
     ) -> impl FnOnce(
         Level,
-        Box<dyn FnOnce(u32) -> (node::Node, EdgeSpec)>,
+        Box<dyn FnOnce(u32) -> (node::Node, EdgeSpec) + Send>,
     ) -> std::future::Ready<Result<node::Node, RepositoryError>>
     {
         move |level, build| {
