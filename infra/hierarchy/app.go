@@ -216,6 +216,90 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 		Value: lambdaFunction.FunctionName(),
 	})
 
+	// ── Rust hierarchy lambda (parallel deploy, arm64) — folds Cognito in synchronously ──
+	rustPoolArn := jsii.String("arn:aws:cognito-idp:" + *stack.Region() + ":" + *stack.Account() + ":userpool/" + userPoolID)
+	rustRole := awsiam.NewRole(stack, jsii.String("RustHierarchyLambdaRole"), &awsiam.RoleProps{
+		AssumedBy: awsiam.NewServicePrincipal(jsii.String("lambda.amazonaws.com"), nil),
+		ManagedPolicies: &[]awsiam.IManagedPolicy{
+			awsiam.ManagedPolicy_FromAwsManagedPolicyName(jsii.String("service-role/AWSLambdaBasicExecutionRole")),
+		},
+		InlinePolicies: &map[string]awsiam.PolicyDocument{
+			"DynamoDBAccess": awsiam.NewPolicyDocument(&awsiam.PolicyDocumentProps{
+				Statements: &[]awsiam.PolicyStatement{
+					awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+						Effect: awsiam.Effect_ALLOW,
+						Actions: &[]*string{
+							jsii.String("dynamodb:GetItem"), jsii.String("dynamodb:PutItem"),
+							jsii.String("dynamodb:UpdateItem"), jsii.String("dynamodb:DeleteItem"),
+							jsii.String("dynamodb:Query"), jsii.String("dynamodb:Scan"),
+							jsii.String("dynamodb:BatchGetItem"), jsii.String("dynamodb:BatchWriteItem"),
+							jsii.String("dynamodb:TransactWriteItems"),
+						},
+						Resources: &[]*string{table.TableArn(), jsii.String(*table.TableArn() + "/index/*")},
+					}),
+				},
+			}),
+			"CognitoAccess": awsiam.NewPolicyDocument(&awsiam.PolicyDocumentProps{
+				Statements: &[]awsiam.PolicyStatement{
+					awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+						Effect: awsiam.Effect_ALLOW,
+						Actions: &[]*string{
+							jsii.String("cognito-idp:AdminCreateUser"),
+							jsii.String("cognito-idp:AdminAddUserToGroup"),
+							jsii.String("cognito-idp:AdminRemoveUserFromGroup"),
+							jsii.String("cognito-idp:AdminDeleteUser"),
+							jsii.String("cognito-idp:AdminGetUser"),
+							jsii.String("cognito-idp:AdminSetUserPassword"),
+						},
+						Resources: &[]*string{rustPoolArn},
+					}),
+				},
+			}),
+		},
+	})
+	rustFn := awslambda.NewFunction(stack, jsii.String("RustHierarchyFunction"), &awslambda.FunctionProps{
+		FunctionName: jsii.String("rust-lambda-hierarchy"),
+		Runtime:      awslambda.Runtime_PROVIDED_AL2023(),
+		Handler:      jsii.String("bootstrap"),
+		Code:         awslambda.Code_FromAsset(jsii.String("../../services/hierarchy/rust-lambda-hierarchy.zip"), nil),
+		Role:         rustRole,
+		Architecture: awslambda.Architecture_ARM_64(),
+		Timeout:      awscdk.Duration_Seconds(jsii.Number(30)),
+		MemorySize:   jsii.Number(256),
+		Environment: &map[string]*string{
+			"TABLE_NAME":   jsii.String(tableName),
+			"USER_POOL_ID": jsii.String(userPoolID),
+		},
+		Description: jsii.String("EMS Rust Hierarchy Service Lambda (arm64, parallel)"),
+	})
+	rustApi := awsapigatewayv2.NewHttpApi(stack, jsii.String("RustHierarchyHttpApi"), &awsapigatewayv2.HttpApiProps{
+		ApiName:     jsii.String("rust-hierarchy-api"),
+		Description: jsii.String("EMS Rust Hierarchy Service API"),
+		CorsPreflight: &awsapigatewayv2.CorsPreflightOptions{
+			AllowOrigins: &[]*string{jsii.String("*")},
+			AllowMethods: &[]awsapigatewayv2.CorsHttpMethod{
+				awsapigatewayv2.CorsHttpMethod_GET, awsapigatewayv2.CorsHttpMethod_POST,
+				awsapigatewayv2.CorsHttpMethod_PUT, awsapigatewayv2.CorsHttpMethod_PATCH,
+				awsapigatewayv2.CorsHttpMethod_DELETE, awsapigatewayv2.CorsHttpMethod_OPTIONS,
+			},
+			AllowHeaders: &[]*string{
+				jsii.String("Content-Type"), jsii.String("X-Amz-Date"), jsii.String("Authorization"),
+				jsii.String("X-Api-Key"), jsii.String("X-Amz-Security-Token"),
+				jsii.String("hx-current-url"), jsii.String("hx-request"),
+				jsii.String("hx-target"), jsii.String("hx-trigger"),
+			},
+			MaxAge: awscdk.Duration_Days(jsii.Number(1)),
+		},
+	})
+	rustApi.AddRoutes(&awsapigatewayv2.AddRoutesOptions{
+		Path:        jsii.String("/{proxy+}"),
+		Methods:     &[]awsapigatewayv2.HttpMethod{awsapigatewayv2.HttpMethod_ANY},
+		Integration: awsapigatewayv2integrations.NewHttpLambdaIntegration(jsii.String("RustHierarchyIntegration"), rustFn, &awsapigatewayv2integrations.HttpLambdaIntegrationProps{}),
+	})
+	awscdk.NewCfnOutput(stack, jsii.String("RustApiUrl"), &awscdk.CfnOutputProps{
+		Value: rustApi.Url(),
+	})
+
 	// ── Cross-account bridge: hierarchy_new DDB stream → EMS meter-identity ──
 	// Triggered by sensor-row changes in this account; assumes a role in EMS account A
 	// to upsert/delete the matching meter-identity row that Flink/Glue consume.
