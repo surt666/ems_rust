@@ -121,7 +121,7 @@ where
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
     FLC: FnOnce(NodeId, Option<EdgeKind>) -> FLCFut,
     FLCFut: Future<Output = Result<Vec<Node>, RepositoryError>>,
-    FAN: FnOnce(Level, Box<dyn FnOnce(u32) -> (Node, EdgeSpec) + Send>) -> FANFut,
+    FAN: FnOnce(Level, Box<dyn Fn(u32) -> (Node, EdgeSpec) + Send>) -> FANFut,
     FANFut: Future<Output = Result<Node, RepositoryError>>,
 {
     // Reject creating root via add_node.
@@ -219,11 +219,11 @@ where
     // (OCaml only validates metadata for schema-governed children via add_under_schema.)
 
     // Allocate node and write edge atomically.
+    // The closure is `Fn` (not `FnOnce`) so it can be invoked on every retry
+    // of the counter's ConditionalCheckFailed loop — each call clones its
+    // captured state independently.
     let parent_path = parent_node.path.clone();
     let parent_clone = parent.clone();
-    let name_clone = name.clone();
-    let edge_label_clone = edge_label.clone();
-    let node_schema_clone = node_schema.clone();
 
     add_node_fn(
         resolved_level,
@@ -231,17 +231,17 @@ where
             let child = node::make(
                 raw_id,
                 resolved_level,
-                &name_clone,
+                &name.clone(),
                 parent_clone.clone(),
                 &parent_path,
                 chrono::Utc::now(),
-                metadata,
-                node_schema_clone,
+                metadata.clone(),
+                node_schema.clone(),
             );
             let edge = EdgeSpec {
                 from_: parent_clone.to_string(),
                 to_: child.id.to_string(),
-                kind: EdgeKind::HasLabel(edge_label_clone),
+                kind: EdgeKind::HasLabel(edge_label.clone()),
                 name: child.name.clone(),
             };
             (child, edge)
@@ -501,7 +501,7 @@ mod tests {
         s: Rc<Store>,
     ) -> impl FnOnce(
         Level,
-        Box<dyn FnOnce(u32) -> (node::Node, EdgeSpec) + Send>,
+        Box<dyn Fn(u32) -> (node::Node, EdgeSpec) + Send>,
     ) -> std::future::Ready<Result<node::Node, RepositoryError>>
     {
         move |level, build| {

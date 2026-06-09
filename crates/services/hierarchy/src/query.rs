@@ -1165,7 +1165,7 @@ mod tests {
         s: Rc<Store>,
     ) -> impl FnOnce(
         Level,
-        Box<dyn FnOnce(u32) -> (node::Node, RepoEdgeSpec) + Send>,
+        Box<dyn Fn(u32) -> (node::Node, RepoEdgeSpec) + Send>,
     ) -> std::future::Ready<Result<node::Node, RepositoryError>> {
         move |level, build| {
             let n = s.add_node(level, build);

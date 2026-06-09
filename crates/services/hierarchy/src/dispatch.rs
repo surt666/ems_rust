@@ -140,7 +140,7 @@ where
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
     FLC: FnOnce(NodeId, Option<EdgeKind>) -> FLCFut,
     FLCFut: Future<Output = Result<Vec<Node>, RepositoryError>>,
-    FAN: FnOnce(model::domain::ids::Level, Box<dyn FnOnce(u32) -> (Node, EdgeSpec) + Send>) -> FANFut,
+    FAN: FnOnce(model::domain::ids::Level, Box<dyn Fn(u32) -> (Node, EdgeSpec) + Send>) -> FANFut,
     FANFut: Future<Output = Result<Node, RepositoryError>>,
 {
     let parent = match NodeId::parse(&parent_id) {
@@ -652,7 +652,7 @@ pub async fn handle_attach_sensor<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut>(
 where
     FGN: Fn(NodeId) -> FGNFut,
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
-    FAS: FnOnce(Box<dyn FnOnce(u32) -> (Sensor, EdgeSpec) + Send>) -> FASFut,
+    FAS: FnOnce(Box<dyn Fn(u32) -> (Sensor, EdgeSpec) + Send>) -> FASFut,
     FASFut: Future<Output = Result<Sensor, RepositoryError>>,
     FGA: Fn(SensorId) -> Option<Sensor> + Clone + 'static,
     FDS: FnOnce(SensorId, NodeId) -> FDSFut,
@@ -782,17 +782,10 @@ pub async fn run(cmd: Command) -> Value {
                 },
                 {
                     let t = table.clone();
-                    move |level, build: Box<dyn FnOnce(u32) -> (Node, EdgeSpec) + Send>| {
+                    move |level, build: Box<dyn Fn(u32) -> (Node, EdgeSpec) + Send>| {
                         let t = t.clone();
-                        // Wrap the FnOnce in Arc<Mutex<Option>> so it satisfies Fn.
-                        let build_cell = std::sync::Arc::new(std::sync::Mutex::new(Some(build)));
                         async move {
                             ddb_node::allocate_and_put_node(ddb, &t, level, move |id| {
-                                let build = build_cell
-                                    .lock()
-                                    .unwrap()
-                                    .take()
-                                    .expect("build called more than once");
                                 let (node, repo_edge) = build(id);
                                 let alloc_edge = ddb_node::AllocEdgeSpec {
                                     from_: repo_edge.from_,
@@ -859,19 +852,12 @@ pub async fn run(cmd: Command) -> Value {
                 },
                 {
                     let t = table.clone();
-                    move |build: Box<dyn FnOnce(u32) -> (Sensor, EdgeSpec) + Send>| {
+                    move |build: Box<dyn Fn(u32) -> (Sensor, EdgeSpec) + Send>| {
                         let t = t.clone();
-                        let build_cell =
-                            std::sync::Arc::new(std::sync::Mutex::new(Some(build)));
                         async move {
                             use model::repository::dynamodb::codec;
                             let item =
                                 ddb_node::allocate_and_put_sensor(ddb, &t, move |id| {
-                                    let build = build_cell
-                                        .lock()
-                                        .unwrap()
-                                        .take()
-                                        .expect("build called more than once");
                                     let (sensor, repo_edge) = build(id);
                                     let sensor_item = codec::sensor_to_item(&sensor);
                                     let alloc_edge = ddb_node::AllocEdgeSpec {
@@ -1305,7 +1291,7 @@ mod tests {
     fn make_add_sensor(
         s: Rc<Store>,
     ) -> impl FnOnce(
-        Box<dyn FnOnce(u32) -> (model::domain::sensor::Sensor, RepoEdgeSpec) + Send>,
+        Box<dyn Fn(u32) -> (model::domain::sensor::Sensor, RepoEdgeSpec) + Send>,
     ) -> std::future::Ready<Result<model::domain::sensor::Sensor, RepositoryError>> {
         move |build| {
             let sensor = s.add_sensor(build);
@@ -1332,7 +1318,7 @@ mod tests {
         s: Rc<Store>,
     ) -> impl FnOnce(
         Level,
-        Box<dyn FnOnce(u32) -> (node::Node, RepoEdgeSpec) + Send>,
+        Box<dyn Fn(u32) -> (node::Node, RepoEdgeSpec) + Send>,
     ) -> std::future::Ready<Result<node::Node, RepositoryError>> {
         move |level, build| {
             let n = s.add_node(level, build);

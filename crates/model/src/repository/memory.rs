@@ -199,9 +199,10 @@ impl Store {
     /// store both, and return the node.
     ///
     /// `build` receives the raw integer allocated for the node.
+    /// Accepts `Fn` so the same closure can be reused across retries.
     pub fn add_node<F>(&self, level: Level, build: F) -> Node
     where
-        F: FnOnce(u32) -> (Node, EdgeSpec),
+        F: Fn(u32) -> (Node, EdgeSpec),
     {
         let id = self.allocate_node_id(level);
         let (node, edge_spec) = build(id);
@@ -295,10 +296,11 @@ impl Store {
     /// Allocate a new sensor id, call `build(id)` to get `(Sensor, edge_spec)`,
     /// store both, and return the sensor.
     ///
+    /// Accepts `Fn` so the same closure can be reused across retries.
     /// Mirrors `Effects.Add_sensor`.
     pub fn add_sensor<F>(&self, build: F) -> Sensor
     where
-        F: FnOnce(u32) -> (Sensor, EdgeSpec),
+        F: Fn(u32) -> (Sensor, EdgeSpec),
     {
         let id = self.allocate_sensor_id();
         let (sensor, edge_spec) = build(id);

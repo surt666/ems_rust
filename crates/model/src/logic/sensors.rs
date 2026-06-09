@@ -108,7 +108,7 @@ pub async fn attach<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut>(
 where
     FGN: Fn(NodeId) -> FGNFut,
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
-    FAS: FnOnce(Box<dyn FnOnce(u32) -> (Sensor, RepoEdgeSpec) + Send>) -> FASFut,
+    FAS: FnOnce(Box<dyn Fn(u32) -> (Sensor, RepoEdgeSpec) + Send>) -> FASFut,
     FASFut: Future<Output = Result<Sensor, RepositoryError>>,
     FGA: Fn(SensorId) -> Option<Sensor> + Clone + 'static,
     FDS: FnOnce(SensorId, NodeId) -> FDSFut,
@@ -137,10 +137,13 @@ where
     }
 
     // Capture state for the build closure.
+    // The closure is `Fn` (not `FnOnce`) so it can be invoked on every retry
+    // of the counter's ConditionalCheckFailed loop — each call clones its
+    // captured state independently.
     let parent_path = parent_node.path.clone();
     let parent_clone = parent.clone();
-    let formula_clone = formula.clone();
-    let unit_clone = unit.clone();
+    // Clone formula now so the post-allocation cycle check still owns a copy.
+    let formula_for_build = formula.clone();
 
     // Allocate sensor and write edge atomically.
     let s = add_sensor(Box::new(move |raw_id| {
@@ -149,12 +152,12 @@ where
         let sensor = Sensor {
             id: sid,
             created: chrono::Utc::now(),
-            daq_id,
+            daq_id: daq_id.clone(),
             path,
-            purpose,
+            purpose: purpose.clone(),
             meter_type,
-            unit: unit_clone,
-            formula: formula_clone,
+            unit: unit.clone(),
+            formula: formula_for_build.clone(),
             resample_minutes,
         };
         let edge = RepoEdgeSpec {
@@ -466,7 +469,7 @@ mod tests {
             },
             {
                 let s = store.clone();
-                move |level, build| {
+                move |level, build: Box<dyn Fn(u32) -> (_, _) + Send>| {
                     let n = s.add_node(level, build);
                     std::future::ready(Ok(n))
                 }
@@ -494,7 +497,7 @@ mod tests {
 
     fn add_sensor_fn(
         s: Rc<Store>,
-    ) -> impl FnOnce(Box<dyn FnOnce(u32) -> (Sensor, TestRepoEdgeSpec) + Send>) -> std::future::Ready<Result<Sensor, RepositoryError>>
+    ) -> impl FnOnce(Box<dyn Fn(u32) -> (Sensor, TestRepoEdgeSpec) + Send>) -> std::future::Ready<Result<Sensor, RepositoryError>>
     {
         move |build| {
             let sensor = s.add_sensor(build);
