@@ -10,7 +10,12 @@ RUN sudo apk add --no-cache gmp-dev libev-dev linux-headers openssl-dev openssl-
 RUN opam pin add -n lambda-runtime git+https://github.com/surt666/ocaml-lambda-runtime.git \
  && opam pin add -n lambda-runtime-api-gateway git+https://github.com/surt666/ocaml-lambda-runtime.git
 
-# Patch smaws (preview) before building. Two fixes:
+# Patch smaws (preview) before building. Three fixes:
+#  3. http/http_eio_connection.ml: the connection pool's `is_valid` only checks whether the LAST
+#     request errored — it never detects a socket killed while the Lambda container was frozen
+#     (DynamoDB drops the idle TCP). A warm invocation then reuses the dead socket and blocks on a
+#     read with no timeout -> 30s function timeout. Track last-use time and treat a connection
+#     idle >5s as invalid so the pool replaces it; intra-invocation reuse is preserved.
 #  1. AwsJson protocol: strip the unconditional `Fmt.pr "Response body: %s"` that dumps every
 #     DynamoDB response to stdout -> CloudWatch on every call (log bloat + per-call latency).
 #  2. http/dns.ml: `resolve_address` returns getaddrinfo's FIRST address with no IPv4 preference,
@@ -25,6 +30,11 @@ RUN opam source smaws-lib.0.1~preview1 --dir=/home/opam/smaws \
       /home/opam/smaws/awssdklib/http/dns.ml \
  && grep -q 'Eio.Net.Ipaddr.fold' /home/opam/smaws/awssdklib/http/dns.ml \
  && ! grep -q 'Fmt.pr "Response body' /home/opam/smaws/awssdklib/protocols_gen/AwsJson.ml \
+ && sed -i 's@last_error : Http_types.http_failure option ref;@last_error : Http_types.http_failure option ref; now : unit -> Mtime.t; last_used : Mtime.t ref;@' /home/opam/smaws/awssdklib/http/http_eio_connection.ml \
+ && sed -i 's@let is_valid connection = Option.is_none !(connection.last_error)@let is_valid connection = Option.is_none !(connection.last_error) \&\& Mtime.Span.to_float_ns (Mtime.span !(connection.last_used) (connection.now ())) < 5e9@' /home/opam/smaws/awssdklib/http/http_eio_connection.ml \
+ && sed -i 's@{ http_client = client; last_error = ref None }@(let now () = Eio.Time.Mono.now mono_clock in { http_client = client; last_error = ref None; now; last_used = ref (now ()) })@' /home/opam/smaws/awssdklib/http/http_eio_connection.ml \
+ && sed -i 's@let request ~connection ~body ~method_ ~headers ~sw ~on_ready host path =@let request ~connection ~body ~method_ ~headers ~sw ~on_ready host path = let () = connection.last_used := connection.now () in@' /home/opam/smaws/awssdklib/http/http_eio_connection.ml \
+ && grep -q 'last_used : Mtime.t ref' /home/opam/smaws/awssdklib/http/http_eio_connection.ml \
  && opam pin add -yn smaws-lib /home/opam/smaws \
  && opam pin add -yn smaws-clients /home/opam/smaws
 
