@@ -79,7 +79,7 @@ let effective_permission_flows () =
     (* baseline: writer capability *)
     (match Access.effective_permission ~user_id:uid ~node_id:bldg with
      | Ok (Some g) ->
-         Alcotest.(check string) "writer" "writer"
+         Alcotest.(check string) "writer" "Writer"
            (Cognito_group.to_string g)
      | Ok None -> Alcotest.fail "expected writer, got None"
      | Error e -> Alcotest.failf "eff: %s" (Errors.message e));

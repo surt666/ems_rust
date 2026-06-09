@@ -18,7 +18,11 @@ let cognito_group_parses () =
   Alcotest.(check bool) "writer" true
     (Cognito_group.of_string "writer" = Ok Cognito_group.Writer);
   Alcotest.(check bool) "admin"  true
-    (Cognito_group.of_string "admin"  = Ok Cognito_group.Admin)
+    (Cognito_group.of_string "admin"  = Ok Cognito_group.Admin);
+  (* canonical strings are capitalised (real Cognito group names); of_string is case-insensitive *)
+  Alcotest.(check string) "to_string Admin" "Admin" (Cognito_group.to_string Cognito_group.Admin);
+  Alcotest.(check bool) "Admin caps" true
+    (Cognito_group.of_string "Admin" = Ok Cognito_group.Admin)
 
 let tests =
   [ Alcotest.test_case "user_id roundtrip"   `Quick user_id_rt

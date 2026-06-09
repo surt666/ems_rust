@@ -196,7 +196,7 @@ let effective_permission_before_and_after_block () =
       Yojson.Safe.Util.(json |> member "body" |> to_string |> Yojson.Safe.from_string)
     in
     let cap = Yojson.Safe.Util.(inner |> member "capability" |> to_string) in
-    Alcotest.(check string) "writer" "writer" cap;
+    Alcotest.(check string) "writer" "Writer" cap;
     (* block and re-check *)
     let block =
       Printf.sprintf
