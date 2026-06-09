@@ -158,12 +158,10 @@ where
 
     let schema_parsed = match schema_val {
         None => None,
-        Some(ref v) => {
-            match serde_json::from_value::<model::domain::schema::Schema>(v.clone()) {
-                Ok(s) => Some(s),
-                Err(e) => return bad_request(&format!("invalid schema: {}", e)),
-            }
-        }
+        Some(ref v) => match json::schema_of_json(v) {
+            Ok(s) => Some(s),
+            Err(e) => return bad_request(&format!("invalid schema: {}", e)),
+        },
     };
 
     let meta = metadata.unwrap_or_else(|| json!({}));
@@ -1489,6 +1487,102 @@ mod tests {
         .await;
 
         assert_eq!(status(&resp), 200, "add_node should return 200; got {resp:?}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: add_node parses a schema posted in the api_json.ml shape
+    // (proves handle_add_node wires json::schema_of_json, not serde derive).
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn add_node_parses_api_json_schema_shape() {
+        let store = Rc::new(Store::new());
+
+        // Seed an HN1 partner node so we can create an HN2 company under it.
+        let p1 = NodeId::make(Level::Hn1, 10001);
+        let n1 = node::make(
+            10001,
+            Level::Hn1,
+            "Partner",
+            NodeId::root(),
+            &NodeId::root().to_string(),
+            ts(),
+            json!({}),
+            None,
+        );
+        store.put_node(&n1);
+
+        // Schema JSON in the api_json.ml shape (same data the json.rs
+        // `schema_json_roundtrip` test feeds to schema_of_json).
+        let schema_json = json!({
+            "version": 1,
+            "edges": {
+                "hn2": { "hn3": {
+                    "property": {},
+                    "group": { "max": 3 }
+                }},
+                "hn3": { "hn4": {
+                    "building": { "min": 1 }
+                }}
+            },
+            "metadata": {
+                "hn4": {
+                    "lat": { "required": true, "type": "number", "min": -90.0, "max": 90.0 },
+                    "kind": { "required": false, "type": "enum", "one_of": ["a", "b"] }
+                }
+            },
+            "sensors": ["hn4"]
+        });
+
+        let resp = handle_add_node(
+            p1.to_string(),
+            "Acme".to_string(),
+            Some("hn2".to_string()),
+            None,
+            Some(json!({})),
+            Some(schema_json),
+            make_get_node(store.clone()),
+            make_list_children(store.clone()),
+            make_add_node(store.clone()),
+        )
+        .await;
+
+        assert_eq!(
+            status(&resp),
+            200,
+            "add_node with api_json-shape schema should return 200; got {resp:?}"
+        );
+
+        // The created node id is in the response body; fetch it from the Store
+        // and confirm its stored schema matches what schema_of_json produced.
+        let id_s = body(&resp)["id"].as_str().expect("id field").to_string();
+        let stored = store
+            .get_node(&NodeId::parse(&id_s).unwrap())
+            .expect("created node must be in store");
+        let sch = stored.schema.expect("hn2 node must carry a schema");
+
+        let expected = json::schema_of_json(&json!({
+            "version": 1,
+            "edges": {
+                "hn2": { "hn3": {
+                    "property": {},
+                    "group": { "max": 3 }
+                }},
+                "hn3": { "hn4": {
+                    "building": { "min": 1 }
+                }}
+            },
+            "metadata": {
+                "hn4": {
+                    "lat": { "required": true, "type": "number", "min": -90.0, "max": 90.0 },
+                    "kind": { "required": false, "type": "enum", "one_of": ["a", "b"] }
+                }
+            },
+            "sensors": ["hn4"]
+        }))
+        .expect("expected schema decodes");
+
+        assert_eq!(sch, expected, "stored schema must match schema_of_json output");
     }
 
     // -----------------------------------------------------------------------

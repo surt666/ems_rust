@@ -188,6 +188,7 @@ pub fn schema_of_json(v: &Value) -> Result<Schema, String> {
         .get("edges")
         .ok_or_else(|| "missing field \"edges\"".to_string())?;
     let edges_map = as_object(edges_v)?;
+    #[allow(clippy::type_complexity)]
     let mut edges: Vec<(Level, Vec<(Level, Vec<EdgeSpec>)>)> = Vec::new();
     for (parent_s, inner_v) in edges_map {
         let parent = Level::parse(parent_s)?;
