@@ -1,0 +1,26 @@
+{
+    "gsi1sk": {
+        "S": "administrators#U#stel@enity.io"
+    },
+    "kind": {
+        "S": "administrates"
+    },
+    "created": {
+        "S": "2026-06-09T06:27:06Z"
+    },
+    "pk": {
+        "S": "U#stel@enity.io"
+    },
+    "name": {
+        "S": ""
+    },
+    "gsi1pk": {
+        "S": "HN2#10002"
+    },
+    "type": {
+        "S": "edge"
+    },
+    "sk": {
+        "S": "administrates#HN2#10002"
+    }
+}

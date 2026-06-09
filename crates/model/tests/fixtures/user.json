@@ -1,0 +1,32 @@
+{
+    "currency": {
+        "S": "DKK"
+    },
+    "gsi1sk": {
+        "S": "U#steen666@gmail.com"
+    },
+    "created": {
+        "S": "2026-05-02T18:15:55Z"
+    },
+    "pk": {
+        "S": "U#steen666@gmail.com"
+    },
+    "name": {
+        "S": "Steen Larsen"
+    },
+    "cognito_group": {
+        "S": "Admin"
+    },
+    "gsi1pk": {
+        "S": "user"
+    },
+    "language": {
+        "S": "danish"
+    },
+    "type": {
+        "S": "user"
+    },
+    "sk": {
+        "S": "U#steen666@gmail.com"
+    }
+}
