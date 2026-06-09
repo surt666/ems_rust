@@ -666,15 +666,15 @@ pub fn node_of_item(item: &Item) -> Result<Node, RepositoryError> {
         }
     };
     let parent = parent_from_path(&path);
-    Ok(Node {
-        id,
-        name,
-        parent,
-        path,
-        created,
-        metadata,
-        schema,
-    })
+    Ok(Node::builder()
+        .id(id)
+        .name(name)
+        .parent(parent)
+        .path(path)
+        .created(created)
+        .metadata(metadata)
+        .schema(schema)
+        .build())
 }
 
 /// Extract the parent `NodeId` from a path string.
@@ -866,17 +866,17 @@ pub fn sensor_of_item(item: &Item) -> Result<Sensor, RepositoryError> {
         None => Formula::Identity,
     };
     let resample_minutes = opt_int_of_n(item.get("resample_minutes"));
-    Ok(Sensor {
-        id,
-        created,
-        daq_id,
-        path,
-        purpose,
-        meter_type,
-        unit,
-        formula,
-        resample_minutes,
-    })
+    Ok(Sensor::builder()
+        .id(id)
+        .created(created)
+        .daq_id(daq_id)
+        .path(path)
+        .purpose(purpose)
+        .meter_type(meter_type)
+        .unit(unit)
+        .formula(formula)
+        .resample_minutes(resample_minutes)
+        .build())
 }
 
 // ---------------------------------------------------------------------------
@@ -922,15 +922,15 @@ pub fn user_of_item(item: &Item) -> Result<User, RepositoryError> {
     };
     let created_s = as_s(field(item, "created")?)?;
     let created = parse_ts(created_s);
-    Ok(User {
-        email,
-        id,
-        name,
-        cognito_group,
-        language,
-        currency,
-        created,
-    })
+    Ok(User::builder()
+        .email(email)
+        .id(id)
+        .name(name)
+        .cognito_group(cognito_group)
+        .language(language)
+        .currency(currency)
+        .created(created)
+        .build())
 }
 
 // ---------------------------------------------------------------------------
@@ -1352,15 +1352,12 @@ mod tests {
             |(id, name, ts_secs)| {
                 let created = DateTime::from_timestamp(ts_secs, 0).unwrap_or(DateTime::UNIX_EPOCH);
                 let path = id.to_string(); // minimal path = just self
-                Node {
-                    id,
-                    name,
-                    parent: None,
-                    path,
-                    created,
-                    metadata: serde_json::json!({}),
-                    schema: None,
-                }
+                Node::builder()
+                    .id(id)
+                    .name(name)
+                    .path(path)
+                    .created(created)
+                    .build()
             },
         )
     }
@@ -1399,16 +1396,14 @@ mod tests {
             .prop_map(|(email, name, cognito_group, ts_secs)| {
                 let created =
                     DateTime::from_timestamp(ts_secs, 0).unwrap_or(DateTime::UNIX_EPOCH);
-                let id = UserId::of_email(&email);
-                User {
-                    email,
-                    id,
-                    name,
-                    cognito_group,
-                    language: Language::Danish,
-                    currency: Currency::Dkk,
-                    created,
-                }
+                User::builder()
+                    .email(email)
+                    .name(name)
+                    .cognito_group(cognito_group)
+                    .language(Language::Danish)
+                    .currency(Currency::Dkk)
+                    .created(created)
+                    .build()
             })
     }
 

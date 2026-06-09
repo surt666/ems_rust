@@ -100,17 +100,17 @@ mod tests {
             parent.to_string()
         );
         let path = child_path(&parent_path, &id.to_string());
-        Sensor {
-            id,
-            created: ptime_of("2026-04-18T10:00:00Z"),
-            daq_id: "daq:adeunis_pu_v1:123:0018b210000191c7:counter_a".to_owned(),
-            path,
-            purpose: "Electricity".to_owned(),
-            meter_type: MeterType::Counter,
-            unit: Some("kWh".to_owned()),
-            formula: Formula::Identity,
-            resample_minutes: Some(15),
-        }
+        Sensor::builder()
+            .id(id)
+            .created(ptime_of("2026-04-18T10:00:00Z"))
+            .daq_id("daq:adeunis_pu_v1:123:0018b210000191c7:counter_a".to_owned())
+            .path(path)
+            .purpose("Electricity".to_owned())
+            .meter_type(MeterType::Counter)
+            .unit(Some("kWh".to_owned()))
+            .formula(Formula::Identity)
+            .resample_minutes(Some(15))
+            .build()
     }
 
     /// Port of `fields_preserved`.
@@ -161,17 +161,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "Sensor.parent_id")]
     fn parent_id_panics_no_node_segment() {
-        let s = Sensor {
-            id: SensorId::make(1),
-            created: ptime_of("2026-01-01T00:00:00Z"),
-            daq_id: "x".to_owned(),
-            path: "S#1".to_owned(), // no HN segment
-            purpose: "x".to_owned(),
-            meter_type: MeterType::Counter,
-            unit: None,
-            formula: Formula::Identity,
-            resample_minutes: None,
-        };
+        let s = Sensor::builder()
+            .id(SensorId::make(1))
+            .created(ptime_of("2026-01-01T00:00:00Z"))
+            .daq_id("x".to_owned())
+            .path("S#1".to_owned()) // no HN segment
+            .purpose("x".to_owned())
+            .meter_type(MeterType::Counter)
+            .build();
         let _ = s.parent_id();
     }
 }

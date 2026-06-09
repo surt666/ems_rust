@@ -521,15 +521,11 @@ mod tests {
 
     fn make_hn2_node() -> Node {
         let id = NodeId::parse("HN2#10003").unwrap();
-        Node {
-            id,
-            name: "SeedCo01".to_owned(),
-            parent: None,
-            path: "HN0#root|HN2#10003".to_owned(),
-            created: chrono::Utc::now(),
-            metadata: serde_json::json!({}),
-            schema: None,
-        }
+        Node::builder()
+            .id(id)
+            .name("SeedCo01".to_owned())
+            .path("HN0#root|HN2#10003".to_owned())
+            .build()
     }
 
     #[test]
@@ -654,18 +650,13 @@ mod tests {
     fn render_sensors_nonempty() {
         use model::domain::ids::SensorId;
         use model::domain::values::MeterType;
-        use model::domain::formula::Formula;
-        let s = Sensor {
-            id: SensorId::make(1),
-            created: chrono::Utc::now(),
-            daq_id: "daq:test:001".to_owned(),
-            path: "HN0#root|HN2#10003|S#1".to_owned(),
-            purpose: "Electricity".to_owned(),
-            meter_type: MeterType::Counter,
-            unit: None,
-            formula: Formula::Identity,
-            resample_minutes: None,
-        };
+        let s = Sensor::builder()
+            .id(SensorId::make(1))
+            .daq_id("daq:test:001".to_owned())
+            .path("HN0#root|HN2#10003|S#1".to_owned())
+            .purpose("Electricity".to_owned())
+            .meter_type(MeterType::Counter)
+            .build();
         let html = render_sensors(&[s]).into_string();
         assert!(html.contains("daq:test:001"));
         assert!(html.contains("Electricity"));

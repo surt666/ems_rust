@@ -149,17 +149,17 @@ where
     let s = add_sensor(Box::new(move |raw_id| {
         let sid = SensorId::make(raw_id);
         let path = sensor::child_path(&parent_path, &sid.to_string());
-        let sensor = Sensor {
-            id: sid,
-            created: chrono::Utc::now(),
-            daq_id: daq_id.clone(),
-            path,
-            purpose: purpose.clone(),
-            meter_type,
-            unit: unit.clone(),
-            formula: formula_for_build.clone(),
-            resample_minutes,
-        };
+        let sensor = Sensor::builder()
+            .id(sid)
+            .created(chrono::Utc::now())
+            .daq_id(daq_id.clone())
+            .path(path)
+            .purpose(purpose.clone())
+            .meter_type(meter_type)
+            .unit(unit.clone())
+            .formula(formula_for_build.clone())
+            .resample_minutes(resample_minutes)
+            .build();
         let edge = RepoEdgeSpec {
             from_: parent_clone.to_string(),
             to_: sensor.id.to_string(),
@@ -243,11 +243,17 @@ where
 {
     let old = get_active_sensor(sensor_id).ok_or_else(|| sensor_not_found(sensor_id))?;
     let old_created = old.created;
-    let new_sensor = Sensor {
-        created: chrono::Utc::now(),
-        daq_id: new_daq_id,
-        ..old
-    };
+    let new_sensor = Sensor::builder()
+        .id(old.id)
+        .created(chrono::Utc::now())
+        .daq_id(new_daq_id)
+        .path(old.path)
+        .purpose(old.purpose)
+        .meter_type(old.meter_type)
+        .unit(old.unit)
+        .formula(old.formula)
+        .resample_minutes(old.resample_minutes)
+        .build();
     replace_sensor_device(old_created, new_sensor.clone()).await?;
     Ok(new_sensor)
 }
@@ -279,11 +285,17 @@ where
     }
 
     let old_created = old.created;
-    let new_sensor = Sensor {
-        created: chrono::Utc::now(),
-        formula,
-        ..old
-    };
+    let new_sensor = Sensor::builder()
+        .id(old.id)
+        .created(chrono::Utc::now())
+        .daq_id(old.daq_id)
+        .path(old.path)
+        .purpose(old.purpose)
+        .meter_type(old.meter_type)
+        .unit(old.unit)
+        .formula(formula)
+        .resample_minutes(old.resample_minutes)
+        .build();
     replace_sensor_device(old_created, new_sensor.clone()).await?;
     Ok(new_sensor)
 }
@@ -894,17 +906,14 @@ mod tests {
 
         // Seed two sensors directly — one in HN2#200, one in HN2#999.
         let mk_sensor = |id: u32, path: &str| -> Sensor {
-            Sensor {
-                id: SensorId::make(id),
-                created: ts(),
-                daq_id: format!("d{}", id),
-                path: path.to_string(),
-                purpose: "E".to_string(),
-                meter_type: MeterType::Counter,
-                unit: None,
-                formula: Formula::Identity,
-                resample_minutes: None,
-            }
+            Sensor::builder()
+                .id(SensorId::make(id))
+                .created(ts())
+                .daq_id(format!("d{}", id))
+                .path(path.to_string())
+                .purpose("E".to_string())
+                .meter_type(MeterType::Counter)
+                .build()
         };
 
         let s1 = mk_sensor(1, "HN0#root|HN1#10|HN2#200|HN3#1|S#1");

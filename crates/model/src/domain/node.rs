@@ -65,15 +65,15 @@ pub fn make(
 ) -> Node {
     let nid = NodeId::make(level, id);
     let path = child_path(parent_path, &nid.to_string());
-    Node {
-        id: nid,
-        name: name.to_owned(),
-        parent: Some(parent),
-        path,
-        created,
-        metadata,
-        schema,
-    }
+    Node::builder()
+        .id(nid)
+        .name(name.to_owned())
+        .parent(Some(parent))
+        .path(path)
+        .created(created)
+        .metadata(metadata)
+        .schema(schema)
+        .build()
 }
 
 /// Create the root node.
@@ -81,15 +81,12 @@ pub fn make(
 /// Mirrors OCaml `Node.make_root`:
 /// `{ id = Node_id.root; name = "root"; parent = None; path = Node_id.to_string Node_id.root; … }`.
 pub fn make_root(created: DateTime<Utc>) -> Node {
-    Node {
-        id: NodeId::root(),
-        name: "root".to_owned(),
-        parent: None,
-        path: NodeId::root().to_string(),
-        created,
-        metadata: serde_json::json!({}),
-        schema: None,
-    }
+    Node::builder()
+        .id(NodeId::root())
+        .name("root".to_owned())
+        .path(NodeId::root().to_string())
+        .created(created)
+        .build()
 }
 
 // ---------------------------------------------------------------------------

@@ -178,10 +178,17 @@ pub async fn transact_replace(
     // The OCaml creates a throwaway sensor with old `created` and new fields,
     // encoding it with `~active:true` to get the sk, then with `~active:false`
     // for the history item.
-    let old_sensor = Sensor {
-        created: old_created,
-        ..new_sensor.clone()
-    };
+    let old_sensor = Sensor::builder()
+        .id(new_sensor.id)
+        .created(old_created)
+        .daq_id(new_sensor.daq_id.clone())
+        .path(new_sensor.path.clone())
+        .purpose(new_sensor.purpose.clone())
+        .meter_type(new_sensor.meter_type)
+        .unit(new_sensor.unit.clone())
+        .formula(new_sensor.formula.clone())
+        .resample_minutes(new_sensor.resample_minutes)
+        .build();
 
     // Active sk: "active#<rfc3339Z>"
     let old_active_sk = SensorSk::Active(old_created).to_string();
