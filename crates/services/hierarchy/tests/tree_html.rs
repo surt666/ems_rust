@@ -222,6 +222,30 @@ fn permissions_has_loadchildren_once() {
     assert!(html.contains("loadChildren once"), "loadChildren once trigger missing");
 }
 
+/// The `data-hx-request` JSON must be `&quot;`-escaped so the double-quoted
+/// maud attribute stays valid HTML. A literal `data-hx-request="{"` would
+/// close the attribute at the first inner `"` and break htmx's JSON parse.
+#[test]
+fn data_hx_request_json_is_quot_escaped() {
+    let id = NodeId::parse("HN1#10001").unwrap();
+    for with_permissions in [false, true] {
+        let markup = list_item(&id, "Acme Group", "steen666@gmail.com", "H#root", with_permissions, false);
+        let html = markup.into_string();
+        // Invalid form: literal `"` immediately after `{` would close the attr.
+        assert!(
+            !html.contains(r#"data-hx-request="{""#),
+            "invalid HTML: unescaped double-quote inside data-hx-request (with_permissions={})",
+            with_permissions
+        );
+        // Valid form: the JSON keys are &quot;-escaped.
+        assert!(
+            html.contains("&quot;noHeaders&quot;"),
+            "data-hx-request JSON not &quot;-escaped (with_permissions={})",
+            with_permissions
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // render_nodes smoke test
 // ---------------------------------------------------------------------------

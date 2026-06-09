@@ -1,4 +1,4 @@
-use maud::{html, Markup, PreEscaped};
+use maud::{html, Markup};
 use model::domain::ids::{Level, NodeId};
 
 use super::{level_visual, pct};
@@ -114,7 +114,7 @@ pub fn list_item(
             div class="child-rows"
                 style="display:none;"
                 data-hx-get=(perm_url)
-                data-hx-request=(PreEscaped(r#"{"noHeaders": true}"#))
+                data-hx-request=(r#"{"noHeaders": true}"#)
                 data-hx-target="this"
                 data-hx-swap="innerHTML"
                 data-hx-trigger="loadChildren once"
@@ -136,7 +136,7 @@ pub fn list_item(
             li data-id=(id_str) data-path=(current_path) {
                 div class="icon-wrapper"
                     data-hx-get=(load_url)
-                    data-hx-request=(PreEscaped(r#"{"noHeaders": true}"#))
+                    data-hx-request=(r#"{"noHeaders": true}"#)
                     data-hx-target="next .nested-list"
                     data-hx-trigger="loadChildren"
                 {
@@ -148,7 +148,7 @@ pub fn list_item(
                     data-node-id=(id_str)
                     data-node-path=(node_path)
                     data-hx-get=(detail_url)
-                    data-hx-request=(PreEscaped(r#"{"noHeaders": true}"#))
+                    data-hx-request=(r#"{"noHeaders": true}"#)
                     data-hx-target=".main-area"
                     data-hx-swap="innerHTML"
                     _=(hyperscript)
