@@ -1,0 +1,40 @@
+<div class="page-container">
+  <div class="card">
+    <div class="form">
+      <div class="form-row-2col">
+        <label class="form-label">ID:</label>
+        <input type="text" id="id" value="HN2#10003" readonly class="form-input">
+      </div>
+      <div class="form-row-2col">
+        <label class="form-label" data-i18n="common.name">Name</label>
+        <input type="text" id="name" value="SeedCo01" readonly class="form-input">
+      </div>
+    </div>
+    <div style="margin-top: 2rem;">
+      <div style="display: grid; grid-template-columns: 1fr auto; align-items: center; margin-bottom: 1rem;">
+        <h2 class="section-title" style="margin-bottom: 0;" data-i18n="node.children">Children</h2>
+        <button type="button" class="btn-primary" _="on click call #add-child-dialog.showModal() then send refresh to #add-child-body" data-i18n="node.add_child">Add child</button>
+      </div>
+    </div>
+    <dialog id="add-child-dialog" _="on click if event.target == me then call me.close()">
+      <div class="dialog-header">
+        <h2 data-i18n="node.add_child_dialog_title">ADD CHILD</h2>
+        <button type="button" class="btn-close" _="on click call #add-child-dialog.close()">&times;</button>
+      </div>
+      <div class="dialog-body">
+        <div id="add-child-body" data-hx-get="/hierarchy/query/add_child_form" data-hx-vals='{"parent": "HN2#10003"}' data-hx-trigger="refresh" data-hx-request='{"noHeaders": true}' data-hx-target="#add-child-body" data-hx-swap="innerHTML">
+          <em data-i18n="common.loading">Loading…</em>
+        </div>
+      </div>
+      <div class="dialog-footer">
+        <button type="submit" form="add-child-form" class="btn-warning" data-i18n="common.save">Save</button>
+        <div></div>
+        <button type="button" class="btn-warning" _="on click call #add-child-dialog.close()" data-i18n="common.close">Close</button>
+      </div>
+    </dialog>
+    <div style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-medium);">
+      <h2 class="section-title" data-i18n="node.metadata">Metadata</h2>
+      <p style="color: var(--text-muted);" data-i18n="node.no_metadata">No metadata available</p>
+    </div>
+  </div>
+</div>
