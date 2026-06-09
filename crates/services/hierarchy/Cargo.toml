@@ -1,0 +1,16 @@
+[package]
+name = "hierarchy"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+lambda_http.workspace = true
+aws_lambda_events.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+maud.workspace = true
+strum.workspace = true
+chrono.workspace = true
+model = { path = "../../model" }
