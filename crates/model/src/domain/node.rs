@@ -23,6 +23,7 @@ pub struct Node {
     #[builder(default)]
     pub parent: Option<NodeId>,
     pub path: String,
+    #[builder(default = chrono::Utc::now())]
     pub created: DateTime<Utc>,
     #[builder(default = serde_json::json!({}))]
     pub metadata: serde_json::Value,

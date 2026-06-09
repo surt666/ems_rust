@@ -12,12 +12,29 @@ use crate::domain::values::{CognitoGroup, Currency, Language};
 ///
 /// Ported 1:1 from `user.ml`.
 ///
-/// Construct via `User::make` (mirrors OCaml `User.make`) or via
-/// `User::builder()` (TypedBuilder).  The TypedBuilder `language` and
-/// `currency` fields default to `Language::Danish` and `Currency::Dkk`
-/// respectively, matching the OCaml optional-argument defaults.
+/// Construct via `User::builder()` (TypedBuilder).  The `id` is derived from
+/// `email` automatically (`UserId::of_email`); `language` defaults to
+/// `Language::Danish`, `currency` to `Currency::Dkk`, and `created` to
+/// `Utc::now()` — all matching the OCaml optional-argument defaults.
+///
+/// Every field can still be set explicitly via the builder (codec / tests
+/// that need a specific timestamp or id simply call `.created(ts)` / `.id(id)`).
+///
+/// ```
+/// # use model::domain::user::User;
+/// # use model::domain::values::{CognitoGroup, Currency, Language};
+/// let u = User::builder()
+///     .email("alice@example.com".to_owned())
+///     .name("Alice".to_owned())
+///     .cognito_group(CognitoGroup::Admin)
+///     .build();
+/// assert_eq!(u.language, Language::Danish);
+/// assert_eq!(u.id.to_string(), "U#alice@example.com");
+/// ```
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct User {
+    pub email: String,
+    #[builder(default = UserId::of_email(&email))]
     pub id: UserId,
     pub name: String,
     pub cognito_group: CognitoGroup,
@@ -25,43 +42,8 @@ pub struct User {
     pub language: Language,
     #[builder(default = Currency::default())]
     pub currency: Currency,
+    #[builder(default = chrono::Utc::now())]
     pub created: DateTime<Utc>,
-}
-
-impl User {
-    /// Functional constructor mirroring OCaml `User.make`.
-    ///
-    /// ```
-    /// # use model::domain::user::User;
-    /// # use model::domain::values::{CognitoGroup, Currency, Language};
-    /// # use chrono::Utc;
-    /// let u = User::make(
-    ///     "alice@example.com",
-    ///     "Alice",
-    ///     CognitoGroup::Admin,
-    ///     None,          // language → Danish
-    ///     None,          // currency → DKK
-    ///     Utc::now(),
-    /// );
-    /// assert_eq!(u.language, Language::Danish);
-    /// ```
-    pub fn make(
-        email: &str,
-        name: &str,
-        cognito_group: CognitoGroup,
-        language: Option<Language>,
-        currency: Option<Currency>,
-        created: DateTime<Utc>,
-    ) -> User {
-        User {
-            id: UserId::of_email(email),
-            name: name.to_owned(),
-            cognito_group,
-            language: language.unwrap_or_default(),
-            currency: currency.unwrap_or_default(),
-            created,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -77,10 +59,15 @@ mod tests {
         Utc::now()
     }
 
-    /// make uses email for id, name, cognito_group, created.
+    /// id is derived from email; name, cognito_group set correctly.
     #[test]
     fn make_sets_id_from_email() {
-        let u = User::make("bob@example.com", "Bob", CognitoGroup::Writer, None, None, now());
+        let u = User::builder()
+            .email("bob@example.com".to_owned())
+            .name("Bob".to_owned())
+            .cognito_group(CognitoGroup::Writer)
+            .created(now())
+            .build();
         assert_eq!(u.id.email(), "bob@example.com");
         assert_eq!(u.id.to_string(), "U#bob@example.com");
         assert_eq!(u.name, "Bob");
@@ -90,42 +77,78 @@ mod tests {
     /// Default language is Danish (matches OCaml `Language.default`).
     #[test]
     fn make_default_language_is_danish() {
-        let u = User::make("a@b.com", "A", CognitoGroup::Reader, None, None, now());
+        let u = User::builder()
+            .email("a@b.com".to_owned())
+            .name("A".to_owned())
+            .cognito_group(CognitoGroup::Reader)
+            .build();
         assert_eq!(u.language, Language::Danish);
     }
 
     /// Default currency is DKK (matches OCaml `Currency.default`).
     #[test]
     fn make_default_currency_is_dkk() {
-        let u = User::make("a@b.com", "A", CognitoGroup::Reader, None, None, now());
+        let u = User::builder()
+            .email("a@b.com".to_owned())
+            .name("A".to_owned())
+            .cognito_group(CognitoGroup::Reader)
+            .build();
         assert_eq!(u.currency, Currency::Dkk);
     }
 
     /// Explicit language / currency are preserved.
     #[test]
     fn make_explicit_language_and_currency() {
-        let u = User::make(
-            "a@b.com",
-            "A",
-            CognitoGroup::Admin,
-            Some(Language::English),
-            Some(Currency::Eur),
-            now(),
-        );
+        let u = User::builder()
+            .email("a@b.com".to_owned())
+            .name("A".to_owned())
+            .cognito_group(CognitoGroup::Admin)
+            .language(Language::English)
+            .currency(Currency::Eur)
+            .build();
         assert_eq!(u.language, Language::English);
         assert_eq!(u.currency, Currency::Eur);
     }
 
-    /// TypedBuilder: fields with defaults can be omitted.
+    /// TypedBuilder: fields with defaults can be omitted; created defaults to now().
     #[test]
     fn builder_defaults() {
         let u = User::builder()
-            .id(UserId::of_email("c@d.com"))
+            .email("c@d.com".to_owned())
             .name("C".to_owned())
             .cognito_group(CognitoGroup::Reader)
-            .created(now())
             .build();
         assert_eq!(u.language, Language::Danish);
         assert_eq!(u.currency, Currency::Dkk);
+        // id is derived from email
+        assert_eq!(u.id.to_string(), "U#c@d.com");
+    }
+
+    /// Explicit id overrides the derived default.
+    #[test]
+    fn builder_explicit_id_overrides_default() {
+        let explicit_id = UserId::of_email("other@example.com");
+        let u = User::builder()
+            .email("x@y.com".to_owned())
+            .id(explicit_id.clone())
+            .name("X".to_owned())
+            .cognito_group(CognitoGroup::Reader)
+            .build();
+        assert_eq!(u.id, explicit_id);
+    }
+
+    /// Explicit created is preserved (codec / tests need specific timestamps).
+    #[test]
+    fn builder_explicit_created_preserved() {
+        let ts = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let u = User::builder()
+            .email("a@b.com".to_owned())
+            .name("A".to_owned())
+            .cognito_group(CognitoGroup::Reader)
+            .created(ts)
+            .build();
+        assert_eq!(u.created, ts);
     }
 }

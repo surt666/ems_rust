@@ -18,6 +18,7 @@ use crate::domain::values::MeterType;
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Sensor {
     pub id: SensorId,
+    #[builder(default = chrono::Utc::now())]
     pub created: DateTime<Utc>,
     pub daq_id: String,
     pub path: String,
