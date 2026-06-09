@@ -118,13 +118,6 @@ impl Level {
         }
     }
 
-    /// Parse `"hn0"` .. `"hn9"` (exactly 3 chars, lowercase).
-    ///
-    /// Matches OCaml `Level.of_string`: must be length 3, first two chars `hn`,
-    /// third char a digit 0-9.
-    pub fn parse(s: &str) -> Result<Level, String> {
-        s.parse::<Level>().map_err(|e| e.to_string())
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +274,7 @@ mod tests {
     fn level_of_string_roundtrip() {
         for i in 0u8..=9 {
             let s = format!("hn{}", i);
-            let lvl = Level::parse(&s).unwrap_or_else(|e| panic!("parse {:?} -> {}", s, e));
+            let lvl = s.parse::<Level>().unwrap_or_else(|e| panic!("parse {:?} -> {}", s, e));
             assert_eq!(lvl.depth(), i, "depth mismatch for {}", s);
             assert_eq!(lvl.to_string(), s, "render mismatch for {}", s);
         }
@@ -292,7 +285,7 @@ mod tests {
     fn level_rejects_malformed() {
         for bad in &["", "hn", "hn10", "hn-1", "HN0", "sensor"] {
             assert!(
-                Level::parse(bad).is_err(),
+                bad.parse::<Level>().is_err(),
                 "expected Err for {:?} but got Ok",
                 bad
             );

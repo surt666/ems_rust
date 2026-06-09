@@ -608,7 +608,7 @@ where
     }
 
     // Pick the chosen level.
-    let requested_level = level_s.and_then(|s| Level::parse(s).ok());
+    let requested_level = level_s.and_then(|s| s.parse::<Level>().ok());
     let chosen_level = match requested_level {
         Some(l) if allowed.iter().any(|(al, _)| *al == l) => l,
         _ => allowed[0].0,

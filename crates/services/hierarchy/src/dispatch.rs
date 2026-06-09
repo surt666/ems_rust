@@ -150,7 +150,7 @@ where
 
     let level_parsed = match level {
         None => None,
-        Some(ref s) => match model::domain::ids::Level::parse(s) {
+        Some(ref s) => match s.parse::<model::domain::ids::Level>() {
             Ok(l) => Some(l),
             Err(e) => return bad_request(&format!("bad level: {}", e)),
         },
@@ -296,7 +296,7 @@ where
     FAGFut: Future<Output = Result<(), RepositoryError>>,
 {
     // 1. Parse profile → cognito_group.
-    let profile = match Profile::parse(&profile_s) {
+    let profile = match profile_s.parse::<Profile>() {
         Ok(p) => p,
         Err(e) => return bad_request(&format!("bad profile: {}", e)),
     };
@@ -305,14 +305,14 @@ where
     // Parse optional language / currency.
     let language = match language_s {
         None => None,
-        Some(ref s) => match Language::parse(s) {
+        Some(ref s) => match s.parse::<Language>() {
             Ok(l) => Some(l),
             Err(e) => return bad_request(&format!("bad language: {}", e)),
         },
     };
     let currency = match currency_s {
         None => None,
-        Some(ref s) => match Currency::parse(s) {
+        Some(ref s) => match s.parse::<Currency>() {
             Ok(c) => Some(c),
             Err(e) => return bad_request(&format!("bad currency: {}", e)),
         },
@@ -426,21 +426,21 @@ where
     };
     let cognito_group = match cognito_group_s {
         None => None,
-        Some(ref s) => match CognitoGroup::parse(s) {
+        Some(ref s) => match s.parse::<CognitoGroup>() {
             Ok(g) => Some(g),
             Err(e) => return bad_request(&format!("bad cognito_group: {}", e)),
         },
     };
     let language = match language_s {
         None => None,
-        Some(ref s) => match Language::parse(s) {
+        Some(ref s) => match s.parse::<Language>() {
             Ok(l) => Some(l),
             Err(e) => return bad_request(&format!("bad language: {}", e)),
         },
     };
     let currency = match currency_s {
         None => None,
-        Some(ref s) => match Currency::parse(s) {
+        Some(ref s) => match s.parse::<Currency>() {
             Ok(c) => Some(c),
             Err(e) => return bad_request(&format!("bad currency: {}", e)),
         },
@@ -662,7 +662,7 @@ where
         Ok(id) => id,
         Err(e) => return bad_request(&format!("bad parent_id: {}", e)),
     };
-    let meter_type = match MeterType::parse(&meter_type_s) {
+    let meter_type = match meter_type_s.parse::<MeterType>() {
         Ok(mt) => mt,
         Err(e) => return bad_request(&format!("bad meter_type: {}", e)),
     };

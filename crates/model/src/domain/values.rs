@@ -1,4 +1,3 @@
-use std::fmt;
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
@@ -9,11 +8,15 @@ use strum::EnumIter;
 /// The kind of a directed hierarchy edge.
 ///
 /// Faithfully ported from `services/hierarchy/lib/domain/edge_kind.ml`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, strum::Display)]
 pub enum EdgeKind {
+    #[strum(to_string = "has_label:{0}")]
     HasLabel(String),
+    #[strum(serialize = "has_sensor")]
     HasSensor,
+    #[strum(serialize = "blocked")]
     Blocked,
+    #[strum(serialize = "administrates")]
     Administrates,
 }
 
@@ -32,12 +35,7 @@ impl EdgeKind {
     /// The serialised form stored in the `kind` attribute.
     /// Matches OCaml `Edge_kind.to_string`.
     pub fn kind_string(&self) -> String {
-        match self {
-            EdgeKind::HasLabel(l) => format!("has_label:{}", l),
-            EdgeKind::HasSensor => "has_sensor".to_string(),
-            EdgeKind::Blocked => "blocked".to_string(),
-            EdgeKind::Administrates => "administrates".to_string(),
-        }
+        self.to_string()
     }
 
     /// Reverse-direction verb used on `gsi1sk` for user-edge lookups.
@@ -72,12 +70,6 @@ impl EdgeKind {
     }
 }
 
-impl fmt::Display for EdgeKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.kind_string())
-    }
-}
-
 // ---------------------------------------------------------------------------
 // CognitoGroup
 // ---------------------------------------------------------------------------
@@ -98,13 +90,6 @@ pub enum CognitoGroup {
     Admin,
 }
 
-impl CognitoGroup {
-    /// Case-insensitive parse; accepts `"reader"`, `"Reader"`, `"READER"`, etc.
-    /// Matches OCaml `Cognito_group.of_string`.
-    pub fn parse(s: &str) -> Result<CognitoGroup, String> {
-        s.parse::<CognitoGroup>().map_err(|e| e.to_string())
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Profile
@@ -154,11 +139,6 @@ impl Profile {
         }
     }
 
-    /// Case-sensitive parse, matching OCaml `Profile.of_string`.
-    pub fn parse(s: &str) -> Result<Profile, String> {
-        s.parse::<Profile>().map_err(|e| e.to_string())
-    }
-
     /// Map a profile to its Cognito group.
     /// Matches OCaml `Profile.to_cognito_group`.
     pub fn to_cognito_group(&self) -> CognitoGroup {
@@ -205,10 +185,6 @@ impl Currency {
         }
     }
 
-    /// Matches OCaml `Currency.of_string`.
-    pub fn parse(s: &str) -> Result<Currency, String> {
-        s.parse::<Currency>().map_err(|e| e.to_string())
-    }
 }
 
 impl Default for Currency {
@@ -253,10 +229,6 @@ impl Language {
         }
     }
 
-    /// Matches OCaml `Language.of_string`.
-    pub fn parse(s: &str) -> Result<Language, String> {
-        s.parse::<Language>().map_err(|e| e.to_string())
-    }
 }
 
 impl Default for Language {
@@ -293,10 +265,6 @@ impl MeterType {
         }
     }
 
-    /// Matches OCaml `meter_type_of_string`.
-    pub fn parse(s: &str) -> Result<MeterType, String> {
-        s.parse::<MeterType>().map_err(|e| e.to_string())
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -428,21 +396,21 @@ mod tests {
     #[test]
     fn cognito_group_capitalised_caseinsensitive() {
         assert_eq!(CognitoGroup::Admin.to_string(), "Admin");
-        assert_eq!(CognitoGroup::parse("admin").unwrap(), CognitoGroup::Admin);
-        assert_eq!(CognitoGroup::parse("Admin").unwrap(), CognitoGroup::Admin);
-        assert_eq!(CognitoGroup::parse("reader").unwrap(), CognitoGroup::Reader);
+        assert_eq!("admin".parse::<CognitoGroup>().unwrap(), CognitoGroup::Admin);
+        assert_eq!("Admin".parse::<CognitoGroup>().unwrap(), CognitoGroup::Admin);
+        assert_eq!("reader".parse::<CognitoGroup>().unwrap(), CognitoGroup::Reader);
     }
 
     /// Port of `test_domain_user.ml :: cognito_group_parses`
     #[test]
     fn cognito_group_parses() {
-        assert_eq!(CognitoGroup::parse("reader").unwrap(), CognitoGroup::Reader);
-        assert_eq!(CognitoGroup::parse("writer").unwrap(), CognitoGroup::Writer);
-        assert_eq!(CognitoGroup::parse("admin").unwrap(), CognitoGroup::Admin);
+        assert_eq!("reader".parse::<CognitoGroup>().unwrap(), CognitoGroup::Reader);
+        assert_eq!("writer".parse::<CognitoGroup>().unwrap(), CognitoGroup::Writer);
+        assert_eq!("admin".parse::<CognitoGroup>().unwrap(), CognitoGroup::Admin);
         // canonical strings are capitalised
         assert_eq!(CognitoGroup::Admin.to_string(), "Admin");
         // of_string is case-insensitive
-        assert_eq!(CognitoGroup::parse("Admin").unwrap(), CognitoGroup::Admin);
+        assert_eq!("Admin".parse::<CognitoGroup>().unwrap(), CognitoGroup::Admin);
     }
 
     #[test]
@@ -454,8 +422,8 @@ mod tests {
 
     #[test]
     fn cognito_group_parse_error() {
-        assert!(CognitoGroup::parse("superuser").is_err());
-        assert!(CognitoGroup::parse("").is_err());
+        assert!("superuser".parse::<CognitoGroup>().is_err());
+        assert!("".parse::<CognitoGroup>().is_err());
     }
 
     // ---- Profile ------------------------------------------------------------
@@ -471,14 +439,14 @@ mod tests {
             ("Technician", Reader),
             ("Reader", Reader),
         ] {
-            assert_eq!(Profile::parse(p).unwrap().to_cognito_group(), g);
+            assert_eq!(p.parse::<Profile>().unwrap().to_cognito_group(), g);
         }
     }
 
     /// Port of `test_domain_profile.ml :: maps_to_groups`
     #[test]
     fn profile_maps_to_groups() {
-        let group_of = |s: &str| Profile::parse(s).unwrap().to_cognito_group();
+        let group_of = |s: &str| s.parse::<Profile>().unwrap().to_cognito_group();
         assert_eq!(group_of("SysAdm"), CognitoGroup::Admin);
         assert_eq!(group_of("Developer"), CognitoGroup::Writer);
         assert_eq!(group_of("Standard"), CognitoGroup::Writer);
@@ -489,7 +457,7 @@ mod tests {
     /// Port of `test_domain_profile.ml :: rejects_unknown`
     #[test]
     fn profile_rejects_unknown() {
-        assert!(Profile::parse("Nope").is_err());
+        assert!("Nope".parse::<Profile>().is_err());
     }
 
     /// Port of `test_domain_profile.ml :: all_roundtrip`
@@ -497,7 +465,7 @@ mod tests {
     fn profile_all_roundtrip() {
         for p in Profile::all() {
             let s = p.to_string();
-            let p2 = Profile::parse(&s)
+            let p2 = s.parse::<Profile>()
                 .unwrap_or_else(|e| panic!("roundtrip {:?}: {}", s, e));
             assert_eq!(p, p2);
         }
@@ -525,7 +493,7 @@ mod tests {
         ];
         for c in &variants {
             let s = c.to_string();
-            assert_eq!(Currency::parse(&s).unwrap(), *c);
+            assert_eq!(s.parse::<Currency>().unwrap(), *c);
         }
     }
 
@@ -545,8 +513,8 @@ mod tests {
 
     #[test]
     fn currency_parse_error() {
-        assert!(Currency::parse("GBP").is_err());
-        assert!(Currency::parse("dkk").is_err()); // case-sensitive
+        assert!("GBP".parse::<Currency>().is_err());
+        assert!("dkk".parse::<Currency>().is_err()); // case-sensitive
     }
 
     // ---- Language -----------------------------------------------------------
@@ -562,7 +530,7 @@ mod tests {
         ];
         for l in &variants {
             let s = l.to_string();
-            assert_eq!(Language::parse(&s).unwrap(), *l);
+            assert_eq!(s.parse::<Language>().unwrap(), *l);
         }
     }
 
@@ -582,8 +550,8 @@ mod tests {
 
     #[test]
     fn language_parse_error() {
-        assert!(Language::parse("French").is_err());
-        assert!(Language::parse("Danish").is_err()); // case-sensitive
+        assert!("French".parse::<Language>().is_err());
+        assert!("Danish".parse::<Language>().is_err()); // case-sensitive
     }
 
     // ---- MeterType ----------------------------------------------------------
@@ -592,7 +560,7 @@ mod tests {
     fn meter_type_roundtrip() {
         for mt in [MeterType::Counter, MeterType::Gauge] {
             let s = mt.to_string();
-            assert_eq!(MeterType::parse(&s).unwrap(), mt);
+            assert_eq!(s.parse::<MeterType>().unwrap(), mt);
         }
     }
 
@@ -604,8 +572,8 @@ mod tests {
 
     #[test]
     fn meter_type_parse_error() {
-        assert!(MeterType::parse("Counter").is_err());
-        assert!(MeterType::parse("unknown").is_err());
+        assert!("Counter".parse::<MeterType>().is_err());
+        assert!("unknown".parse::<MeterType>().is_err());
     }
 
     // ---- FieldType ----------------------------------------------------------

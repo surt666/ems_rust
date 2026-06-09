@@ -600,14 +600,14 @@ pub fn schema_of_av(v: &AttributeValue) -> Result<Schema, RepositoryError> {
     let edges_kvs = as_m(edges_v)?;
     let mut edges: Vec<(Level, Vec<(Level, Vec<EdgeSpec>)>)> = Vec::new();
     for (lvl_s, inner_v) in edges_kvs {
-        let lvl = match Level::parse(lvl_s) {
+        let lvl = match lvl_s.parse::<Level>() {
             Ok(l) => l,
             Err(_) => continue,
         };
         let inner_kvs = as_m(inner_v)?;
         let mut children: Vec<(Level, Vec<EdgeSpec>)> = Vec::new();
         for (child_s, labels_v) in inner_kvs {
-            let child = match Level::parse(child_s) {
+            let child = match child_s.parse::<Level>() {
                 Ok(l) => l,
                 Err(_) => continue,
             };
@@ -627,7 +627,7 @@ pub fn schema_of_av(v: &AttributeValue) -> Result<Schema, RepositoryError> {
             let m_kvs = as_m(m_v)?;
             let mut result: Vec<(Level, Vec<(String, FieldSpec)>)> = Vec::new();
             for (lvl_s, inner_v) in m_kvs {
-                let lvl = match Level::parse(lvl_s) {
+                let lvl = match lvl_s.parse::<Level>() {
                     Ok(l) => l,
                     Err(_) => continue,
                 };
@@ -649,7 +649,7 @@ pub fn schema_of_av(v: &AttributeValue) -> Result<Schema, RepositoryError> {
             let mut result: Vec<Level> = Vec::new();
             for item in xs {
                 let s_str = as_s(item)?;
-                if let Ok(lvl) = Level::parse(s_str) {
+                if let Ok(lvl) = s_str.parse::<Level>() {
                     result.push(lvl);
                 }
             }
@@ -902,7 +902,7 @@ pub fn sensor_of_item(item: &Item) -> Result<Sensor, RepositoryError> {
     let path = as_s(field(item, "gsi1sk")?)?.to_string();
     let purpose = as_s(field(item, "purpose")?)?.to_string();
     let mt_s = as_s(field(item, "meter_type")?)?;
-    let meter_type = MeterType::parse(mt_s)
+    let meter_type = mt_s.parse::<MeterType>()
         .map_err(|e| RepositoryError::Codec(format!("bad meter_type {:?}: {}", mt_s, e)))?;
     let unit = match item.get("unit") {
         Some(AttributeValue::S(u)) => Some(u.clone()),
@@ -959,14 +959,14 @@ pub fn user_of_item(item: &Item) -> Result<User, RepositoryError> {
     let email = id.email().to_string();
     let name = as_s(field(item, "name")?)?.to_string();
     let g_s = as_s(field(item, "cognito_group")?)?;
-    let cognito_group = CognitoGroup::parse(g_s)
+    let cognito_group = g_s.parse::<CognitoGroup>()
         .map_err(|e| RepositoryError::Codec(format!("bad cognito_group {:?}: {}", g_s, e)))?;
     let language = match item.get("language") {
-        Some(AttributeValue::S(s)) => Language::parse(s).unwrap_or_default(),
+        Some(AttributeValue::S(s)) => s.parse::<Language>().unwrap_or_default(),
         _ => Language::default(),
     };
     let currency = match item.get("currency") {
-        Some(AttributeValue::S(s)) => Currency::parse(s).unwrap_or_default(),
+        Some(AttributeValue::S(s)) => s.parse::<Currency>().unwrap_or_default(),
         _ => Currency::default(),
     };
     let created_s = as_s(field(item, "created")?)?;

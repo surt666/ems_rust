@@ -191,11 +191,11 @@ pub fn schema_of_json(v: &Value) -> Result<Schema, String> {
     #[allow(clippy::type_complexity)]
     let mut edges: Vec<(Level, Vec<(Level, Vec<EdgeSpec>)>)> = Vec::new();
     for (parent_s, inner_v) in edges_map {
-        let parent = Level::parse(parent_s)?;
+        let parent = parent_s.parse::<Level>().map_err(|e| e.to_string())?;
         let inner_map = as_object(inner_v)?;
         let mut children: Vec<(Level, Vec<EdgeSpec>)> = Vec::new();
         for (child_s, labels_v) in inner_map {
-            let child = Level::parse(child_s)?;
+            let child = child_s.parse::<Level>().map_err(|e| e.to_string())?;
             let labels_map = as_object(labels_v)?;
             let mut specs: Vec<EdgeSpec> = Vec::new();
             for (label, body) in labels_map {
@@ -216,7 +216,7 @@ pub fn schema_of_json(v: &Value) -> Result<Schema, String> {
                 let m_map = as_object(m_v)?;
                 let mut result: Vec<(Level, Vec<(String, FieldSpec)>)> = Vec::new();
                 for (lvl_s, inner_v) in m_map {
-                    let lvl = Level::parse(lvl_s)?;
+                    let lvl = lvl_s.parse::<Level>().map_err(|e| e.to_string())?;
                     let inner_map = as_object(inner_v)?;
                     let mut fields: Vec<(String, FieldSpec)> = Vec::new();
                     for (fname, spec_v) in inner_map {
@@ -236,7 +236,7 @@ pub fn schema_of_json(v: &Value) -> Result<Schema, String> {
             arr.iter()
                 .map(|item| {
                     let s = as_string(item)?;
-                    Level::parse(s)
+                    s.parse::<Level>().map_err(|e| e.to_string())
                 })
                 .collect::<Result<Vec<_>, String>>()?
         }

@@ -133,9 +133,9 @@ mod tests {
     /// Port of `meter_type_of_string`.
     #[test]
     fn meter_type_of_string() {
-        assert_eq!(MeterType::parse("counter"), Ok(MeterType::Counter));
-        assert_eq!(MeterType::parse("gauge"), Ok(MeterType::Gauge));
-        assert!(MeterType::parse("wat").is_err());
+        assert_eq!("counter".parse::<MeterType>(), Ok(MeterType::Counter));
+        assert_eq!("gauge".parse::<MeterType>(), Ok(MeterType::Gauge));
+        assert!("wat".parse::<MeterType>().is_err());
     }
 
     /// Port of `parent_id_extracts_last_node_segment`.
