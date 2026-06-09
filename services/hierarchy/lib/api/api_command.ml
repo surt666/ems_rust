@@ -95,8 +95,9 @@ let run_replace_sensor_device json =
 let run_create_user json =
   let* email = require_string json "email" in
   let* name  = require_string json "name" in
-  let* group_s = require_string json "cognito_group" in
-  let* cognito_group = Cognito_group.of_string group_s in
+  let* profile_s = require_string json "profile" in
+  let* profile = Profile.of_string profile_s in
+  let cognito_group = Profile.to_cognito_group profile in
   let* language =
     match field json "language" with
     | None -> Ok None

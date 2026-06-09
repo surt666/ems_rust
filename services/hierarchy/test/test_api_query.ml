@@ -89,7 +89,7 @@ let get_user_happy () =
   Memory.run st (fun () ->
     let _ =
       Api_command.dispatch
-        ~body:{|{"action":"create_user","email":"carol@ex","name":"Carol","cognito_group":"admin"}|}
+        ~body:{|{"action":"create_user","email":"carol@ex","name":"Carol","profile":"SysAdm"}|}
     in
     let resp =
       Api_query.dispatch ~action:"get_user"
@@ -125,7 +125,7 @@ let seed_user_and_blocked_node () =
   Memory.run st (fun () ->
     let _ =
       Api_command.dispatch
-        ~body:{|{"action":"create_user","email":"alice@ex","name":"Alice","cognito_group":"writer"}|}
+        ~body:{|{"action":"create_user","email":"alice@ex","name":"Alice","profile":"Developer"}|}
     in
     let body =
       Printf.sprintf
@@ -181,7 +181,7 @@ let effective_permission_before_and_after_block () =
   Memory.run st (fun () ->
     let _ =
       Api_command.dispatch
-        ~body:{|{"action":"create_user","email":"frank@ex","name":"Frank","cognito_group":"writer"}|}
+        ~body:{|{"action":"create_user","email":"frank@ex","name":"Frank","profile":"Developer"}|}
     in
     (* before block: writer capability *)
     let resp =

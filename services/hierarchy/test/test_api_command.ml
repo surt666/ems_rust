@@ -147,7 +147,7 @@ let create_user_happy () =
   let resp =
     Memory.run (Memory.empty ()) (fun () ->
       Api_command.dispatch
-        ~body:{|{"action":"create_user","email":"alice@ex","name":"Alice","cognito_group":"writer"}|})
+        ~body:{|{"action":"create_user","email":"alice@ex","name":"Alice","profile":"Developer"}|})
   in
   let status =
     Yojson.Safe.Util.(Yojson.Safe.from_string resp |> member "statusCode" |> to_int)
@@ -167,7 +167,7 @@ let delete_user_roundtrip () =
   Memory.run st (fun () ->
     let _ =
       Api_command.dispatch
-        ~body:{|{"action":"create_user","email":"bob@ex","name":"Bob","cognito_group":"reader"}|}
+        ~body:{|{"action":"create_user","email":"bob@ex","name":"Bob","profile":"Reader"}|}
     in
     let resp =
       Api_command.dispatch
@@ -183,7 +183,7 @@ let block_user_happy () =
   Memory.run st (fun () ->
     let _ =
       Api_command.dispatch
-        ~body:{|{"action":"create_user","email":"dave@ex","name":"Dave","cognito_group":"writer"}|}
+        ~body:{|{"action":"create_user","email":"dave@ex","name":"Dave","profile":"Developer"}|}
     in
     let body =
       Printf.sprintf
@@ -205,7 +205,7 @@ let unblock_user_roundtrip () =
   Memory.run st (fun () ->
     let _ =
       Api_command.dispatch
-        ~body:{|{"action":"create_user","email":"eve@ex","name":"Eve","cognito_group":"writer"}|}
+        ~body:{|{"action":"create_user","email":"eve@ex","name":"Eve","profile":"Developer"}|}
     in
     let block_body =
       Printf.sprintf

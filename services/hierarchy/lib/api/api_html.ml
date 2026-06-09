@@ -148,7 +148,7 @@ let option_nodes values =
 let respond_options values = respond (null (option_nodes values))
 
 let render_profiles () =
-  respond_options [ "Developer"; "Standard"; "Technician"; "Reader"; "SysAdm" ]
+  respond_options (List.map Profile.to_string Profile.all)
 
 let render_languages () =
   respond_options [ "danish"; "swedish"; "norwegian"; "english"; "german" ]

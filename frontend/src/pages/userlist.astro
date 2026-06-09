@@ -113,7 +113,7 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 
 					<div class="form-row-2col">
 						<label class="form-label">Brugerprofil</label>
-						<select name="data.cognito_group" class="form-select" hx-get={`${API_BASE_URL}/hierarchy/query/profiles`} hx-request='{"noHeaders": true}' hx-trigger="intersect once" hx-params="none" hx-swap="innerHTML">
+						<select name="data.profile" class="form-select" hx-get={`${API_BASE_URL}/hierarchy/query/profiles`} hx-request='{"noHeaders": true}' hx-trigger="intersect once" hx-params="none" hx-swap="innerHTML">
 							<option value="Developer">Udvikler</option>
 							<option value="Standard" selected>Standardbruger</option>
 							<option value="Technician">Tekniker</option>
