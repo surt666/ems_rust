@@ -103,8 +103,8 @@ where
 // delete
 // ---------------------------------------------------------------------------
 
-/// Delete a user, cascading all Administrates AND Blocked edges, then the
-/// user node itself.
+/// Delete a user, cascading ALL access edges (Administrates, Reads, Writes)
+/// AND Blocked edges, then the user node itself.
 ///
 /// Fails with `NotFoundUser` if the user does not exist.
 ///
@@ -112,7 +112,7 @@ where
 pub async fn delete<FGU, FGUFut, FLA, FLAFut, FLB, FLBFut, FDE, FDEFut, FDU, FDUFut>(
     id: UserId,
     get_user: FGU,
-    list_administrated: FLA,
+    list_access_edges: FLA,
     list_blocked: FLB,
     delete_edge: FDE,
     delete_user: FDU,
@@ -121,7 +121,7 @@ where
     FGU: FnOnce(UserId) -> FGUFut,
     FGUFut: Future<Output = Result<Option<User>, RepositoryError>>,
     FLA: FnOnce(UserId) -> FLAFut,
-    FLAFut: Future<Output = Result<Vec<crate::domain::ids::NodeId>, RepositoryError>>,
+    FLAFut: Future<Output = Result<Vec<(crate::domain::ids::NodeId, crate::domain::values::EdgeKind)>, RepositoryError>>,
     FLB: FnOnce(UserId) -> FLBFut,
     FLBFut: Future<Output = Result<Vec<crate::domain::ids::NodeId>, RepositoryError>>,
     FDE: Fn(String, String, crate::domain::values::EdgeKind) -> FDEFut,
@@ -135,15 +135,10 @@ where
         Some(_) => {
             let id_s = id.to_string();
 
-            // Cascade: delete all Administrates edges.
-            let admin_nodes = list_administrated(id.clone()).await?;
-            for node_id in admin_nodes {
-                delete_edge(
-                    id_s.clone(),
-                    node_id.to_string(),
-                    crate::domain::values::EdgeKind::Administrates,
-                )
-                .await?;
+            // Cascade: delete all Administrates / Reads / Writes edges.
+            let access = list_access_edges(id.clone()).await?;
+            for (node_id, kind) in access {
+                delete_edge(id_s.clone(), node_id.to_string(), kind).await?;
             }
 
             // Cascade: delete all Blocked edges.
@@ -235,10 +230,10 @@ mod tests {
         move || std::future::ready(Ok(s.list_users()))
     }
 
-    fn list_administrated_fn(
+    fn list_access_edges_fn(
         s: Rc<Store>,
-    ) -> impl FnOnce(UserId) -> std::future::Ready<Result<Vec<NodeId>, RepositoryError>> {
-        move |uid| std::future::ready(Ok(s.list_administrated_nodes(&uid)))
+    ) -> impl FnOnce(UserId) -> std::future::Ready<Result<Vec<(NodeId, EdgeKind)>, RepositoryError>> {
+        move |uid| std::future::ready(Ok(s.list_access_edges(&uid)))
     }
 
     fn list_blocked_nodes_fn(
@@ -442,7 +437,7 @@ mod tests {
         delete(
             u1.id.clone(),
             get_user_fn(store.clone()),
-            list_administrated_fn(store.clone()),
+            list_access_edges_fn(store.clone()),
             list_blocked_nodes_fn(store.clone()),
             delete_edge_fn(store.clone()),
             delete_user_fn(store.clone()),
@@ -468,7 +463,7 @@ mod tests {
         let result = delete(
             ghost_id,
             get_user_fn(store.clone()),
-            list_administrated_fn(store.clone()),
+            list_access_edges_fn(store.clone()),
             list_blocked_nodes_fn(store.clone()),
             delete_edge_fn(store.clone()),
             delete_user_fn(store.clone()),
@@ -526,7 +521,7 @@ mod tests {
         delete(
             uid.clone(),
             get_user_fn(store.clone()),
-            list_administrated_fn(store.clone()),
+            list_access_edges_fn(store.clone()),
             list_blocked_nodes_fn(store.clone()),
             delete_edge_fn(store.clone()),
             delete_user_fn(store.clone()),
@@ -592,7 +587,7 @@ mod tests {
         delete(
             uid.clone(),
             get_user_fn(store.clone()),
-            list_administrated_fn(store.clone()),
+            list_access_edges_fn(store.clone()),
             list_blocked_nodes_fn(store.clone()),
             delete_edge_fn(store.clone()),
             delete_user_fn(store.clone()),
@@ -605,6 +600,76 @@ mod tests {
             store.list_administrated_nodes(&uid).len(),
             0,
             "zero admin after delete"
+        );
+        assert!(store.get_user(&uid).is_none(), "user should be gone");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: delete cascades Writes and Reads edges
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn delete_cascades_writes_and_reads_edges() {
+        let store = Rc::new(Store::new());
+        let node_w = make_hn2(10044, "WriteTarget");
+        let node_r = make_hn2(10045, "ReadTarget");
+        let node_w_id = node_w.id.clone();
+        let node_r_id = node_r.id.clone();
+        store.put_node(&node_w);
+        store.put_node(&node_r);
+
+        // Create a Writer user.
+        let uid = create(
+            "writer@x".to_owned(),
+            "Writer".to_owned(),
+            CognitoGroup::Writer,
+            None,
+            None,
+            get_user_fn(store.clone()),
+            put_user_fn(store.clone()),
+        )
+        .await
+        .expect("create user")
+        .id;
+
+        // Grant Writes edge to one node, Reads edge to another.
+        store.put_edge(EdgeSpec {
+            from_: uid.to_string(),
+            to_: node_w_id.to_string(),
+            kind: EdgeKind::Writes,
+            name: String::new(),
+        });
+        store.put_edge(EdgeSpec {
+            from_: uid.to_string(),
+            to_: node_r_id.to_string(),
+            kind: EdgeKind::Reads,
+            name: String::new(),
+        });
+
+        // Verify two access edges before delete.
+        assert_eq!(
+            store.list_access_edges(&uid).len(),
+            2,
+            "two access edges before delete"
+        );
+
+        // Delete user — must cascade both edges.
+        delete(
+            uid.clone(),
+            get_user_fn(store.clone()),
+            list_access_edges_fn(store.clone()),
+            list_blocked_nodes_fn(store.clone()),
+            delete_edge_fn(store.clone()),
+            delete_user_fn(store.clone()),
+        )
+        .await
+        .expect("delete user");
+
+        // All access edges gone, user gone.
+        assert_eq!(
+            store.list_access_edges(&uid).len(),
+            0,
+            "zero access edges after delete"
         );
         assert!(store.get_user(&uid).is_none(), "user should be gone");
     }

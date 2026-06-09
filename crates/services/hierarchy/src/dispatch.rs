@@ -228,7 +228,9 @@ where
 /// 2. `users::create` (DDB put).
 /// 3. Best-effort `grant_administrates` for each allowed node (ignore errors).
 /// 4. Best-effort `block` for each blocked node (ignore errors).
-/// 5. `create_cognito(email, name)` + `add_to_group(email, group)`.
+/// 5. `provision_cognito(email, name, group)` — generates password, creates
+///    the Cognito user (Cognito emails the temporary password), adds to group,
+///    then sets the password permanent so no forced-change-password flow.
 /// 6. On Cognito failure: `users::delete` rolls back the DDB user; return error.
 ///
 /// `get_node` and `put_edge` are `Fn` (called multiple times in the loop).
@@ -250,10 +252,8 @@ pub async fn handle_create_user<
     FDEFut,
     FDU,
     FDUFut,
-    FCC,
-    FCCFut,
-    FAG,
-    FAGFut,
+    FPC,
+    FPCFut,
 >(
     email: String,
     name: String,
@@ -266,12 +266,11 @@ pub async fn handle_create_user<
     put_user: FPU,
     get_node: FGN,
     put_edge: FPE,
-    list_administrated: FLA,
+    list_access_edges: FLA,
     list_blocked: FLB,
     delete_edge: FDE,
     delete_user: FDU,
-    create_cognito: FCC,
-    add_to_group: FAG,
+    provision_cognito: FPC,
 ) -> Value
 where
     FGU: FnOnce(UserId) -> FGUFut,
@@ -283,17 +282,15 @@ where
     FPE: Fn(EdgeSpec) -> FPEFut,
     FPEFut: Future<Output = Result<(), RepositoryError>>,
     FLA: FnOnce(UserId) -> FLAFut,
-    FLAFut: Future<Output = Result<Vec<NodeId>, RepositoryError>>,
+    FLAFut: Future<Output = Result<Vec<(NodeId, EdgeKind)>, RepositoryError>>,
     FLB: FnOnce(UserId) -> FLBFut,
     FLBFut: Future<Output = Result<Vec<NodeId>, RepositoryError>>,
     FDE: Fn(String, String, EdgeKind) -> FDEFut,
     FDEFut: Future<Output = Result<(), RepositoryError>>,
     FDU: FnOnce(UserId) -> FDUFut,
     FDUFut: Future<Output = Result<(), RepositoryError>>,
-    FCC: FnOnce(String, String) -> FCCFut,
-    FCCFut: Future<Output = Result<(), RepositoryError>>,
-    FAG: FnOnce(String, CognitoGroup) -> FAGFut,
-    FAGFut: Future<Output = Result<(), RepositoryError>>,
+    FPC: FnOnce(String, String, CognitoGroup) -> FPCFut,
+    FPCFut: Future<Output = Result<(), RepositoryError>>,
 {
     // 1. Parse profile → cognito_group.
     let profile = match profile_s.parse::<Profile>() {
@@ -378,8 +375,8 @@ where
         }
     }
 
-    // 5. Cognito create + add to group.
-    if let Err(e) = create_cognito(email.clone(), user.name.clone()).await {
+    // 5. Provision Cognito (create + add-to-group + set permanent password).
+    if let Err(e) = provision_cognito(email.clone(), user.name.clone(), cognito_group).await {
         // 6. Rollback: delete the DDB user (cascade edges).
         let u_rb = user.clone();
         let _ = users::delete(
@@ -388,16 +385,12 @@ where
                 let u = u_rb;
                 async move { Ok(Some(u)) }
             },
-            list_administrated,
+            list_access_edges,
             list_blocked,
             delete_edge,
             delete_user,
         )
         .await;
-        return repo_error_response(e);
-    }
-
-    if let Err(e) = add_to_group(email, cognito_group).await {
         return repo_error_response(e);
     }
 
@@ -472,7 +465,7 @@ where
 /// Handler for `delete_user`.
 ///
 /// Mirrors `run_delete_user`: resolves user id (email preferred, U# fallback),
-/// cascades edges via `users::delete`, then `delete_cognito(email)`.
+/// cascades ALL access edges via `users::delete`, then `delete_cognito(email)`.
 pub async fn handle_delete_user<
     FGU,
     FGUFut,
@@ -489,7 +482,7 @@ pub async fn handle_delete_user<
 >(
     email_or_id: &str,
     get_user: FGU,
-    list_administrated: FLA,
+    list_access_edges: FLA,
     list_blocked: FLB,
     delete_edge: FDE,
     delete_user: FDU,
@@ -499,7 +492,7 @@ where
     FGU: FnOnce(UserId) -> FGUFut,
     FGUFut: Future<Output = Result<Option<User>, RepositoryError>>,
     FLA: FnOnce(UserId) -> FLAFut,
-    FLAFut: Future<Output = Result<Vec<NodeId>, RepositoryError>>,
+    FLAFut: Future<Output = Result<Vec<(NodeId, EdgeKind)>, RepositoryError>>,
     FLB: FnOnce(UserId) -> FLBFut,
     FLBFut: Future<Output = Result<Vec<NodeId>, RepositoryError>>,
     FDE: Fn(String, String, EdgeKind) -> FDEFut,
@@ -521,7 +514,7 @@ where
     let deleted_id = match users::delete(
         user_id,
         get_user,
-        list_administrated,
+        list_access_edges,
         list_blocked,
         delete_edge,
         delete_user,
@@ -919,8 +912,7 @@ pub async fn run(cmd: Command) -> Value {
             allowed,
             blocked,
         } => {
-            let pool1 = pool_id.clone();
-            let pool2 = pool_id.clone();
+            let pool = pool_id.clone();
             handle_create_user(
                 email,
                 name,
@@ -973,7 +965,7 @@ pub async fn run(cmd: Command) -> Value {
                     let t = table.clone();
                     move |uid| {
                         let t = t.clone();
-                        async move { user::list_administrated_nodes(ddb, &t, &uid).await }
+                        async move { user::list_access_edges(ddb, &t, &uid).await }
                     }
                 },
                 {
@@ -997,20 +989,11 @@ pub async fn run(cmd: Command) -> Value {
                         async move { user::delete_user(ddb, &t, &uid).await }
                     }
                 },
-                move |email, name| {
-                    let pool1 = pool1.clone();
+                move |email, name, group| {
+                    let pool = pool.clone();
                     async move {
-                        model::repository::cognito::user::create_cognito_user(
-                            cog, &pool1, &email, &name,
-                        )
-                        .await
-                    }
-                },
-                move |email, group| {
-                    let pool2 = pool2.clone();
-                    async move {
-                        model::repository::cognito::user::add_user_to_group(
-                            cog, &pool2, &email, group,
+                        model::repository::cognito::user::provision_cognito_user(
+                            cog, &pool, &email, &name, group,
                         )
                         .await
                     }
@@ -1066,7 +1049,7 @@ pub async fn run(cmd: Command) -> Value {
                     let t = table.clone();
                     move |uid| {
                         let t = t.clone();
-                        async move { user::list_administrated_nodes(ddb, &t, &uid).await }
+                        async move { user::list_access_edges(ddb, &t, &uid).await }
                     }
                 },
                 {
@@ -1270,10 +1253,10 @@ mod tests {
         }
     }
 
-    fn make_list_administrated(
+    fn make_list_access_edges(
         s: Rc<Store>,
-    ) -> impl FnOnce(UserId) -> std::future::Ready<Result<Vec<NodeId>, RepositoryError>> {
-        move |uid| std::future::ready(Ok(s.list_administrated_nodes(&uid)))
+    ) -> impl FnOnce(UserId) -> std::future::Ready<Result<Vec<(NodeId, EdgeKind)>, RepositoryError>> {
+        move |uid| std::future::ready(Ok(s.list_access_edges(&uid)))
     }
 
     fn make_list_blocked(
@@ -1339,14 +1322,9 @@ mod tests {
     }
 
     /// Cognito stubs — all succeed.
-    fn cog_ok_create(
-    ) -> impl FnOnce(String, String) -> std::future::Ready<Result<(), RepositoryError>> {
-        |_, _| std::future::ready(Ok(()))
-    }
-
-    fn cog_ok_add(
-    ) -> impl FnOnce(String, CognitoGroup) -> std::future::Ready<Result<(), RepositoryError>> {
-        |_, _| std::future::ready(Ok(()))
+    fn cog_ok_provision(
+    ) -> impl FnOnce(String, String, CognitoGroup) -> std::future::Ready<Result<(), RepositoryError>> {
+        |_, _, _| std::future::ready(Ok(()))
     }
 
     fn cog_ok_delete(
@@ -1642,12 +1620,11 @@ mod tests {
             make_put_user(store.clone()),
             make_get_node(store.clone()),
             make_put_edge(store.clone()),
-            make_list_administrated(store.clone()),
+            make_list_access_edges(store.clone()),
             make_list_blocked(store.clone()),
             make_delete_edge(store.clone()),
             make_delete_user(store.clone()),
-            cog_ok_create(),
-            cog_ok_add(),
+            cog_ok_provision(),
         )
         .await;
 
@@ -1676,12 +1653,11 @@ mod tests {
             make_put_user(store.clone()),
             make_get_node(store.clone()),
             make_put_edge(store.clone()),
-            make_list_administrated(store.clone()),
+            make_list_access_edges(store.clone()),
             make_list_blocked(store.clone()),
             make_delete_edge(store.clone()),
             make_delete_user(store.clone()),
-            cog_ok_create(),
-            cog_ok_add(),
+            cog_ok_provision(),
         )
         .await;
 
@@ -1715,12 +1691,11 @@ mod tests {
             make_put_user(store.clone()),
             make_get_node(store.clone()),
             make_put_edge(store.clone()),
-            make_list_administrated(store.clone()),
+            make_list_access_edges(store.clone()),
             make_list_blocked(store.clone()),
             make_delete_edge(store.clone()),
             make_delete_user(store.clone()),
-            cog_ok_create(),
-            cog_ok_add(),
+            cog_ok_provision(),
         )
         .await;
 
@@ -1747,19 +1722,18 @@ mod tests {
             make_put_user(store.clone()),
             make_get_node(store.clone()),
             make_put_edge(store.clone()),
-            make_list_administrated(store.clone()),
+            make_list_access_edges(store.clone()),
             make_list_blocked(store.clone()),
             make_delete_edge(store.clone()),
             make_delete_user(store.clone()),
-            cog_ok_create(),
-            cog_ok_add(),
+            cog_ok_provision(),
         )
         .await;
 
         let del = handle_delete_user(
             "U#bob@ex",
             make_get_user(store.clone()),
-            make_list_administrated(store.clone()),
+            make_list_access_edges(store.clone()),
             make_list_blocked(store.clone()),
             make_delete_edge(store.clone()),
             make_delete_user(store.clone()),
@@ -1791,19 +1765,18 @@ mod tests {
             make_put_user(store.clone()),
             make_get_node(store.clone()),
             make_put_edge(store.clone()),
-            make_list_administrated(store.clone()),
+            make_list_access_edges(store.clone()),
             make_list_blocked(store.clone()),
             make_delete_edge(store.clone()),
             make_delete_user(store.clone()),
-            cog_ok_create(),
-            cog_ok_add(),
+            cog_ok_provision(),
         )
         .await;
 
         let del = handle_delete_user(
             "carol@ex",
             make_get_user(store.clone()),
-            make_list_administrated(store.clone()),
+            make_list_access_edges(store.clone()),
             make_list_blocked(store.clone()),
             make_delete_edge(store.clone()),
             make_delete_user(store.clone()),
@@ -1835,12 +1808,11 @@ mod tests {
             make_put_user(store.clone()),
             make_get_node(store.clone()),
             make_put_edge(store.clone()),
-            make_list_administrated(store.clone()),
+            make_list_access_edges(store.clone()),
             make_list_blocked(store.clone()),
             make_delete_edge(store.clone()),
             make_delete_user(store.clone()),
-            |_, _| std::future::ready(Err(RepositoryError::Aws("cognito down".to_string()))),
-            cog_ok_add(),
+            |_, _, _| std::future::ready(Err(RepositoryError::Aws("cognito down".to_string()))),
         )
         .await;
 
@@ -1872,12 +1844,11 @@ mod tests {
             make_put_user(store.clone()),
             make_get_node(store.clone()),
             make_put_edge(store.clone()),
-            make_list_administrated(store.clone()),
+            make_list_access_edges(store.clone()),
             make_list_blocked(store.clone()),
             make_delete_edge(store.clone()),
             make_delete_user(store.clone()),
-            cog_ok_create(),
-            cog_ok_add(),
+            cog_ok_provision(),
         )
         .await;
 
@@ -1915,12 +1886,11 @@ mod tests {
             make_put_user(store.clone()),
             make_get_node(store.clone()),
             make_put_edge(store.clone()),
-            make_list_administrated(store.clone()),
+            make_list_access_edges(store.clone()),
             make_list_blocked(store.clone()),
             make_delete_edge(store.clone()),
             make_delete_user(store.clone()),
-            cog_ok_create(),
-            cog_ok_add(),
+            cog_ok_provision(),
         )
         .await;
 
