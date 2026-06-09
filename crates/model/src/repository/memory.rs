@@ -527,19 +527,11 @@ impl Default for Store {
 }
 
 // ---------------------------------------------------------------------------
-// EdgeSpec — mirrors `Effects.edge_spec` / the OCaml `edge_spec` record
+// Re-export EdgeSpec from the parent repository module so callers that
+// import from `memory` still see it.
 // ---------------------------------------------------------------------------
 
-/// The minimal information needed to write an edge into the store.
-///
-/// Mirrors OCaml `Effects.edge_spec`:
-/// `{ from_ : string; to_ : string; kind : Edge_kind.t; name : string }`.
-pub struct EdgeSpec {
-    pub from_: String,
-    pub to_: String,
-    pub kind: EdgeKind,
-    pub name: String,
-}
+pub use super::EdgeSpec;
 
 // ---------------------------------------------------------------------------
 // Tests
