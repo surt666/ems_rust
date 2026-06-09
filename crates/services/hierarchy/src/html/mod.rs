@@ -1,0 +1,36 @@
+pub mod tree;
+
+/// Percent-encode a string component for use in URL paths/query values.
+///
+/// Only unreserved chars (`A-Z a-z 0-9 - _ . ~`) are left as-is; everything
+/// else is `%XX`-encoded (uppercase hex, matching OCaml `api_html.ml :: pct`).
+pub fn pct(s: &str) -> String {
+    let mut buf = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                buf.push(b as char);
+            }
+            _ => {
+                buf.push_str(&format!("%{:02X}", b));
+            }
+        }
+    }
+    buf
+}
+
+/// Return `(icon_href, bar_class)` for a given level, matching OCaml
+/// `api_html.ml :: level_visual`.
+pub fn level_visual(level: model::domain::ids::Level) -> (&'static str, &'static str) {
+    use model::domain::ids::Level;
+    match level {
+        Level::Hn0 => ("", ""),
+        Level::Hn1 => ("#icon-partner", "partner"),
+        Level::Hn2 => ("#icon-company", "company"),
+        Level::Hn3 => ("#icon-property", "property"),
+        Level::Hn4 => ("#icon-building", "building"),
+        Level::Hn5 => ("#icon-area", "area"),
+        Level::Hn6 => ("#icon-group", "group"),
+        Level::Hn7 | Level::Hn8 | Level::Hn9 => ("#icon-area", "area"),
+    }
+}
