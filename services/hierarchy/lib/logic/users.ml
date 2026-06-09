@@ -40,14 +40,15 @@ let delete id =
   match Effects.get_user id with
   | None -> Error (not_found id)
   | Some _ ->
-      let blocked = Effects.list_blocked_nodes id in
-      List.iter
-        (fun node_id ->
-          Effects.delete_edge
-            ~from_:(User_id.to_string id)
-            ~to_:(Node_id.to_string node_id)
-            ~kind:Edge_kind.Blocked)
-        blocked;
+      (* Remove all of the user's relations (Administrates + Blocked edges),
+         then the user node itself. *)
+      let del kind node_id =
+        Effects.delete_edge
+          ~from_:(User_id.to_string id)
+          ~to_:(Node_id.to_string node_id) ~kind
+      in
+      List.iter (del Edge_kind.Administrates) (Effects.list_administrated_nodes id);
+      List.iter (del Edge_kind.Blocked) (Effects.list_blocked_nodes id);
       Effects.delete_user id;
       Ok id
 

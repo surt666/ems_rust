@@ -92,6 +92,16 @@ let run_replace_sensor_device json =
   | Ok s -> Ok (Api_json.ok_response (Api_json.sensor_to_json s))
   | Error e -> Ok (Api_json.error_response e)
 
+(* Read a field as a list of strings: a JSON array, a lone string (singleton),
+   or absent ([]). The form parser packs repeated fields (allowed/blocked) into
+   an array. *)
+let string_list json key =
+  match field json key with
+  | Some (`List xs) ->
+      List.filter_map (function `String s -> Some s | _ -> None) xs
+  | Some (`String s) -> [ s ]
+  | _ -> []
+
 let run_create_user json =
   let* email = require_string json "email" in
   let* name  = require_string json "name" in
@@ -116,11 +126,25 @@ let run_create_user json =
          | Error e -> Error e)
     | Some _ -> Error "non-string field \"currency\""
   in
+  let allowed = string_list json "allowed" in
+  let blocked = string_list json "blocked" in
   match
     Users.create ~email ~name ~cognito_group ?language ?currency ()
   with
-  | Ok u -> Ok (Api_json.ok_response (Api_json.user_to_json u))
   | Error e -> Ok (Api_json.error_response e)
+  | Ok u ->
+      (* Assign access to the chosen hierarchy nodes: allowed -> Administrates
+         (the user's scope), blocked -> Blocked. Best-effort per node; the user
+         is created regardless. *)
+      let user_id = User_id.of_email email in
+      let apply f node_s =
+        match Node_id.of_string node_s with
+        | Ok node_id -> ignore (f ~user_id ~node_id ())
+        | Error _ -> ()
+      in
+      List.iter (apply Access.grant_administrates) allowed;
+      List.iter (apply Access.block) blocked;
+      Ok (Api_json.ok_response (Api_json.user_to_json u))
 
 let run_update_user json =
   let* id_s = require_string json "id" in
@@ -165,8 +189,12 @@ let run_update_user json =
   | Error e -> Ok (Api_json.error_response e)
 
 let run_delete_user json =
-  let* id_s = require_string json "id" in
-  let* id = User_id.of_string id_s in
+  (* The GUI sends the email; accept "email" (preferred) or a "U#..." "id". *)
+  let* id =
+    match field json "email" with
+    | Some (`String e) -> Ok (User_id.of_email e)
+    | _ -> let* id_s = require_string json "id" in User_id.of_string id_s
+  in
   match Users.delete id with
   | Ok _ ->
       Ok (Api_json.ok_response

@@ -174,6 +174,40 @@ let delete_cascades_blocked_edges () =
     | Ok xs -> Alcotest.(check int) "no users block node" 0 (List.length xs)
     | Error e -> Alcotest.failf "list: %s" (Errors.message e))
 
+let delete_cascades_administrates_edges () =
+  let st = Memory.empty () in
+  let node_id = Node_id.make Level.Hn2 10043 in
+  let node =
+    Node.make ~id:10043 ~level:Level.Hn2 ~name:"Beta"
+      ~parent:Node_id.root ~parent_path:(parent_path_for_hn2 ()) ~created:Ptime.epoch
+      ~metadata:(`Assoc []) ~schema:(Some sample_schema)
+  in
+  Memory.run st (fun () -> Effects.put_node node);
+  let uid =
+    Memory.run st (fun () ->
+      match
+        Users.create ~email:"c@x" ~name:"C"
+          ~cognito_group:Cognito_group.Admin ()
+      with
+      | Ok u -> u.User.id
+      | Error e -> Alcotest.failf "create: %s" (Errors.message e))
+  in
+  Memory.run st (fun () ->
+    match Access.grant_administrates ~user_id:uid ~node_id () with
+    | Error e -> Alcotest.failf "grant: %s" (Errors.message e)
+    | Ok () -> ());
+  Memory.run st (fun () ->
+    match Access.list_administrated_nodes ~user_id:uid with
+    | Ok xs -> Alcotest.(check int) "one admin before delete" 1 (List.length xs)
+    | Error e -> Alcotest.failf "list: %s" (Errors.message e));
+  Memory.run st (fun () ->
+    match Users.delete uid with
+    | Ok _ -> () | Error e -> Alcotest.failf "delete: %s" (Errors.message e));
+  Memory.run st (fun () ->
+    match Access.list_administrated_nodes ~user_id:uid with
+    | Ok xs -> Alcotest.(check int) "zero admin after delete" 0 (List.length xs)
+    | Error e -> Alcotest.failf "list: %s" (Errors.message e))
+
 let tests =
   [ Alcotest.test_case "user put/get roundtrip" `Quick put_get_roundtrip
   ; Alcotest.test_case "user list and delete"   `Quick list_and_delete
@@ -185,4 +219,6 @@ let tests =
   ; Alcotest.test_case "delete unknown errors"  `Quick delete_unknown_errors
   ; Alcotest.test_case "delete cascades blocked edges" `Quick
       delete_cascades_blocked_edges
+  ; Alcotest.test_case "delete cascades administrates edges" `Quick
+      delete_cascades_administrates_edges
   ]

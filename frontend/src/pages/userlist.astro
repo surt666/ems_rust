@@ -29,9 +29,7 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 					},
 					body: JSON.stringify({
 						action: 'delete_user',
-						data: {
-							email: this.emailToDelete
-						}
+						email: this.emailToDelete
 					})
 				});
 

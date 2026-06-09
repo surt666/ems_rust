@@ -74,18 +74,26 @@ let rec set_path ~under_metadata assoc path v =
 (* Build JSON body from flat form fields. Strip a leading "data." prefix so
    "data.daq_id=foo" lands at top level. Nested dotted keys like
    "data.metadata.lat=55" become {"metadata": {"lat": 55.0}}. *)
+(* Repeated form fields that should become JSON arrays (e.g. the permission
+   tree posts many "data.allowed"/"data.blocked" checkboxes). *)
+let array_keys = [ "allowed"; "blocked" ]
+
 let form_to_command_json fields =
+  let norm k = match strip_prefix "data." k with Some n -> n | None -> k in
+  let is_array (k, _) = List.mem (norm k) array_keys in
+  let arrays, scalars = List.partition is_array fields in
   let assoc =
     List.fold_left (fun acc (k, v) ->
       if k = "" then acc
-      else
-        let key =
-          match strip_prefix "data." k with
-          | Some name -> name
-          | None -> k
-        in
-        let parts = String.split_on_char '.' key in
-        set_path ~under_metadata:false acc parts v) [] fields
+      else set_path ~under_metadata:false acc (String.split_on_char '.' (norm k)) v)
+      [] scalars
+  in
+  let assoc =
+    List.fold_left (fun acc key ->
+      match List.filter_map (fun (k, v) -> if norm k = key then Some (`String v) else None) arrays with
+      | [] -> acc
+      | vals -> acc @ [ (key, `List vals) ])
+      assoc array_keys
   in
   Yojson.Safe.to_string (`Assoc assoc)
 
