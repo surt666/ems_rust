@@ -127,6 +127,7 @@ impl Command {
     /// Resolve the effective user identifier for `DeleteUser`, mirroring
     /// `run_delete_user` in `api_command.ml`:
     /// prefer `email`, fall back to `id`.
+    #[cfg(test)]
     pub fn delete_user_id(&self) -> Option<&str> {
         match self {
             Command::DeleteUser { email, id } => email.as_deref().or(id.as_deref()),

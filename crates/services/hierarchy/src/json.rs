@@ -8,7 +8,7 @@
 
 use serde_json::{json, Value};
 
-use model::domain::formula::{expr_aliases, expr_to_string, parse_expr_str, Expr, Formula};
+use model::domain::formula::{expr_aliases, expr_to_string, parse_expr_str, Formula};
 use model::domain::ids::{Level, NodeId, SensorId};
 use model::domain::node::Node;
 use model::domain::schema::{EdgeSpec, FieldSpec, Schema};
@@ -25,6 +25,7 @@ use model::domain::values::FieldType;
 /// the OCaml `Errors.to_code` / `Errors.message` values.
 ///
 /// Port of `api_json.ml :: error_body`.
+#[cfg(test)]
 pub fn error_body(code: &str, message: &str) -> String {
     let j = json!({
         "error": {
@@ -520,14 +521,6 @@ fn opt_f64_of_json(v: &Value) -> Option<f64> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// expr_to_string re-export (used in dispatch.rs)
-// ---------------------------------------------------------------------------
-
-/// Re-export for callers that used dispatch::expr_to_string.
-pub fn expr_str(e: &Expr) -> String {
-    expr_to_string(e)
-}
 
 // ---------------------------------------------------------------------------
 // Tests — port of `services/hierarchy/test/test_api_json.ml` (13 cases)

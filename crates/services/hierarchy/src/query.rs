@@ -23,7 +23,9 @@ use model::domain::sensor::Sensor;
 use model::domain::user::User;
 use model::domain::values::EdgeKind;
 use model::errors::RepositoryError;
-use model::logic::{access, hierarchy, sensors, users};
+use model::logic::{access, hierarchy, users};
+#[cfg(test)]
+use model::logic::sensors;
 
 use crate::dispatch::{node_ref_to_json, node_to_json, sensor_to_json, user_to_json};
 use crate::html::{forms, node as html_node, tree};
@@ -162,6 +164,7 @@ where
 }
 
 /// `GET /query/list_sensors?parent=HN4#...`
+#[cfg(test)]
 pub async fn handle_list_sensors<FLS, FLSFut, FGA>(
     parent_s: &str,
     list_sensor_ids: FLS,
@@ -182,20 +185,6 @@ where
     }
 }
 
-/// `GET /query/get_sensor?id=S#...`
-async fn handle_get_sensor<FGA>(id_s: &str, get_active_sensor: FGA) -> (u16, String)
-where
-    FGA: FnOnce(SensorId) -> Option<Sensor>,
-{
-    let sid = match SensorId::parse(id_s) {
-        Ok(id) => id,
-        Err(e) => return bad_request(&format!("bad id: {}", e)),
-    };
-    match sensors::get_active(sid, get_active_sensor) {
-        Ok(s) => ok(sensor_to_json(&s)),
-        Err(e) => repo_error(e),
-    }
-}
 
 /// `GET /query/get_user?id=U#email`
 pub async fn handle_get_user<FGU, FGUFut>(id_s: &str, get_user: FGU) -> (u16, String)
@@ -435,27 +424,6 @@ where
     }
 }
 
-/// `GET /hierarchy/query/sensors?nodepath=...`
-async fn handle_sensors<FLS, FLSFut, FGA>(
-    nodepath: &str,
-    list_sensor_ids: FLS,
-    get_active_sensor: FGA,
-) -> (u16, String)
-where
-    FLS: FnOnce(NodeId) -> FLSFut,
-    FLSFut: Future<Output = Result<Vec<SensorId>, RepositoryError>>,
-    FGA: Fn(SensorId) -> Option<Sensor>,
-{
-    let last = leaf_node_id(nodepath);
-    let nid = match NodeId::parse(last) {
-        Ok(id) => id,
-        Err(e) => return html_error(&format!("bad nodepath: {}", e)),
-    };
-    match sensors::list_active(nid, list_sensor_ids, get_active_sensor).await {
-        Ok(ss) => html_ok(html_node::render_sensors(&ss)),
-        Err(e) => html_repo_error(e),
-    }
-}
 
 /// `GET /hierarchy/query/company_sensors?nodepath=...`
 ///
