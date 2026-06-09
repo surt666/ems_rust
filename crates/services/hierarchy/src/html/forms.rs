@@ -1,5 +1,6 @@
 use maud::{html, Markup};
-use model::domain::values::Profile;
+use model::domain::values::{Currency, Language, Permission, Profile, Timezone};
+use strum::IntoEnumIterator;
 
 // ---------------------------------------------------------------------------
 // Option-list renderers
@@ -19,10 +20,10 @@ pub fn render_profiles() -> Markup {
 /// `<option>` elements for all supported languages (lowercase).
 /// Mirrors OCaml `api_html.ml :: render_languages`.
 pub fn render_languages() -> Markup {
-    let langs = ["danish", "swedish", "norwegian", "english", "german"];
     html! {
-        @for l in langs {
-            option value=(l) { (l) }
+        @for l in Language::iter() {
+            @let s = l.to_string();
+            option value=(s) { (s) }
         }
     }
 }
@@ -30,10 +31,10 @@ pub fn render_languages() -> Markup {
 /// `<option>` elements for all supported currencies.
 /// Mirrors OCaml `api_html.ml :: render_currencies`.
 pub fn render_currencies() -> Markup {
-    let currencies = ["DKK", "SEK", "NOK", "USD", "EUR"];
     html! {
-        @for c in currencies {
-            option value=(c) { (c) }
+        @for c in Currency::iter() {
+            @let s = c.to_string();
+            option value=(s) { (s) }
         }
     }
 }
@@ -41,10 +42,10 @@ pub fn render_currencies() -> Markup {
 /// `<option>` elements for all permission levels.
 /// Mirrors OCaml `api_html.ml :: render_permissions`.
 pub fn render_permissions() -> Markup {
-    let perms = ["view", "edit", "admin"];
     html! {
-        @for p in perms {
-            option value=(p) { (p) }
+        @for p in Permission::iter() {
+            @let s = p.to_string();
+            option value=(s) { (s) }
         }
     }
 }
@@ -52,21 +53,10 @@ pub fn render_permissions() -> Markup {
 /// `<option>` elements for all supported timezones.
 /// Mirrors OCaml `api_html.ml :: render_timezones`.
 pub fn render_timezones() -> Markup {
-    let tzs = [
-        "Europe/Copenhagen",
-        "Europe/Stockholm",
-        "Europe/Oslo",
-        "Europe/Berlin",
-        "Europe/London",
-        "Europe/Paris",
-        "Europe/Madrid",
-        "Europe/Rome",
-        "Europe/Amsterdam",
-        "UTC",
-    ];
     html! {
-        @for tz in tzs {
-            option value=(tz) { (tz) }
+        @for tz in Timezone::iter() {
+            @let s = tz.to_string();
+            option value=(s) { (s) }
         }
     }
 }

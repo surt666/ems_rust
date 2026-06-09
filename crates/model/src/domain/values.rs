@@ -186,8 +186,9 @@ impl Profile {
 /// Supported currencies.
 ///
 /// Faithfully ported from `services/hierarchy/lib/domain/currency.ml`.
+/// Variant order backs the `render_currencies` option list: DKK, SEK, NOK, USD, EUR.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default,
-         strum::Display, strum::EnumString)]
+         strum::Display, strum::EnumString, EnumIter)]
 pub enum Currency {
     /// Matches OCaml `Currency.default = DKK`.
     #[default]
@@ -211,8 +212,9 @@ pub enum Currency {
 /// Supported UI languages.
 ///
 /// Faithfully ported from `services/hierarchy/lib/domain/language.ml`.
+/// Variant order backs the `render_languages` option list: danish, swedish, norwegian, english, german.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default,
-         strum::Display, strum::EnumString)]
+         strum::Display, strum::EnumString, EnumIter)]
 pub enum Language {
     /// Matches OCaml `Language.default = Danish`.
     #[default]
@@ -244,6 +246,59 @@ pub enum MeterType {
     Counter,
     #[strum(serialize = "gauge")]
     Gauge,
+}
+
+
+// ---------------------------------------------------------------------------
+// Timezone
+// ---------------------------------------------------------------------------
+
+/// Supported display timezones for the UI.
+///
+/// Variant order backs the `render_timezones` option list:
+/// Copenhagen, Stockholm, Oslo, Berlin, London, Paris, Madrid, Rome, Amsterdam, Utc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq,
+         strum::Display, strum::EnumString, EnumIter)]
+pub enum Timezone {
+    #[strum(serialize = "Europe/Copenhagen")]
+    Copenhagen,
+    #[strum(serialize = "Europe/Stockholm")]
+    Stockholm,
+    #[strum(serialize = "Europe/Oslo")]
+    Oslo,
+    #[strum(serialize = "Europe/Berlin")]
+    Berlin,
+    #[strum(serialize = "Europe/London")]
+    London,
+    #[strum(serialize = "Europe/Paris")]
+    Paris,
+    #[strum(serialize = "Europe/Madrid")]
+    Madrid,
+    #[strum(serialize = "Europe/Rome")]
+    Rome,
+    #[strum(serialize = "Europe/Amsterdam")]
+    Amsterdam,
+    #[strum(serialize = "UTC")]
+    Utc,
+}
+
+
+// ---------------------------------------------------------------------------
+// Permission
+// ---------------------------------------------------------------------------
+
+/// UI permission levels used by the permissions dropdown.
+///
+/// Variant order backs the `render_permissions` option list: view, edit, admin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq,
+         strum::Display, strum::EnumString, EnumIter)]
+pub enum Permission {
+    #[strum(serialize = "view")]
+    View,
+    #[strum(serialize = "edit")]
+    Edit,
+    #[strum(serialize = "admin")]
+    Admin,
 }
 
 
