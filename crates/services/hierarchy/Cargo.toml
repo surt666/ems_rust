@@ -15,3 +15,6 @@ strum.workspace = true
 chrono.workspace = true
 model = { path = "../../model" }
 urlencoding.workspace = true
+
+[dev-dependencies]
+model = { path = "../../model", features = ["testing"] }
