@@ -30,11 +30,14 @@ Feature: measurements_aggregate rollup view
       | 2,9,456            | 10009 | HN2#2 ; HN2#2\|HN3#9 ; HN2#2\|HN3#9\|HN4#456 ; HN2#2\|HN3#9\|HN4#456\|L#10009          |
       | 2                  | 10009 | HN2#2 ; HN2#2\|L#10009                                                                 |
 
-  # INVARIANT (mirrors meter_enrichment.feature): hierarchy levels are dense depth indices, so a
-  # populated path is contiguous from hn2 with only trailing nulls. ancestor_keys therefore stops
-  # at the first None (no interior hole to skip). This holds because the v2
-  # type-graph model derives every child's level as parent + 1 — see
+  # INVARIANT (mirrors meter_enrichment.feature): v2-created paths are dense (child level =
+  # parent + 1), so ancestor_keys stops at the first None — see
   # features/hierarchy/schema_type_graph.feature.
+  # KNOWN LIMITATION (accepted 2026-06-10): legacy v1 level-skip nodes exist (456 buildings at
+  # HN4 directly under HN2 companies, hole at hn3). A meter under such a node has hn3=null,
+  # hn4 set, and ancestor_keys drops its building/deeper levels from the rollup. Accepted
+  # because only one building carries a sensor; if meters ever attach under legacy skip-path
+  # buildings, change the break to skip interior holes (join to nearest populated ancestor).
 
   # source: glue/tests/test_helpers.py — build_sk and delimiter invariant
   Scenario: A node's own dated rows sort before any descendant row

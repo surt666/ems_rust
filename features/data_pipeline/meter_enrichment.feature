@@ -48,15 +48,21 @@ Feature: Meter enrichment and hierarchy resolution
   # source: HierarchyPathParserSpec — "skip non-contiguous depths if absent"
   # INVARIANT: hn1..hn9 are dense DEPTH indices. Under the v2 type-graph schema
   # (see features/hierarchy/schema_type_graph.feature) a child's level is always
-  # the parent's depth + 1, derived by the model layer — so a valid
+  # the parent's depth + 1, derived by the model layer — so a v2-created
   # hierarchy_path is contiguous from hn2 with only trailing nulls. The same
   # TYPE (e.g. building) may appear at different depths; never assume a fixed
   # type-per-level mapping (hn4 is not always "building").
-  Scenario: The parser tolerates a non-contiguous path defensively, but production paths are dense
-    Given the hierarchy_path "HN0#root|HN1#1|HN2#2|HN4#8" (a gap the schema would not emit)
+  # LEGACY EXCEPTION (found 2026-06-10 during the v2 migration): the v1 schema
+  # validator allowed level-SKIPPING edges, and production hierarchy_new holds
+  # 456 of them (buildings at HN4 directly under HN2 companies — hole at hn3).
+  # Those nodes keep their ids, so their meters' hierarchy_paths have interior
+  # nulls. Consumers walking levels must tolerate such holes for legacy nodes
+  # even though v2 never creates new ones.
+  Scenario: The parser tolerates a non-contiguous path; legacy nodes can produce one
+    Given the hierarchy_path "HN0#root|HN1#1|HN2#2|HN4#8" (a v1 level-skip edge shape)
     When HierarchyPathParser.parse runs
     Then it still parses, yielding hn3 null and hn4 8
-    And this exercises parser robustness, not a valid production hierarchy
+    And v2 never creates new holes, but legacy nodes with this shape exist in production
 
   # source: HierarchyPathParserSpec — valid paths
   Scenario Outline: Hierarchy paths parse into per-level node ids

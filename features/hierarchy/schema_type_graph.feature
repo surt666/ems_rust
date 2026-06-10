@@ -30,8 +30,9 @@ Feature: Company schema as a type graph (v2)
     When any node is created
     Then its level is parent.depth + 1, derived — never chosen by the caller
     And an explicit level parameter that disagrees is rejected
-    # paths are therefore always dense/contiguous — the invariant the DAQ
-    # rollup's ancestor_keys depends on
+    # v2-created paths are therefore always dense/contiguous. Legacy v1 nodes
+    # created via level-skip edges are the exception — see the KNOWN LIMITATION
+    # note in data_pipeline/measurements_rollup.feature
 
   # source: crates/model schema.rs — Schema::validate
   Scenario Outline: Schema validation rejects malformed type graphs
