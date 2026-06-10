@@ -45,6 +45,11 @@ def ancestor_keys(hns, logical_id):
     segments = ["HN2#%d" % hns[0]]
     result = [segments[0]]
     for depth, hid in enumerate(hns[1:], start=3):  # hn3..hn9
+        # Levels are dense depth indices, not fixed type slots: each company's schema assigns a
+        # type to each consecutive level (e.g. hn3=group|property, hn4=building, hn5=area), and a
+        # populated path is contiguous from hn2 with only trailing nulls — a building always has
+        # its hn3 parent. The first None therefore ends the chain; there is no later populated
+        # level to recover.
         if hid is None:
             break
         segments.append("HN%d#%d" % (depth, hid))
