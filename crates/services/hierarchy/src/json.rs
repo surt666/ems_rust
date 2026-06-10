@@ -568,7 +568,6 @@ mod tests {
             "X",
             NodeId::make(Level::Hn3, 10003),
             &NodeId::root().to_string(),
-            DateTime::from_timestamp(0, 0).unwrap(),
             json!({ "lat": 55.0 }),
             None,
         );

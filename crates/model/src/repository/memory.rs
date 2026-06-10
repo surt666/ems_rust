@@ -600,7 +600,7 @@ mod tests {
     #[test]
     fn node_put_get_roundtrip() {
         let store = Store::new();
-        let root = make_root(ts());
+        let root = make_root();
         store.put_node(&root);
 
         let got = store.get_node(&NodeId::root());
@@ -620,7 +620,7 @@ mod tests {
     #[test]
     fn put_node_overwrites() {
         let store = Store::new();
-        let n1 = make_root(ts());
+        let n1 = make_root();
         store.put_node(&n1);
         let mut n2 = n1.clone();
         n2.name = "updated".to_owned();
@@ -635,11 +635,11 @@ mod tests {
     #[test]
     fn delete_node_removes_it_and_edges() {
         let store = Store::new();
-        let root = make_root(ts());
+        let root = make_root();
         store.put_node(&root);
 
         let child = make_node(10001, Level::Hn1, "child", NodeId::root(),
-                              &NodeId::root().to_string(), ts(),
+                              &NodeId::root().to_string(),
                               serde_json::json!({}), None);
         store.put_node(&child);
         store.put_edge(EdgeSpec {
@@ -665,13 +665,13 @@ mod tests {
     #[test]
     fn list_child_refs_returns_edges_under_parent() {
         let store = Store::new();
-        let root = make_root(ts());
+        let root = make_root();
         store.put_node(&root);
 
         let a = make_node(10001, Level::Hn1, "A", NodeId::root(),
-                          &NodeId::root().to_string(), ts(), serde_json::json!({}), None);
+                          &NodeId::root().to_string(), serde_json::json!({}), None);
         let b = make_node(10002, Level::Hn1, "B", NodeId::root(),
-                          &NodeId::root().to_string(), ts(), serde_json::json!({}), None);
+                          &NodeId::root().to_string(), serde_json::json!({}), None);
         store.put_node(&a);
         store.put_node(&b);
 
@@ -710,11 +710,11 @@ mod tests {
     #[test]
     fn list_children_returns_nodes() {
         let store = Store::new();
-        let root = make_root(ts());
+        let root = make_root();
         store.put_node(&root);
 
         let child = make_node(10001, Level::Hn1, "Child", NodeId::root(),
-                              &NodeId::root().to_string(), ts(), serde_json::json!({}), None);
+                              &NodeId::root().to_string(), serde_json::json!({}), None);
         store.put_node(&child);
         store.put_edge(EdgeSpec { from_: NodeId::root().to_string(), to_: child.id.to_string(),
                                   kind: EdgeKind::HasLabel("building".to_owned()), name: "Child".to_owned() });
@@ -780,12 +780,12 @@ mod tests {
     #[test]
     fn add_node_stores_node_and_edge() {
         let store = Store::new();
-        let root = make_root(ts());
+        let root = make_root();
         store.put_node(&root);
 
         let node = store.add_node(Level::Hn1, |raw_id| {
             let n = make_node(raw_id, Level::Hn1, "New", NodeId::root(),
-                              &NodeId::root().to_string(), ts(), serde_json::json!({}), None);
+                              &NodeId::root().to_string(), serde_json::json!({}), None);
             let e = EdgeSpec {
                 from_: NodeId::root().to_string(),
                 to_: n.id.to_string(),
@@ -852,7 +852,7 @@ mod tests {
     #[test]
     fn sensor_put_get_roundtrip() {
         let store = Store::new();
-        let root = make_root(ts());
+        let root = make_root();
         store.put_node(&root);
         let s = make_sensor_for(&root, 20001);
         store.with_sensor(s.clone());
@@ -879,7 +879,7 @@ mod tests {
     #[test]
     fn add_sensor_stores_sensor_and_edge() {
         let store = Store::new();
-        let root = make_root(ts());
+        let root = make_root();
         store.put_node(&root);
 
         let sensor = store.add_sensor(|raw_id| {
@@ -910,7 +910,7 @@ mod tests {
     #[test]
     fn delete_sensor_removes_it() {
         let store = Store::new();
-        let root = make_root(ts());
+        let root = make_root();
         store.put_node(&root);
 
         let sensor = store.add_sensor(|raw_id| {
@@ -944,7 +944,7 @@ mod tests {
     #[test]
     fn list_sensors_under_path_filters_by_prefix() {
         let store = Store::new();
-        let root = make_root(ts());
+        let root = make_root();
         store.put_node(&root);
 
         let s1 = Sensor::builder()
@@ -1094,7 +1094,7 @@ mod tests {
 
     #[test]
     fn with_node_seeds_store() {
-        let root = make_root(ts());
+        let root = make_root();
         let store = Store::new().with_node(root.clone());
         assert!(store.get_node(&NodeId::root()).is_some());
     }

@@ -182,8 +182,6 @@ where
 mod tests {
     use std::rc::Rc;
 
-    use chrono::{DateTime, Utc};
-
     use super::*;
     use crate::domain::ids::{Level, NodeId, UserId};
     use crate::domain::node;
@@ -195,10 +193,6 @@ mod tests {
     // -----------------------------------------------------------------------
     // Helpers / closure factories
     // -----------------------------------------------------------------------
-
-    fn ts() -> DateTime<Utc> {
-        "2026-01-01T00:00:00Z".parse().unwrap()
-    }
 
     fn get_user_fn(
         s: Rc<Store>,
@@ -261,7 +255,6 @@ mod tests {
             name,
             NodeId::root(),
             &parent_path,
-            ts(),
             serde_json::json!({}),
             None,
         )

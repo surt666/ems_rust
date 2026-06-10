@@ -422,7 +422,6 @@ mod tests {
             name,
             NodeId::root(),
             &parent_path,
-            ts(),
             serde_json::json!({}),
             None,
         )
@@ -436,7 +435,6 @@ mod tests {
             name,
             parent_id,
             parent_path,
-            ts(),
             serde_json::json!({}),
             None,
         )
@@ -908,12 +906,12 @@ mod tests {
         // Seed: two HN1 children of root.
         let hn1a = node::make(
             10001, Level::Hn1, "Partner A",
-            NodeId::root(), &NodeId::root().to_string(), ts(),
+            NodeId::root(), &NodeId::root().to_string(),
             serde_json::json!({}), None,
         );
         let hn1b = node::make(
             10002, Level::Hn1, "Partner B",
-            NodeId::root(), &NodeId::root().to_string(), ts(),
+            NodeId::root(), &NodeId::root().to_string(),
             serde_json::json!({}), None,
         );
         store.put_node(&hn1a);
@@ -1019,7 +1017,7 @@ mod tests {
         let store = Rc::new(Store::new());
         let hn1a = node::make(
             10001, Level::Hn1, "Partner A",
-            NodeId::root(), &NodeId::root().to_string(), ts(),
+            NodeId::root(), &NodeId::root().to_string(),
             serde_json::json!({}), None,
         );
         store.put_node(&hn1a);

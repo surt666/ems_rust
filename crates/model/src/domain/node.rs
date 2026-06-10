@@ -52,6 +52,8 @@ pub fn child_path(parent_path: &str, child_id_str: &str) -> String {
 /// Mirrors OCaml `Node.make`:
 /// - Computes the `NodeId` from (`level`, `id`).
 /// - Computes `path = child_path(parent_path, node_id_str)`.
+///
+/// `created` is set to the current UTC time via the builder default.
 #[allow(clippy::too_many_arguments)]
 pub fn make(
     id: u32,
@@ -59,7 +61,6 @@ pub fn make(
     name: &str,
     parent: NodeId,
     parent_path: &str,
-    created: DateTime<Utc>,
     metadata: serde_json::Value,
     schema: Option<Schema>,
 ) -> Node {
@@ -70,7 +71,6 @@ pub fn make(
         .name(name.to_owned())
         .parent(Some(parent))
         .path(path)
-        .created(created)
         .metadata(metadata)
         .schema(schema)
         .build()
@@ -80,12 +80,12 @@ pub fn make(
 ///
 /// Mirrors OCaml `Node.make_root`:
 /// `{ id = Node_id.root; name = "root"; parent = None; path = Node_id.to_string Node_id.root; … }`.
-pub fn make_root(created: DateTime<Utc>) -> Node {
+/// `created` is set to the current UTC time via the builder default.
+pub fn make_root() -> Node {
     Node::builder()
         .id(NodeId::root())
         .name("root".to_owned())
         .path(NodeId::root().to_string())
-        .created(created)
         .build()
 }
 
@@ -122,18 +122,17 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
-    fn now() -> DateTime<Utc> {
-        Utc::now()
-    }
-
     /// Port of `test_domain_node.ml :: make_root`.
     #[test]
     fn make_root_test() {
-        let n = make_root(now());
+        let before = Utc::now();
+        let n = make_root();
+        let after = Utc::now();
         assert_eq!(n.id.to_string(), "HN0#root");
         assert!(n.parent.is_none());
         assert_eq!(n.path, "HN0#root");
         assert_eq!(n.name, "root");
+        assert!(n.created >= before && n.created <= after);
     }
 
     /// Port of `test_domain_node.ml :: make_child`.
@@ -141,20 +140,22 @@ mod tests {
     fn make_child_test() {
         let parent = NodeId::root();
         let parent_path = NodeId::root().to_string();
+        let before = Utc::now();
         let n = make(
             10001,
             Level::Hn1,
             "Acme",
             parent,
             &parent_path,
-            now(),
             serde_json::json!({}),
             None,
         );
+        let after = Utc::now();
         assert_eq!(n.id.to_string(), "HN1#10001");
         assert_eq!(n.parent.as_ref().unwrap().to_string(), "HN0#root");
         // path = "HN0#root|HN1#10001"
         assert_eq!(n.path, "HN0#root|HN1#10001");
+        assert!(n.created >= before && n.created <= after);
     }
 
     /// child_path concatenates with `|`.
@@ -188,7 +189,6 @@ mod tests {
             "x",
             NodeId::root(),
             "HN0#root",
-            now(),
             serde_json::json!({}),
             None,
         );
@@ -198,7 +198,7 @@ mod tests {
     /// make_root metadata is an empty JSON object.
     #[test]
     fn make_root_metadata_empty_object() {
-        let n = make_root(now());
+        let n = make_root();
         assert!(n.metadata.is_object());
         assert_eq!(n.metadata.as_object().unwrap().len(), 0);
     }
@@ -212,7 +212,6 @@ mod tests {
             "Hn1",
             NodeId::root(),
             &NodeId::root().to_string(),
-            now(),
             serde_json::json!({}),
             None,
         );
@@ -222,7 +221,6 @@ mod tests {
             "Hn2",
             hn1.id.clone(),
             &hn1.path,
-            now(),
             serde_json::json!({}),
             None,
         );

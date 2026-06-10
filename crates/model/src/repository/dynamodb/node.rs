@@ -643,7 +643,6 @@ mod it_tests {
     use super::*;
     use crate::domain::ids::Level;
     use crate::domain::node::make_root;
-    use chrono::Utc;
 
     async fn it_client() -> (Client, String) {
         let table = std::env::var("HIERARCHY_TABLE")
@@ -666,7 +665,7 @@ mod it_tests {
     #[ignore]
     async fn it_put_get_delete_node() {
         let (client, table) = it_client().await;
-        let root = make_root(Utc::now());
+        let root = make_root();
         put_node(&client, &table, &root).await.unwrap();
         let got = get_node(&client, &table, &root.id).await.unwrap();
         assert!(got.is_some());

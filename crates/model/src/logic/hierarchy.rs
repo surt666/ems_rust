@@ -234,7 +234,6 @@ where
                 &name.clone(),
                 parent_clone.clone(),
                 &parent_path,
-                chrono::Utc::now(),
                 metadata.clone(),
                 node_schema.clone(),
             );
@@ -394,8 +393,6 @@ where
 mod tests {
     use std::rc::Rc;
 
-    use chrono::{DateTime, Utc};
-
     use super::*;
     use crate::domain::ids::{Level, NodeId};
     use crate::domain::node;
@@ -403,10 +400,6 @@ mod tests {
     use crate::domain::values::{EdgeKind, FieldType};
     use crate::errors::RepositoryError;
     use crate::repository::memory::Store;
-
-    fn ts() -> DateTime<Utc> {
-        "2026-01-01T00:00:00Z".parse().unwrap()
-    }
 
     // Sample schema mirroring OCaml `sample_schema` in test_logic_hierarchy.ml:
     //   Hn2→Hn3: label="property", max=2
@@ -471,7 +464,6 @@ mod tests {
             "Acme",
             NodeId::root(),
             &parent_path_for_hn2(),
-            ts(),
             serde_json::json!({}),
             Some(sample_schema()),
         );
@@ -710,7 +702,7 @@ mod tests {
     async fn creates_partner_under_root() {
         let store = Rc::new(Store::new());
         // Seed root node.
-        store.put_node(&node::make_root(ts()));
+        store.put_node(&node::make_root());
 
         let n = do_add_node(
             store.clone(),
@@ -735,7 +727,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_root_creation() {
         let store = Rc::new(Store::new());
-        store.put_node(&node::make_root(ts()));
+        store.put_node(&node::make_root());
 
         let result = do_add_node(
             store.clone(),
@@ -762,7 +754,7 @@ mod tests {
     #[tokio::test]
     async fn creates_company_with_schema() {
         let store = Rc::new(Store::new());
-        store.put_node(&node::make_root(ts()));
+        store.put_node(&node::make_root());
 
         let partner = do_add_node(
             store.clone(),
@@ -798,7 +790,7 @@ mod tests {
     #[tokio::test]
     async fn company_without_schema_fails() {
         let store = Rc::new(Store::new());
-        store.put_node(&node::make_root(ts()));
+        store.put_node(&node::make_root());
 
         let partner = do_add_node(
             store.clone(),
@@ -912,7 +904,6 @@ mod tests {
             "X",
             NodeId::root(),
             &parent_path_for_hn2(),
-            ts(),
             serde_json::json!({}),
             Some(cross_schema),
         );

@@ -455,7 +455,6 @@ mod tests {
             "Acme",
             NodeId::root(),
             &parent_path_for_hn2(),
-            ts(),
             serde_json::json!({}),
             Some(sample_schema()),
         );
@@ -947,7 +946,6 @@ mod tests {
             "b",
             NodeId::make(Level::Hn2, 200),
             "HN0#root|HN1#10|HN2#200",
-            ts(),
             serde_json::json!({}),
             None,
         );

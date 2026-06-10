@@ -1244,10 +1244,6 @@ mod tests {
         }
     }
 
-    fn ts() -> chrono::DateTime<chrono::Utc> {
-        "2026-01-01T00:00:00Z".parse().unwrap()
-    }
-
     fn company_schema() -> Schema {
         Schema {
             version: 1,
@@ -1275,7 +1271,6 @@ mod tests {
             "Acme",
             NodeId::root(),
             &format!("{}|HN1#10001", NodeId::root()),
-            ts(),
             json!({}),
             Some(company_schema()),
         );
@@ -1588,7 +1583,6 @@ mod tests {
             "Acme",
             NodeId::root(),
             &format!("{}|HN1#10001", NodeId::root()),
-            ts(),
             json!({}),
             None,
         );
@@ -1669,7 +1663,6 @@ mod tests {
             "TestCo",
             NodeId::root(),
             &format!("{}|HN1#10001", NodeId::root()),
-            ts(),
             json!({}),
             None,
         );

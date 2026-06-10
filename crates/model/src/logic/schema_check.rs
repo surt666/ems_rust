@@ -71,18 +71,12 @@ where
 mod tests {
     use std::rc::Rc;
 
-    use chrono::{DateTime, Utc};
-
     use super::*;
     use crate::domain::ids::{Level, NodeId};
     use crate::domain::node;
     use crate::domain::schema::{EdgeSpec, Schema};
     use crate::errors::RepositoryError;
     use crate::repository::memory::Store;
-
-    fn ts() -> DateTime<Utc> {
-        "2026-01-01T00:00:00Z".parse().unwrap()
-    }
 
     fn sample_schema() -> Schema {
         Schema {
@@ -141,7 +135,6 @@ mod tests {
             "Acme",
             NodeId::root(),
             &parent_path_for_hn2(),
-            ts(),
             serde_json::json!({}),
             Some(sample_schema()),
         );
@@ -169,7 +162,6 @@ mod tests {
             "Acme",
             NodeId::root(),
             &parent_path_for_hn2(),
-            ts(),
             serde_json::json!({}),
             Some(sample_schema()),
         );
@@ -182,7 +174,6 @@ mod tests {
             "Ostergade",
             c2.clone(),
             &n2.path,
-            ts(),
             serde_json::json!({}),
             None,
         );
@@ -212,7 +203,6 @@ mod tests {
             NodeId::root(),
             // path contains no HN2 segment
             &NodeId::root().to_string(),
-            ts(),
             serde_json::json!({}),
             None,
         );
