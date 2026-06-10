@@ -1338,41 +1338,47 @@ mod tests {
 
     fn company_schema() -> Schema {
         Schema {
-            version: 1,
-            edges: vec![(
-                Level::Hn2,
-                vec![(
-                    Level::Hn3,
-                    vec![SchemaEdgeSpec::builder()
-                        .label("property".to_string())
-                        .build()],
-                )],
-            )],
+            version: 2,
+            edges: vec![
+                ("company".to_string(), vec![
+                    ("group".to_string(), SchemaEdgeSpec::builder().build()),
+                    ("property".to_string(), SchemaEdgeSpec::builder().build()),
+                    ("building".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+                ("group".to_string(), vec![
+                    ("building".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+                ("property".to_string(), vec![
+                    ("building".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+                ("building".to_string(), vec![
+                    ("area".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+            ],
             metadata: vec![],
-            sensors: vec![],
+            sensors: vec!["building".to_string(), "area".to_string()],
         }
     }
 
     fn building_schema() -> Schema {
         Schema {
-            version: 1,
-            edges: vec![(
-                Level::Hn2,
-                vec![(
-                    Level::Hn3,
-                    vec![SchemaEdgeSpec::builder()
-                        .label("building".to_string())
-                        .build()],
-                )],
-            )],
+            version: 2,
+            edges: vec![
+                ("company".to_string(), vec![
+                    ("building".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+                ("building".to_string(), vec![
+                    ("area".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+            ],
             metadata: vec![],
-            sensors: vec![Level::Hn3],
+            sensors: vec!["building".to_string(), "area".to_string()],
         }
     }
 
     fn seed_company(store: &Rc<Store>) -> NodeId {
         let c2 = NodeId::make(Level::Hn2, 10002);
-        let n2 = node::make(
+        let mut n2 = node::make(
             10002,
             Level::Hn2,
             "Acme",
@@ -1381,13 +1387,14 @@ mod tests {
             json!({}),
             Some(company_schema()),
         );
+        n2.label = "company".to_string();
         store.put_node(&n2);
         c2
     }
 
     fn seed_building_company(store: &Rc<Store>) -> NodeId {
         let c2 = NodeId::make(Level::Hn2, 10002);
-        let n2 = node::make(
+        let mut n2 = node::make(
             10002,
             Level::Hn2,
             "Co",
@@ -1396,6 +1403,7 @@ mod tests {
             json!({}),
             Some(building_schema()),
         );
+        n2.label = "company".to_string();
         store.put_node(&n2);
         c2
     }
@@ -1438,7 +1446,7 @@ mod tests {
             c2.to_string(),
             "P".to_string(),
             Some("hn3".to_string()),
-            None,
+            Some("property".to_string()),
             Some(json!({})),
             None,
             make_get_node(store.clone()),
@@ -1461,7 +1469,7 @@ mod tests {
 
         // Seed an HN1 partner node so we can create an HN2 company under it.
         let p1 = NodeId::make(Level::Hn1, 10001);
-        let n1 = node::make(
+        let mut n1 = node::make(
             10001,
             Level::Hn1,
             "Partner",
@@ -1470,28 +1478,27 @@ mod tests {
             json!({}),
             None,
         );
+        n1.label = "partner".to_string();
         store.put_node(&n1);
 
-        // Schema JSON in the api_json.ml shape (same data the json.rs
-        // `schema_json_roundtrip` test feeds to schema_of_json).
+        // Schema JSON in the v2 api_json shape (type-keyed).
         let schema_json = json!({
-            "version": 1,
+            "version": 2,
             "edges": {
-                "hn2": { "hn3": {
+                "company": {
                     "property": {},
                     "group": { "max": 3 }
-                }},
-                "hn3": { "hn4": {
-                    "building": { "min": 1 }
-                }}
+                },
+                "group": { "building": { "min": 1 } },
+                "property": { "building": { "min": 1 } }
             },
             "metadata": {
-                "hn4": {
+                "building": {
                     "lat": { "required": true, "type": "number", "min": -90.0, "max": 90.0 },
                     "kind": { "required": false, "type": "enum", "one_of": ["a", "b"] }
                 }
             },
-            "sensors": ["hn4"]
+            "sensors": ["building"]
         });
 
         let resp = handle_add_node(
@@ -1500,7 +1507,7 @@ mod tests {
             Some("hn2".to_string()),
             None,
             Some(json!({})),
-            Some(schema_json),
+            Some(schema_json.clone()),
             make_get_node(store.clone()),
             make_list_children(store.clone()),
             make_add_node(store.clone()),
@@ -1521,26 +1528,8 @@ mod tests {
             .expect("created node must be in store");
         let sch = stored.schema.expect("hn2 node must carry a schema");
 
-        let expected = json::schema_of_json(&json!({
-            "version": 1,
-            "edges": {
-                "hn2": { "hn3": {
-                    "property": {},
-                    "group": { "max": 3 }
-                }},
-                "hn3": { "hn4": {
-                    "building": { "min": 1 }
-                }}
-            },
-            "metadata": {
-                "hn4": {
-                    "lat": { "required": true, "type": "number", "min": -90.0, "max": 90.0 },
-                    "kind": { "required": false, "type": "enum", "one_of": ["a", "b"] }
-                }
-            },
-            "sensors": ["hn4"]
-        }))
-        .expect("expected schema decodes");
+        let expected = json::schema_of_json(&schema_json)
+            .expect("expected schema decodes");
 
         assert_eq!(sch, expected, "stored schema must match schema_of_json output");
     }
@@ -1558,7 +1547,7 @@ mod tests {
             c2.to_string(),
             "P".to_string(),
             Some("hn3".to_string()),
-            None,
+            Some("property".to_string()),
             Some(json!({})),
             None,
             make_get_node(store.clone()),

@@ -456,13 +456,12 @@ where
 
     match hierarchy::get_node(nid, get_node).await {
         Ok(n) => {
-            // show_sensors: whether the schema allows sensors at this node's level.
+            // show_sensors: whether the schema allows sensors on this node's type.
             // The schema is carried on the node itself in the Rust model.
-            let level = n.id.level();
             let show_sensors = n
                 .schema
                 .as_ref()
-                .map(|s| s.allows_sensors(level))
+                .map(|s| s.allows_sensors(&n.label))
                 .unwrap_or(false);
             html_ok(html_node::render_node(&n, show_sensors, capability))
         }
@@ -558,10 +557,14 @@ where
 
 /// `GET /hierarchy/query/add_child_form?parent=HN2#...&level=...`
 ///
-/// Renders the add-child dialog body.  Mirrors OCaml `render_add_child_form`.
+/// Renders the add-child dialog body.
+///
+/// In v2, levels are derived (always parent+1), so the "level" selector is
+/// always disabled and shows the fixed child level.  The "label" selector
+/// shows the allowed child types from the schema.
 pub async fn handle_add_child_form<FGN, FGNFut>(
     parent_s: &str,
-    level_s: Option<&str>,
+    _level_s: Option<&str>,
     get_node: FGN,
 ) -> (u16, String)
 where
@@ -569,7 +572,6 @@ where
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
 {
     use model::domain::ids::Level;
-    use model::domain::schema::EdgeSpec as SchemaEdgeSpec;
 
     let parent_id = match NodeId::parse(parent_s) {
         Ok(id) => id,
@@ -583,36 +585,33 @@ where
 
     let parent_level = parent_node.id.level();
 
-    // Determine allowed child levels — mirrors OCaml `allowed` computation.
-    type AllowedEntry = (Level, Vec<SchemaEdgeSpec>);
-    let allowed: Vec<AllowedEntry> = match parent_level {
-        Level::Hn0 => vec![(
-            Level::Hn1,
-            vec![SchemaEdgeSpec::builder()
-                .label("partner".to_string())
-                .build()],
-        )],
-        Level::Hn1 => vec![(
-            Level::Hn2,
-            vec![SchemaEdgeSpec::builder()
-                .label("company".to_string())
-                .build()],
-        )],
-        _ => {
-            // Get allowed children from the schema on this node.
-            match &parent_node.schema {
-                Some(sch) => {
-                    sch.allowed_children(parent_level)
-                        .iter()
-                        .map(|(child_level, edge_specs)| (*child_level, edge_specs.clone()))
-                        .collect()
-                }
-                None => vec![],
-            }
+    // Child level is always parent + 1 (derived in v2).
+    let child_level = match Level::of_depth(parent_level.depth() + 1) {
+        Some(l) => l,
+        None => {
+            use maud::html;
+            return html_ok(html! {
+                div class="error" { "This node is at maximum depth and cannot have children." }
+            });
         }
     };
+    let child_level_s = child_level.to_string();
 
-    if allowed.is_empty() {
+    // Determine allowed child types.
+    let allowed_types: Vec<String> = match parent_level {
+        Level::Hn0 => vec!["partner".to_string()],
+        Level::Hn1 => vec!["company".to_string()],
+        _ => match &parent_node.schema {
+            Some(sch) => sch
+                .allowed_children(&parent_node.label)
+                .iter()
+                .map(|(child_type, _)| child_type.clone())
+                .collect(),
+            None => vec![],
+        },
+    };
+
+    if allowed_types.is_empty() {
         use maud::html;
         return html_ok(html! {
             div class="error" {
@@ -621,58 +620,45 @@ where
         });
     }
 
-    // Pick the chosen level.
-    let requested_level = level_s.and_then(|s| s.parse::<Level>().ok());
-    let chosen_level = match requested_level {
-        Some(l) if allowed.iter().any(|(al, _)| *al == l) => l,
-        _ => allowed[0].0,
-    };
-
-    let labels: Vec<String> = allowed
-        .iter()
-        .find(|(l, _)| *l == chosen_level)
-        .map(|(_, specs)| specs.iter().map(|s| s.label.clone()).collect())
-        .unwrap_or_default();
-
+    // Metadata fields for the first allowed type (default selection).
+    let chosen_type = &allowed_types[0];
     let metadata_fields: Vec<(String, model::domain::schema::FieldSpec)> =
         match &parent_node.schema {
             Some(sch) => sch
-                .metadata_for(chosen_level)
+                .metadata_for(chosen_type)
                 .iter()
                 .map(|(n, s)| (n.clone(), s.clone()))
                 .collect(),
             None => vec![],
         };
 
-    // Build level option pairs: (value_str, is_selected).
-    let chosen_level_s = chosen_level.to_string();
-    let level_options_owned: Vec<(String, bool)> = allowed
-        .iter()
-        .map(|(l, _)| (l.to_string(), *l == chosen_level))
-        .collect();
+    // Level selector: always single + fixed in v2.
+    let level_options_owned: Vec<(String, bool)> = vec![(child_level_s.clone(), true)];
     let level_options: Vec<(&str, bool)> = level_options_owned
         .iter()
         .map(|(s, b)| (s.as_str(), *b))
         .collect();
 
-    let label_options_owned: Vec<(String, bool)> = labels
+    // Type (label) selector: one entry per allowed child type.
+    let label_options_owned: Vec<(String, bool)> = allowed_types
         .iter()
         .enumerate()
-        .map(|(i, s)| (s.clone(), i == 0))
+        .map(|(i, t)| (t.clone(), i == 0))
         .collect();
     let label_options: Vec<(&str, bool)> = label_options_owned
         .iter()
         .map(|(s, b)| (s.as_str(), *b))
         .collect();
 
-    let is_multi = allowed.len() > 1;
+    // is_multi: false because level is always fixed (only one child level in v2).
+    let is_multi = false;
 
     // Build metadata inputs.
     let metadata_inputs = build_metadata_inputs(&metadata_fields);
 
     html_ok(forms::render_add_child_form(
         parent_s,
-        &chosen_level_s,
+        &child_level_s,
         &level_options,
         &label_options,
         metadata_inputs,
@@ -1243,16 +1229,23 @@ mod tests {
 
     fn company_schema() -> Schema {
         Schema {
-            version: 1,
-            edges: vec![(
-                Level::Hn2,
-                vec![(
-                    Level::Hn3,
-                    vec![SchemaEdgeSpec::builder()
-                        .label("property".to_string())
-                        .build()],
-                )],
-            )],
+            version: 2,
+            edges: vec![
+                ("company".to_string(), vec![
+                    ("group".to_string(), SchemaEdgeSpec::builder().build()),
+                    ("property".to_string(), SchemaEdgeSpec::builder().build()),
+                    ("building".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+                ("group".to_string(), vec![
+                    ("building".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+                ("property".to_string(), vec![
+                    ("building".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+                ("building".to_string(), vec![
+                    ("area".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+            ],
             metadata: vec![],
             sensors: vec![],
         }
@@ -1262,7 +1255,7 @@ mod tests {
     /// Returns the c2 NodeId.
     async fn seed_with_one_child(store: &Rc<Store>) -> NodeId {
         let c2 = NodeId::make(Level::Hn2, 10002);
-        let n2 = node::make(
+        let mut n2 = node::make(
             10002,
             Level::Hn2,
             "Acme",
@@ -1271,12 +1264,13 @@ mod tests {
             json!({}),
             Some(company_schema()),
         );
+        n2.label = "company".to_string();
         store.put_node(&n2);
 
         model::logic::hierarchy::add_node(
             c2.clone(),
             Some(Level::Hn3),
-            None,
+            Some("property".to_string()),
             "P".to_string(),
             json!({}),
             None,
@@ -1361,6 +1355,125 @@ mod tests {
     async fn unknown_action_is_bad_request() {
         let (status, _body) = bad_request("unknown query action \"does_not_exist\"");
         assert_eq!(status, 400, "status 400");
+    }
+
+    // -----------------------------------------------------------------------
+    // tests: add_child_form (v2 type-keyed)
+    // -----------------------------------------------------------------------
+
+    /// Happy path: company parent with the v2 schema → all three child types
+    /// offered, level fixed to the derived hn3 (no multi-level selector).
+    #[tokio::test]
+    async fn add_child_form_offers_schema_types_at_derived_level() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_with_one_child(&store).await;
+
+        let (status, body) = handle_add_child_form(
+            &c2.to_string(),
+            None,
+            {
+                let s = store.clone();
+                move |nid| std::future::ready(Ok(s.get_node(&nid)))
+            },
+        )
+        .await;
+
+        assert_eq!(status, 200, "status 200");
+        for typ in ["group", "property", "building"] {
+            assert!(
+                body.contains(&format!("option value=\"{}\"", typ)),
+                "type option {:?} missing; body: {}",
+                typ,
+                body
+            );
+        }
+        // Level is derived (parent hn2 → child hn3) and fixed: hidden input,
+        // no dynamic level selector.
+        assert!(
+            body.contains("name=\"data.level\" value=\"hn3\""),
+            "derived level hn3 missing; body: {}",
+            body
+        );
+        assert!(
+            !body.contains("select name=\"data.level\""),
+            "level selector must not be multi in v2; body: {}",
+            body
+        );
+    }
+
+    /// A parent whose type allows no children → the schema error message.
+    #[tokio::test]
+    async fn add_child_form_no_children_for_leaf_type() {
+        let store = Rc::new(Store::new());
+        // An hn3 node labeled "area" carrying the company schema: "area" has
+        // no outgoing edges, so no child types are allowed.
+        let a3 = NodeId::make(Level::Hn3, 10042);
+        let mut n3 = node::make(
+            10042,
+            Level::Hn3,
+            "A",
+            NodeId::make(Level::Hn2, 10002),
+            &format!("{}|HN1#10001|HN2#10002", NodeId::root()),
+            json!({}),
+            Some(company_schema()),
+        );
+        n3.label = "area".to_string();
+        store.put_node(&n3);
+
+        let (status, body) = handle_add_child_form(
+            &a3.to_string(),
+            None,
+            {
+                let s = store.clone();
+                move |nid| std::future::ready(Ok(s.get_node(&nid)))
+            },
+        )
+        .await;
+
+        assert_eq!(status, 200, "status 200");
+        assert!(
+            body.contains("This node type cannot have children according to its schema."),
+            "expected no-children message; body: {}",
+            body
+        );
+    }
+
+    /// A parent at hn9 (maximum depth) → the max-depth error message.
+    #[tokio::test]
+    async fn add_child_form_rejects_max_depth_parent() {
+        let store = Rc::new(Store::new());
+        let n9_id = NodeId::make(Level::Hn9, 10099);
+        let mut n9 = node::make(
+            10099,
+            Level::Hn9,
+            "Deep",
+            NodeId::make(Level::Hn8, 10098),
+            &format!(
+                "{}|HN1#1|HN2#2|HN3#3|HN4#4|HN5#5|HN6#6|HN7#7|HN8#10098",
+                NodeId::root()
+            ),
+            json!({}),
+            None,
+        );
+        n9.label = "area".to_string();
+        store.put_node(&n9);
+
+        let (status, body) = handle_add_child_form(
+            &n9_id.to_string(),
+            None,
+            {
+                let s = store.clone();
+                move |nid| std::future::ready(Ok(s.get_node(&nid)))
+            },
+        )
+        .await;
+
+        assert_eq!(status, 200, "status 200");
+        assert!(
+            body.contains("This node is at maximum depth and cannot have children."),
+            "expected max-depth message; body: {}",
+            body
+        );
     }
 
     // -----------------------------------------------------------------------

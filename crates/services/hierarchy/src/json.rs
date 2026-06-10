@@ -9,7 +9,7 @@
 use serde_json::{json, Value};
 
 use model::domain::formula::{expr_aliases, expr_to_string, parse_expr_str, Formula};
-use model::domain::ids::{Level, NodeId, SensorId};
+use model::domain::ids::{NodeId, SensorId};
 use model::domain::node::Node;
 use model::domain::schema::{EdgeSpec, FieldSpec, Schema};
 use model::domain::sensor::Sensor;
@@ -54,61 +54,46 @@ pub fn node_ref_to_json(id: &NodeId, name: &str) -> Value {
 // schema_to_json / schema_of_json — mirrors `api_json.ml`
 // ---------------------------------------------------------------------------
 
-/// Serialise a `Schema` to a `serde_json::Value`.
+/// Serialise a `Schema` (v2) to a `serde_json::Value`.
 ///
 /// Port of `api_json.ml :: schema_to_json`.
+/// Shape: `{"version":2, "edges":{"company":{"building":{"min":1}}}, "metadata":{...}, "sensors":[...]}`
 pub fn schema_to_json(sch: &Schema) -> Value {
-    // edges: { "hn2": { "hn3": { "property": {}, "group": { "max": 3 } } }, … }
     let edges_obj: serde_json::Map<String, Value> = sch
         .edges
         .iter()
         .map(|(parent, children)| {
             let inner_obj: serde_json::Map<String, Value> = children
                 .iter()
-                .map(|(child, specs)| {
-                    let label_map: serde_json::Map<String, Value> = specs
-                        .iter()
-                        .map(|sp| {
-                            let mut kv: serde_json::Map<String, Value> =
-                                serde_json::Map::new();
-                            if let Some(m) = sp.min {
-                                kv.insert("min".to_string(), json!(m));
-                            }
-                            if let Some(m) = sp.max {
-                                kv.insert("max".to_string(), json!(m));
-                            }
-                            (sp.label.clone(), Value::Object(kv))
-                        })
-                        .collect();
-                    (child.to_string(), Value::Object(label_map))
+                .map(|(child, spec)| {
+                    let mut kv = serde_json::Map::new();
+                    if let Some(m) = spec.min {
+                        kv.insert("min".to_string(), json!(m));
+                    }
+                    if let Some(m) = spec.max {
+                        kv.insert("max".to_string(), json!(m));
+                    }
+                    (child.clone(), Value::Object(kv))
                 })
                 .collect();
-            (parent.to_string(), Value::Object(inner_obj))
+            (parent.clone(), Value::Object(inner_obj))
         })
         .collect();
 
-    // metadata: { "hn4": { "lat": { "required": true, "type": "number", … }, … }, … }
     let metadata_obj: serde_json::Map<String, Value> = sch
         .metadata
         .iter()
-        .map(|(lvl, fields)| {
+        .map(|(typ, fields)| {
             let field_obj: serde_json::Map<String, Value> = fields
                 .iter()
-                .map(|(name, fs)| {
-                    let spec_val = field_spec_to_json(fs);
-                    (name.clone(), spec_val)
-                })
+                .map(|(name, fs)| (name.clone(), field_spec_to_json(fs)))
                 .collect();
-            (lvl.to_string(), Value::Object(field_obj))
+            (typ.clone(), Value::Object(field_obj))
         })
         .collect();
 
-    // sensors: [ "hn4", … ]
-    let sensors_arr: Vec<Value> = sch
-        .sensors
-        .iter()
-        .map(|lvl| Value::String(lvl.to_string()))
-        .collect();
+    let sensors_arr: Vec<Value> =
+        sch.sensors.iter().map(|t| Value::String(t.clone())).collect();
 
     json!({
         "version":  sch.version,
@@ -167,9 +152,9 @@ fn field_spec_to_json(fs: &FieldSpec) -> Value {
     Value::Object(kv)
 }
 
-/// Deserialise a `Schema` from a `serde_json::Value`.
+/// Deserialise a `Schema` from a `serde_json::Value`. Only version 2 is accepted.
 ///
-/// Port of `api_json.ml :: schema_of_json`.
+/// Ported from `api_json.ml :: schema_of_json`, then migrated to v2.
 pub fn schema_of_json(v: &Value) -> Result<Schema, String> {
     let kvs = as_object(v)?;
 
@@ -177,68 +162,56 @@ pub fn schema_of_json(v: &Value) -> Result<Schema, String> {
         Some(Value::Number(n)) if n.is_u64() => n.as_u64().unwrap() as u32,
         Some(Value::Number(n)) if n.is_i64() => {
             let i = n.as_i64().unwrap();
-            if i < 0 {
-                return Err("bad version".to_string());
-            }
+            if i < 0 { return Err("bad version".to_string()); }
             i as u32
         }
         _ => return Err("missing or non-integer field \"version\"".to_string()),
     };
-
-    let edges_v = kvs
-        .get("edges")
-        .ok_or_else(|| "missing field \"edges\"".to_string())?;
-    let edges_map = as_object(edges_v)?;
-    #[allow(clippy::type_complexity)]
-    let mut edges: Vec<(Level, Vec<(Level, Vec<EdgeSpec>)>)> = Vec::new();
-    for (parent_s, inner_v) in edges_map {
-        let parent = parent_s.parse::<Level>().map_err(|e| e.to_string())?;
-        let inner_map = as_object(inner_v)?;
-        let mut children: Vec<(Level, Vec<EdgeSpec>)> = Vec::new();
-        for (child_s, labels_v) in inner_map {
-            let child = child_s.parse::<Level>().map_err(|e| e.to_string())?;
-            let labels_map = as_object(labels_v)?;
-            let mut specs: Vec<EdgeSpec> = Vec::new();
-            for (label, body) in labels_map {
-                let body_map = as_object(body)?;
-                let min = body_map.get("min").and_then(opt_i32_of_json);
-                let max = body_map.get("max").and_then(opt_i32_of_json);
-                specs.push(EdgeSpec { label: label.clone(), min, max });
-            }
-            children.push((child, specs));
-        }
-        edges.push((parent, children));
+    if version != 2 {
+        return Err(format!(
+            "unsupported schema version {}; expected 2 (type-keyed)",
+            version
+        ));
     }
 
-    let metadata: Vec<(Level, Vec<(String, FieldSpec)>)> =
-        match kvs.get("metadata") {
-            None => vec![],
-            Some(m_v) => {
-                let m_map = as_object(m_v)?;
-                let mut result: Vec<(Level, Vec<(String, FieldSpec)>)> = Vec::new();
-                for (lvl_s, inner_v) in m_map {
-                    let lvl = lvl_s.parse::<Level>().map_err(|e| e.to_string())?;
-                    let inner_map = as_object(inner_v)?;
-                    let mut fields: Vec<(String, FieldSpec)> = Vec::new();
-                    for (fname, spec_v) in inner_map {
-                        let spec = decode_field_spec(spec_v)?;
-                        fields.push((fname.clone(), spec));
-                    }
-                    result.push((lvl, fields));
-                }
-                result
-            }
-        };
+    let edges_v = kvs.get("edges").ok_or_else(|| "missing field \"edges\"".to_string())?;
+    let edges_map = as_object(edges_v)?;
+    let mut edges: Vec<(String, Vec<(String, EdgeSpec)>)> = Vec::new();
+    for (parent, inner_v) in edges_map {
+        let inner_map = as_object(inner_v)?;
+        let mut children: Vec<(String, EdgeSpec)> = Vec::new();
+        for (child, body) in inner_map {
+            let body_map = as_object(body)?;
+            let min = body_map.get("min").and_then(opt_i32_of_json);
+            let max = body_map.get("max").and_then(opt_i32_of_json);
+            children.push((child.clone(), EdgeSpec { min, max }));
+        }
+        edges.push((parent.clone(), children));
+    }
 
-    let sensors: Vec<Level> = match kvs.get("sensors") {
+    let metadata: Vec<(String, Vec<(String, FieldSpec)>)> = match kvs.get("metadata") {
+        None => vec![],
+        Some(m_v) => {
+            let m_map = as_object(m_v)?;
+            let mut result = Vec::new();
+            for (typ, inner_v) in m_map {
+                let inner_map = as_object(inner_v)?;
+                let mut fields: Vec<(String, FieldSpec)> = Vec::new();
+                for (fname, spec_v) in inner_map {
+                    fields.push((fname.clone(), decode_field_spec(spec_v)?));
+                }
+                result.push((typ.clone(), fields));
+            }
+            result
+        }
+    };
+
+    let sensors: Vec<String> = match kvs.get("sensors") {
         None => vec![],
         Some(sensors_v) => {
             let arr = as_array(sensors_v)?;
             arr.iter()
-                .map(|item| {
-                    let s = as_string(item)?;
-                    s.parse::<Level>().map_err(|e| e.to_string())
-                })
+                .map(|item| Ok(as_string(item)?.to_string()))
                 .collect::<Result<Vec<_>, String>>()?
         }
     };
@@ -311,6 +284,7 @@ pub fn node_to_json(n: &Node) -> Value {
     map.insert("name".to_string(), Value::String(n.name.clone()));
     map.insert("parent".to_string(), parent);
     map.insert("created".to_string(), Value::String(created));
+    map.insert("label".to_string(), Value::String(n.label.clone()));
     map.insert("metadata".to_string(), n.metadata.clone());
     if let Some(sch) = &n.schema {
         map.insert("schema".to_string(), schema_to_json(sch));
@@ -533,9 +507,8 @@ mod tests {
     use model::domain::formula::{parse_expr_str as parse_expr, Formula};
     use model::domain::ids::{Level, NodeId, SensorId};
     use model::domain::node;
-    use model::domain::schema::{EdgeSpec, FieldSpec, Schema};
     use model::domain::sensor::Sensor;
-    use model::domain::values::{FieldType, MeterType};
+    use model::domain::values::MeterType;
     use serde_json::json;
 
     // ------------------------------------------------------------------
@@ -578,73 +551,67 @@ mod tests {
             .keys()
             .map(|s| s.as_str())
             .collect();
-        for k in &["id", "name", "parent", "created", "metadata"] {
+        for k in &["id", "name", "parent", "created", "label", "metadata"] {
             assert!(keys.contains(k), "missing key {}", k);
         }
     }
 
     // ------------------------------------------------------------------
-    // 3. schema_json_roundtrip
+    // 3. schema_json_v2_roundtrip
     //
-    // Port of OCaml test: creates a Schema with edges+metadata+sensors,
-    // calls schema_to_json then schema_of_json, checks version, edge count,
-    // sensor count.
+    // Parses a v2 JSON schema, checks key fields, then roundtrips back.
     // ------------------------------------------------------------------
     #[test]
-    fn schema_json_roundtrip() {
-        let schema = Schema {
-            version: 1,
-            edges: vec![
-                (
-                    Level::Hn2,
-                    vec![(
-                        Level::Hn3,
-                        vec![
-                            EdgeSpec { label: "property".to_string(), min: None, max: None },
-                            EdgeSpec { label: "group".to_string(), min: None, max: Some(3) },
-                        ],
-                    )],
-                ),
-                (
-                    Level::Hn3,
-                    vec![(
-                        Level::Hn4,
-                        vec![EdgeSpec { label: "building".to_string(), min: Some(1), max: None }],
-                    )],
-                ),
-            ],
-            metadata: vec![(
-                Level::Hn4,
-                vec![
-                    (
-                        "lat".to_string(),
-                        FieldSpec {
-                            typ: FieldType::Number { min: Some(-90.0), max: Some(90.0) },
-                            required: true,
-                        },
-                    ),
-                    (
-                        "kind".to_string(),
-                        FieldSpec {
-                            typ: FieldType::Enum {
-                                one_of: vec!["a".to_string(), "b".to_string()],
-                            },
-                            required: false,
-                        },
-                    ),
-                ],
-            )],
-            sensors: vec![Level::Hn4],
-        };
-        let j = schema_to_json(&schema);
-        match schema_of_json(&j) {
-            Err(msg) => panic!("decode: {}", msg),
-            Ok(s2) => {
-                assert_eq!(s2.version, schema.version, "version");
-                assert_eq!(s2.edges.len(), schema.edges.len(), "edges parents");
-                assert_eq!(s2.sensors.len(), 1, "sensors");
-            }
-        }
+    fn schema_json_v2_roundtrip() {
+        let v = json!({
+            "version": 2,
+            "edges": {
+                "company": { "group": {}, "property": {}, "building": {} },
+                "group": { "building": {} },
+                "property": { "building": {} },
+                "building": { "area": { "min": 1 } }
+            },
+            "metadata": {
+                "building": {
+                    "lat": { "type": "number", "required": true, "min": -90.0, "max": 90.0 }
+                }
+            },
+            "sensors": ["building", "area"]
+        });
+        let sch = schema_of_json(&v).expect("must parse");
+        assert!(sch.edge_between("company", "building").is_some());
+        assert_eq!(sch.edge_between("building", "area").unwrap().min, Some(1));
+        let back = schema_to_json(&sch);
+        let sch2 = schema_of_json(&back).expect("roundtrip");
+        assert_eq!(sch, sch2);
+    }
+
+    // ------------------------------------------------------------------
+    // 3b. schema_json_v1_rejected
+    //
+    // A v1 schema JSON must be rejected with the version number in the error.
+    // ------------------------------------------------------------------
+    #[test]
+    fn schema_json_v1_rejected() {
+        let v = json!({ "version": 1, "edges": {} });
+        let err = schema_of_json(&v).unwrap_err();
+        assert!(err.contains("version 1"), "got: {}", err);
+    }
+
+    // ------------------------------------------------------------------
+    // 3c. node_json_includes_label
+    //
+    // node_to_json must include a "label" key with the node's type.
+    // ------------------------------------------------------------------
+    #[test]
+    fn node_json_includes_label() {
+        let mut nd = model::domain::node::make(
+            7, Level::Hn3, "B1", NodeId::parse("HN2#1").unwrap(),
+            "HN0#root|HN1#1|HN2#1", serde_json::json!({}), None,
+        );
+        nd.label = "building".to_string();
+        let j = node_to_json(&nd);
+        assert_eq!(j["label"], json!("building"));
     }
 
     // ------------------------------------------------------------------
