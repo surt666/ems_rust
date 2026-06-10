@@ -9,7 +9,6 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3deployment"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
@@ -170,13 +169,15 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		},
 	})
 
-	// ── Read API: Lambda behind a public Function URL (Resource Insights chart) ──
+	// ── Rust / Graviton (arm64) read API — the production aggregations lambda. ──
+	// The frontend's Resource-Insights chart hits this Function URL (PUBLIC_AGG_API_BASE_URL).
+	// Built via `cargo lambda build --release --arm64 -p aggregations` -> target/lambda/aggregations.
 	aggFn := awslambda.NewFunction(stack, jsii.String("AggregationsFn"), &awslambda.FunctionProps{
 		FunctionName: jsii.String("measurements-aggregations-api"),
-		Runtime:      awslambda.Runtime_PYTHON_3_12(),
-		Handler:      jsii.String("handler.handler"),
-		Code: awslambda.Code_FromAsset(jsii.String("./lambda/aggregations"),
-			&awss3assets.AssetOptions{Exclude: jsii.Strings("test_*.py", "__pycache__")}),
+		Runtime:      awslambda.Runtime_PROVIDED_AL2023(),
+		Architecture: awslambda.Architecture_ARM_64(),
+		Handler:      jsii.String("bootstrap"),
+		Code:         awslambda.Code_FromAsset(jsii.String("../../../target/lambda/aggregations"), nil),
 		Timeout:      awscdk.Duration_Seconds(jsii.Number(30)),
 		MemorySize:   jsii.Number(256),
 		Environment:  &map[string]*string{"ROLLUP_TABLE": table.TableName()},
@@ -195,37 +196,6 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 	awscdk.NewCfnOutput(stack, jsii.String("AggregationsUrl"), &awscdk.CfnOutputProps{
 		Value:       aggUrl.Url(),
 		Description: jsii.String("Public Function URL for GET /aggregations (Resource Insights chart)"),
-	})
-
-	// ── Rust / Graviton (arm64) read API — the production aggregations lambda. ──
-	// Direct translation of the Python handler (crates/services/aggregations); the frontend's
-	// Resource-Insights chart hits this Function URL. (Logical id + FunctionName kept as the
-	// former Go variant so the Function URL is preserved — only the code asset changed Go→Rust.)
-	// Built via `cargo lambda build --release --arm64 -p aggregations` -> target/lambda/aggregations.
-	aggFnGo := awslambda.NewFunction(stack, jsii.String("AggregationsFnGo"), &awslambda.FunctionProps{
-		FunctionName: jsii.String("measurements-aggregations-api-go"),
-		Runtime:      awslambda.Runtime_PROVIDED_AL2023(),
-		Architecture: awslambda.Architecture_ARM_64(),
-		Handler:      jsii.String("bootstrap"),
-		Code:         awslambda.Code_FromAsset(jsii.String("../../../target/lambda/aggregations"), nil),
-		Timeout:      awscdk.Duration_Seconds(jsii.Number(30)),
-		MemorySize:   jsii.Number(256),
-		Environment:  &map[string]*string{"ROLLUP_TABLE": table.TableName()},
-		LogRetention: awslogs.RetentionDays_ONE_WEEK,
-	})
-	table.GrantReadData(aggFnGo)
-
-	aggUrlGo := aggFnGo.AddFunctionUrl(&awslambda.FunctionUrlOptions{
-		AuthType: awslambda.FunctionUrlAuthType_NONE,
-		Cors: &awslambda.FunctionUrlCorsOptions{
-			AllowedOrigins: jsii.Strings("*"),
-			AllowedMethods: &[]awslambda.HttpMethod{awslambda.HttpMethod_GET},
-			AllowedHeaders: jsii.Strings("*"),
-		},
-	})
-	awscdk.NewCfnOutput(stack, jsii.String("AggregationsUrlGo"), &awscdk.CfnOutputProps{
-		Value:       aggUrlGo.Url(),
-		Description: jsii.String("Public Function URL for the Go/Graviton aggregations API (comparison)"),
 	})
 
 	return stack
