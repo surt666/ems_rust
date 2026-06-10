@@ -197,15 +197,17 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		Description: jsii.String("Public Function URL for GET /aggregations (Resource Insights chart)"),
 	})
 
-	// ── Go / Graviton (arm64) variant of the same read API, for a head-to-head comparison ──
-	// Same logic as the Python handler; built to ./lambda/aggregations-go/aggregations-go.zip
-	// (a `bootstrap` binary, GOARCH=arm64) via that dir's Makefile.
+	// ── Rust / Graviton (arm64) read API — the production aggregations lambda. ──
+	// Direct translation of the Python handler (crates/services/aggregations); the frontend's
+	// Resource-Insights chart hits this Function URL. (Logical id + FunctionName kept as the
+	// former Go variant so the Function URL is preserved — only the code asset changed Go→Rust.)
+	// Built via `cargo lambda build --release --arm64 -p aggregations` -> target/lambda/aggregations.
 	aggFnGo := awslambda.NewFunction(stack, jsii.String("AggregationsFnGo"), &awslambda.FunctionProps{
 		FunctionName: jsii.String("measurements-aggregations-api-go"),
 		Runtime:      awslambda.Runtime_PROVIDED_AL2023(),
 		Architecture: awslambda.Architecture_ARM_64(),
 		Handler:      jsii.String("bootstrap"),
-		Code:         awslambda.Code_FromAsset(jsii.String("./lambda/aggregations-go/aggregations-go.zip"), nil),
+		Code:         awslambda.Code_FromAsset(jsii.String("../../../target/lambda/aggregations"), nil),
 		Timeout:      awscdk.Duration_Seconds(jsii.Number(30)),
 		MemorySize:   jsii.Number(256),
 		Environment:  &map[string]*string{"ROLLUP_TABLE": table.TableName()},
