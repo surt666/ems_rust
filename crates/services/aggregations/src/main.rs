@@ -254,7 +254,10 @@ async fn query_node(client: &Client, p: QueryParams<'_>) -> Result<Vec<AggItem>>
                 .query()
                 .table_name(table)
                 .key_condition_expression("pk = :pk AND begins_with(sk, :sk_prefix)")
-                .filter_expression("bucket BETWEEN :b_start AND :b_end")
+                // `bucket` is a DynamoDB reserved word — escape it with an attribute name
+                // (the aws-sdk-go expression builder did this automatically in the Go version).
+                .filter_expression("#bk BETWEEN :b_start AND :b_end")
+                .expression_attribute_names("#bk", "bucket")
                 .expression_attribute_values(":pk", AttributeValue::S(pk.to_string()))
                 .expression_attribute_values(
                     ":sk_prefix",
@@ -268,7 +271,7 @@ async fn query_node(client: &Client, p: QueryParams<'_>) -> Result<Vec<AggItem>>
             req = req.set_exclusive_start_key(Some(lk));
         }
 
-        let page = req.send().await.map_err(|e| anyhow!("DynamoDB query: {}", e))?;
+        let page = req.send().await.map_err(|e| anyhow!("DynamoDB query: {:?}", e))?;
         let page_items: Vec<AggItem> = page.items.unwrap_or_default().into_iter().map(decode_item).collect();
         items.extend(page_items);
 
