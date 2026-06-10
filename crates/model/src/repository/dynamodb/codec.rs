@@ -629,6 +629,9 @@ pub fn node_to_item(nd: &Node) -> Item {
     );
     item.insert("gsi1pk".to_string(), s(node_gsi1pk(nd.level())));
     item.insert("gsi1sk".to_string(), s(nd.path.clone()));
+    if !nd.label.is_empty() {
+        item.insert("label".to_string(), s(nd.label.clone()));
+    }
     if let Some(ref sch) = nd.schema {
         item.insert("schema".to_string(), schema_to_av(sch));
     }
@@ -666,6 +669,10 @@ pub fn node_of_item(item: &Item) -> Result<Node, RepositoryError> {
         }
     };
     let parent = parent_from_path(&path);
+    let label = match item.get("label") {
+        Some(AttributeValue::S(v)) => v.clone(),
+        _ => String::new(),
+    };
     Ok(Node::builder()
         .id(id)
         .name(name)
@@ -674,6 +681,7 @@ pub fn node_of_item(item: &Item) -> Result<Node, RepositoryError> {
         .created(created)
         .metadata(metadata)
         .schema(schema)
+        .label(label)
         .build())
 }
 
@@ -1108,6 +1116,33 @@ mod tests {
         let node = node_of_item(&item).expect("decode node_hn3");
         let reencoded = node_to_item(&node);
         assert_items_eq(&item, &reencoded, "node_hn3 roundtrip");
+    }
+
+    // -----------------------------------------------------------------------
+    // node label codec tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn node_label_roundtrip() {
+        let mut nd = crate::domain::node::make(
+            7, Level::Hn3, "B1", NodeId::parse("HN2#1").unwrap(),
+            "HN0#root|HN1#1|HN2#1", serde_json::json!({}), None,
+        );
+        nd.label = "building".to_string();
+        let item = node_to_item(&nd);
+        let back = node_of_item(&item).unwrap();
+        assert_eq!(back.label, "building");
+    }
+
+    #[test]
+    fn node_missing_label_decodes_empty() {
+        let nd = crate::domain::node::make(
+            8, Level::Hn3, "B2", NodeId::parse("HN2#1").unwrap(),
+            "HN0#root|HN1#1|HN2#1", serde_json::json!({}), None,
+        );
+        let item = node_to_item(&nd); // label empty → attribute omitted
+        let back = node_of_item(&item).unwrap();
+        assert_eq!(back.label, "");
     }
 
     // -----------------------------------------------------------------------

@@ -28,6 +28,10 @@ pub struct Node {
     pub metadata: serde_json::Value,
     #[builder(default)]
     pub schema: Option<Schema>,
+    /// Node type from the company schema ("partner", "company", "building", …).
+    /// Empty string when not yet backfilled (pre-migration items).
+    #[builder(default)]
+    pub label: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +205,18 @@ mod tests {
         let n = make_root();
         assert!(n.metadata.is_object());
         assert_eq!(n.metadata.as_object().unwrap().len(), 0);
+    }
+
+    /// label defaults to empty and is settable.
+    #[test]
+    fn label_default_and_set() {
+        let mut n = make(
+            42, Level::Hn3, "x", NodeId::root(), "HN0#root",
+            serde_json::json!({}), None,
+        );
+        assert_eq!(n.label, "");
+        n.label = "building".to_string();
+        assert_eq!(n.label, "building");
     }
 
     /// Deeper path: Hn2 child of Hn1 child of root.

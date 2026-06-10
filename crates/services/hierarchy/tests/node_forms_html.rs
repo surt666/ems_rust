@@ -138,6 +138,7 @@ fn make_hn2_10003_node() -> Node {
         created: chrono::Utc::now(),
         metadata: serde_json::json!({}),
         schema: None,
+        label: String::new(),
     }
 }
 
