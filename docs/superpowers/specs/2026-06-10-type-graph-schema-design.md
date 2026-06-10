@@ -159,13 +159,10 @@ write.**
    (e.g. building under company) did not exist in v1, so migrated schemas behave identically
    until edited.
 
-**Rollout** (detailed sequencing belongs to the implementation plan): with a clean-break codec
-there is necessarily a brief window where deployed code and stored schemas disagree (old code
-cannot read v2; new code refuses v1). Plan: dry-run + review the migration first, then run the
-migration and deploy the new lambda back-to-back (minutes apart). Schema reads only happen on
-node-create/edit paths, so a short window is acceptable for this system. Node-`label` reads must
-tolerate a missing attribute until the backfill has run (default by level: hn1 partner, hn2
-company; deeper levels read the incoming edge as fallback).
+**Rollout:** the deployment targets are test accounts — breaking changes are acceptable. Deploy
+the new code and run the migration in either order; any window where deployed code and stored
+data disagree (v1 schemas unreadable, node `label` not yet backfilled) is tolerated. No fallback
+read paths are built; the migration script is still dry-run + reviewed before writing.
 
 The migration transform is implemented as a pure function and unit-tested against the SeedCo01
 schema fixture before touching the table.
