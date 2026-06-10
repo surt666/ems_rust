@@ -294,25 +294,26 @@ where
 
 /// `GET /hierarchy/query/nodes?id=...&user=...&path=...&permissions=...`
 ///
-/// Top-level (no id): uses `access::start_nodes` rule — root grant expands
-/// to root's children, otherwise the administrated nodes are shown directly.
-/// Drilling (id provided): gated by `access::has_admin_access`.
-/// Mirrors OCaml `api_html.ml :: render_nodes`.
+/// Top-level (no id): uses the `access::start_nodes` rule over all access-edge
+/// kinds (administrates/reads/writes) — a root grant expands to root's children,
+/// otherwise the user's granted nodes are shown directly.
+/// Drilling (id provided): gated by `access::has_access` (any access edge on the
+/// node or an ancestor). Mirrors OCaml `api_html.ml :: render_nodes`.
 ///
-/// `get_node` must be `Fn + Clone` so it can be called once per administrated
-/// node when resolving names in the top-level non-root path.
+/// `get_node` must be `Fn + Clone` so it can be called once per start node when
+/// resolving names in the top-level path.
 pub async fn handle_nodes<FLA, FLAFut, FLCR, FLCRFut, FGN, FGNFut>(
     id_opt: Option<&str>,
     user_s: &str,
     path_opt: Option<&str>,
     with_permissions: bool,
-    list_administrated: FLA,
+    list_access_edges: FLA,
     list_child_refs: FLCR,
     get_node: FGN,
 ) -> (u16, String)
 where
     FLA: FnOnce(UserId) -> FLAFut,
-    FLAFut: Future<Output = Result<Vec<NodeId>, RepositoryError>>,
+    FLAFut: Future<Output = Result<Vec<(NodeId, EdgeKind)>, RepositoryError>>,
     FLCR: Fn(NodeId, Option<EdgeKind>) -> FLCRFut + Clone,
     FLCRFut: Future<Output = Result<Vec<(NodeId, String)>, RepositoryError>>,
     FGN: Fn(NodeId) -> FGNFut + Clone,
@@ -338,15 +339,16 @@ where
 
     let refs_result: Result<Vec<(NodeId, String)>, RepositoryError> = match id_opt {
         Some(id_s) if !id_s.is_empty() => {
-            // Drilling into a specific node — gated by admin access check.
+            // Drilling into a specific node — gated by browse access (any access
+            // edge: administrates/reads/writes) on the node or an ancestor.
             let parent = match NodeId::parse(id_s) {
                 Ok(id) => id,
                 Err(e) => return html_error(&format!("bad id: {}", e)),
             };
-            let has_access = access::has_admin_access(
+            let has_access = access::has_access(
                 uid.clone(),
                 parent.clone(),
-                list_administrated,
+                list_access_edges,
                 {
                     let gn = get_node.clone();
                     move |nid| gn(nid)
@@ -361,27 +363,28 @@ where
             }
         }
         _ => {
-            // Top-level — apply start_nodes rule.
-            let grants =
-                match access::list_administrated_nodes(uid.clone(), list_administrated).await {
-                    Ok(g) => g,
-                    Err(e) => return html_repo_error(e),
-                };
+            // Top-level — start nodes across all access-edge kinds (the user's
+            // administrates / reads / writes grants; a root grant expands to
+            // root's direct children).
+            let grant_ids = match access::start_nodes(uid.clone(), list_access_edges, {
+                let lcr = list_child_refs.clone();
+                move |nid| lcr(nid, None)
+            })
+            .await
+            {
+                Ok(ids) => ids,
+                Err(e) => return html_repo_error(e),
+            };
 
-            if grants.iter().any(|n| n.is_root()) {
-                // Root grant → list root's direct children.
-                hierarchy::list_child_refs(NodeId::root(), None, list_child_refs).await
-            } else {
-                // Return the administrated nodes as start nodes (with real names).
-                // Mirrors OCaml: List.filter_map (fun g -> match Hierarchy.get_node g with ...) grants
-                let mut refs = Vec::new();
-                for g in grants {
-                    if let Ok(Some(n)) = get_node(g.clone()).await {
-                        refs.push((g, n.name));
-                    }
+            // Resolve display names for each start node.
+            // Mirrors OCaml: List.filter_map (fun g -> match Hierarchy.get_node g with ...) grants
+            let mut refs = Vec::new();
+            for g in grant_ids {
+                if let Ok(Some(n)) = get_node(g.clone()).await {
+                    refs.push((g, n.name));
                 }
-                Ok(refs)
             }
+            Ok(refs)
         }
     };
 
@@ -992,7 +995,7 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
                 with_perms,
                 {
                     let t = table.clone();
-                    move |uid| async move { user::list_administrated_nodes(ddb, &t, &uid).await }
+                    move |uid| async move { user::list_access_edges(ddb, &t, &uid).await }
                 },
                 {
                     let t = table.clone();
@@ -1171,12 +1174,6 @@ mod tests {
             s.put_edge(spec);
             std::future::ready(Ok(()))
         }
-    }
-
-    fn make_list_administrated(
-        s: Rc<Store>,
-    ) -> impl FnOnce(UserId) -> std::future::Ready<Result<Vec<NodeId>, RepositoryError>> {
-        move |uid| std::future::ready(Ok(s.list_administrated_nodes(&uid)))
     }
 
     fn make_list_blocked_nodes_fn(
@@ -1623,7 +1620,7 @@ mod tests {
             &uid_s,
             None,
             false,
-            make_list_administrated(store.clone()),
+            make_list_access_edges(store.clone()),
             make_list_child_refs(store.clone()),
             make_get_node(store.clone()),
         )
@@ -1633,6 +1630,78 @@ mod tests {
         assert!(
             html.contains("HN2#10002"),
             "tree should show the administrated HN2 node, got html snippet: {:?}",
+            &html[..html.len().min(500)]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // test: top_level_shows_writes_hn2
+    //
+    // A user with only a *writes* edge on an HN2 node must still see it at the
+    // top level (regression test for the bug where handle_nodes consulted only
+    // `administrates#` edges).
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn top_level_shows_writes_hn2() {
+        let store = Rc::new(Store::new());
+        let c2 = NodeId::make(Level::Hn2, 10002);
+
+        let n2 = node::make(
+            10002,
+            Level::Hn2,
+            "Acme",
+            NodeId::root(),
+            &format!("{}|HN1#10001", NodeId::root()),
+            json!({}),
+            None,
+        );
+        store.put_node(&n2);
+
+        let uid = model::logic::users::create(
+            "stel@x".to_string(),
+            "Stel".to_string(),
+            CognitoGroup::Writer,
+            None,
+            None,
+            make_get_user(store.clone()),
+            make_put_user(store.clone()),
+        )
+        .await
+        .expect("create user")
+        .id;
+
+        // Grant *writes* (not administrates) on c2.
+        model::logic::access::grant_access(
+            uid.clone(),
+            c2.clone(),
+            EdgeKind::Writes,
+            make_get_user(store.clone()),
+            {
+                let s = store.clone();
+                move |nid| std::future::ready(Ok(s.get_node(&nid)))
+            },
+            make_put_edge(store.clone()),
+        )
+        .await
+        .expect("grant writes");
+
+        let uid_s = uid.to_string();
+        let (status, html) = handle_nodes(
+            None,
+            &uid_s,
+            None,
+            false,
+            make_list_access_edges(store.clone()),
+            make_list_child_refs(store.clone()),
+            make_get_node(store.clone()),
+        )
+        .await;
+
+        assert_eq!(status, 200, "status 200");
+        assert!(
+            html.contains("HN2#10002"),
+            "tree should show the writes-granted HN2 node, got html snippet: {:?}",
             &html[..html.len().min(500)]
         );
     }

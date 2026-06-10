@@ -97,22 +97,16 @@ fn bucket_to_iso(bucket: &str, gran: &str) -> String {
 }
 
 /// Split a sort-key "<node_path>#<purpose>#<gran>#<bucket>" on the last 3 `#`.
-/// node_path may itself contain `#`. Mirrors Python's `sk.rsplit("#", 3)`.
+/// node_path may itself contain `#`. Mirrors Python's `sk.rsplit("#", 3)`:
+/// `rsplitn(4, '#')` caps at 4 pieces, so the leftmost (node_path) keeps any
+/// internal `#`. Fewer than 3 `#` → fallback `(sk, "", "", "")`.
 fn parse_sk(sk: &str) -> (&str, &str, &str, &str) {
-    let bytes = sk.as_bytes();
-    let mut cuts: Vec<usize> = Vec::with_capacity(3);
-    let mut i = bytes.len();
-    while i > 0 && cuts.len() < 3 {
-        i -= 1;
-        if bytes[i] == b'#' {
-            cuts.push(i);
-        }
+    let mut it = sk.rsplitn(4, '#');
+    let bucket = it.next().unwrap_or("");
+    match (it.next(), it.next(), it.next()) {
+        (Some(gran), Some(purpose), Some(node)) => (node, purpose, gran, bucket),
+        _ => (sk, "", "", ""),
     }
-    if cuts.len() < 3 {
-        return (sk, "", "", "");
-    }
-    let (b, g, p) = (cuts[0], cuts[1], cuts[2]);
-    (&sk[..p], &sk[p + 1..g], &sk[g + 1..b], &sk[b + 1..])
 }
 
 // ── DynamoDB item shape ───────────────────────────────────────────────────────
@@ -297,8 +291,13 @@ fn json_response(status: u16, body: impl Serialize) -> Result<Response<Body>, Er
         .expect("failed to build response"))
 }
 
+/// A `{"error": "<message>"}` body at the given status (matches the Go contract).
+fn json_error(status: u16, message: impl Into<String>) -> Result<Response<Body>, Error> {
+    json_response(status, HashMap::from([("error", message.into())]))
+}
+
 async fn handler(event: Request) -> Result<Response<Body>, Error> {
-    // Lazy-init DynamoDB client (captured via closure in main, threaded through via OnceLock)
+    // Read process-global state initialized in `main` (OnceLock statics).
     let client = DDB_CLIENT.get().expect("DDB client not initialized");
     let table = ROLLUP_TABLE.get().expect("ROLLUP_TABLE not set");
 
@@ -323,10 +322,7 @@ async fn handler(event: Request) -> Result<Response<Body>, Error> {
     let end = qs.get("end").cloned().unwrap_or_default();
 
     if start.is_empty() || end.is_empty() {
-        return json_response(
-            400,
-            HashMap::from([("error", "start and end are required (ISO-8601)")]),
-        );
+        return json_error(400, "start and end are required (ISO-8601)");
     }
 
     let gran = gran_of(&resolution);
@@ -340,23 +336,9 @@ async fn handler(event: Request) -> Result<Response<Body>, Error> {
         }
     };
 
-    let start_bucket = match bucket_label(&start, gran) {
-        Ok(b) => b,
-        Err(_) => {
-            return json_response(
-                400,
-                HashMap::from([("error", "start/end must be ISO-8601 timestamps")]),
-            );
-        }
-    };
-    let end_bucket = match bucket_label(&end, gran) {
-        Ok(b) => b,
-        Err(_) => {
-            return json_response(
-                400,
-                HashMap::from([("error", "start/end must be ISO-8601 timestamps")]),
-            );
-        }
+    let (start_bucket, end_bucket) = match (bucket_label(&start, gran), bucket_label(&end, gran)) {
+        (Ok(s), Ok(e)) => (s, e),
+        _ => return json_error(400, "start/end must be ISO-8601 timestamps"),
     };
 
     match query_node(
@@ -374,7 +356,7 @@ async fn handler(event: Request) -> Result<Response<Body>, Error> {
     .await
     {
         Ok(items) => json_response(200, to_rows(items, &level_id, &resolution, gran)),
-        Err(e) => json_response(500, HashMap::from([("error", e.to_string())])),
+        Err(e) => json_error(500, e.to_string()),
     }
 }
 

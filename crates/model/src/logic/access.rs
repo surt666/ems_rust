@@ -339,6 +339,46 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// has_access
+// ---------------------------------------------------------------------------
+
+/// Return `true` iff the user has **any** access edge (`Administrates`, `Reads`,
+/// or `Writes`) on `node_id` or one of its ancestors — i.e. may *browse* the
+/// node's subtree. This is the read/write/admin generalisation of
+/// [`has_admin_access`], which only considers `Administrates` edges.
+pub async fn has_access<FLA, FLAFut, FGN, FGNFut>(
+    user_id: UserId,
+    node_id: NodeId,
+    list_access_edges: FLA,
+    get_node: FGN,
+) -> Result<bool, RepositoryError>
+where
+    FLA: FnOnce(UserId) -> FLAFut,
+    FLAFut: Future<Output = Result<Vec<(NodeId, EdgeKind)>, RepositoryError>>,
+    FGN: FnOnce(NodeId) -> FGNFut,
+    FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
+{
+    let grants: Vec<NodeId> = list_access_edges(user_id)
+        .await?
+        .into_iter()
+        .map(|(nid, _kind)| nid)
+        .collect();
+
+    // Direct grant on the target node?
+    if grants.contains(&node_id) {
+        return Ok(true);
+    }
+
+    // Grant on any ancestor?
+    let ancestors = match get_node(node_id.clone()).await? {
+        Some(n) => ancestors_of_path(&node_id, &n.path),
+        None => vec![],
+    };
+
+    Ok(ancestors.iter().any(|a| grants.contains(a)))
+}
+
+// ---------------------------------------------------------------------------
 // start_nodes  (OCaml `start_refs` / start-nodes for a user's scope)
 // ---------------------------------------------------------------------------
 
@@ -1127,6 +1167,74 @@ mod tests {
         .expect("has_admin_access reads");
 
         assert!(!result, "Reads edge should not grant admin access");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: has_access — any edge kind (Writes/Reads) grants browse access,
+    // directly and via an ancestor. Unlike has_admin_access.
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn has_access_true_for_writes_grant_direct() {
+        let (store, c2, _bldg, uid) = seed();
+
+        store.put_edge(EdgeSpec {
+            from_: uid.to_string(),
+            to_: c2.to_string(),
+            kind: EdgeKind::Writes,
+            name: String::new(),
+        });
+
+        let result = has_access(
+            uid.clone(),
+            c2.clone(),
+            list_access_edges_fn(store.clone()),
+            get_node_fn(store.clone()),
+        )
+        .await
+        .expect("has_access writes");
+
+        assert!(result, "Writes edge should grant browse access");
+    }
+
+    #[tokio::test]
+    async fn has_access_true_for_reads_grant_via_ancestor() {
+        let (store, c2, bldg, uid) = seed();
+
+        // Reads on the parent (c2) should grant browse access to the child (bldg).
+        store.put_edge(EdgeSpec {
+            from_: uid.to_string(),
+            to_: c2.to_string(),
+            kind: EdgeKind::Reads,
+            name: String::new(),
+        });
+
+        let result = has_access(
+            uid.clone(),
+            bldg.clone(),
+            list_access_edges_fn(store.clone()),
+            get_node_fn(store.clone()),
+        )
+        .await
+        .expect("has_access reads via ancestor");
+
+        assert!(result, "Reads edge on ancestor should grant browse access");
+    }
+
+    #[tokio::test]
+    async fn has_access_false_without_grant() {
+        let (store, c2, _bldg, uid) = seed();
+
+        let result = has_access(
+            uid.clone(),
+            c2.clone(),
+            list_access_edges_fn(store.clone()),
+            get_node_fn(store.clone()),
+        )
+        .await
+        .expect("has_access no grant");
+
+        assert!(!result, "no edge → no browse access");
     }
 
     // -----------------------------------------------------------------------
