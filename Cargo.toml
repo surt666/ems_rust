@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/model", "crates/services/hierarchy"]
+members = ["crates/model", "crates/services/hierarchy", "crates/services/aggregations"]
 
 [workspace.package]
 edition = "2021"
@@ -26,6 +26,8 @@ proptest = "1"
 serial_test = "3"
 urlencoding = "2"
 rand = "0.8"
+regex = "1"
+url = "2"
 
 [profile.release]
 opt-level = "z"

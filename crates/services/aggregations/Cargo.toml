@@ -1,0 +1,21 @@
+[package]
+name = "aggregations"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "aggregations"
+path = "src/main.rs"
+
+[dependencies]
+lambda_http.workspace = true
+tokio.workspace = true
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_dynamo.workspace = true
+chrono.workspace = true
+regex.workspace = true
+anyhow.workspace = true
+url.workspace = true
