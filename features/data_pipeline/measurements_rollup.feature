@@ -32,9 +32,9 @@ Feature: measurements_aggregate rollup view
 
   # INVARIANT (mirrors meter_enrichment.feature): hierarchy levels are dense depth indices, so a
   # populated path is contiguous from hn2 with only trailing nulls. ancestor_keys therefore stops
-  # at the first None (no interior hole to skip). This holds because the model layer forbids
-  # non-consecutive parentage (e.g. building-under-company) — see the ENFORCEMENT note in
-  # meter_enrichment.feature.
+  # at the first None (no interior hole to skip). This holds because the v2
+  # type-graph model derives every child's level as parent + 1 — see
+  # features/hierarchy/schema_type_graph.feature.
 
   # source: glue/tests/test_helpers.py — build_sk and delimiter invariant
   Scenario: A node's own dated rows sort before any descendant row

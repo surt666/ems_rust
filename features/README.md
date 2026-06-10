@@ -42,6 +42,7 @@ Each scenario notes its backing test in a `# source:` comment so the two never s
 | `data_pipeline/flink_glue_parity.feature` | Streaming/batch output-parity contract | resampling-rules spec ("output parity invariant") |
 | `data_pipeline/measurements_rollup.feature` | DynamoDB rollup view: keys, dedup, idempotency, TTL | `glue/tests/test_helpers.py`, `glue/tests/test_rollups.py`, rollup spec |
 | `data_pipeline/deployment_guardrails.feature` | Non-destructive deploy rules (Iceberg/Flink state) | resampling-rules spec, `CLAUDE.md` deployment policy |
+| `hierarchy/schema_type_graph.feature` | v2 type-graph schema: variable-depth types, DAG validation, derived levels | `crates/model` schema/hierarchy/sensors tests, 2026-06-10 spec |
 
 ## Conventions
 

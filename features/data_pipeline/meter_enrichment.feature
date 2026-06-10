@@ -46,17 +46,12 @@ Feature: Meter enrichment and hierarchy resolution
     And no EnrichedRecord is produced for it
 
   # source: HierarchyPathParserSpec — "skip non-contiguous depths if absent"
-  # INVARIANT: hn1..hn9 are dense DEPTH indices, not fixed type slots. Each company's `schema.edges`
-  # (a 'node' record in the hierarchy table) wires CONSECUTIVE levels only — e.g. hn2→hn3→hn4→hn5
-  # with hn3=group|property, hn4=building, hn5=area — so a valid hierarchy_path is contiguous from
-  # hn2 with only trailing nulls. A company with no intermediate level numbers its building hn3
-  # rather than leaving hn3 empty; interior holes do not occur in production data.
-  # ENFORCEMENT: this is a backend rule, not a frontend quirk. crates/model `hierarchy.rs`
-  # `add_under_schema` rejects any parent→child pair absent from the company's `schema.edges`
-  # ("edge hn2 -> hn4 not allowed by schema"), and `resolve_child_level` only offers
-  # `schema.allowed_children(parent_level)`. A building (hn4) therefore cannot be placed directly
-  # under a company (hn2). Allowing it would be a schema change (adding an hn2→hn4 edge); if that
-  # ever happens, this invariant and the rollup's dense-level assumption must change together.
+  # INVARIANT: hn1..hn9 are dense DEPTH indices. Under the v2 type-graph schema
+  # (see features/hierarchy/schema_type_graph.feature) a child's level is always
+  # the parent's depth + 1, derived by the model layer — so a valid
+  # hierarchy_path is contiguous from hn2 with only trailing nulls. The same
+  # TYPE (e.g. building) may appear at different depths; never assume a fixed
+  # type-per-level mapping (hn4 is not always "building").
   Scenario: The parser tolerates a non-contiguous path defensively, but production paths are dense
     Given the hierarchy_path "HN0#root|HN1#1|HN2#2|HN4#8" (a gap the schema would not emit)
     When HierarchyPathParser.parse runs
