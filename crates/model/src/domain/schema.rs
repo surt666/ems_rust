@@ -2,20 +2,16 @@
 
 use typed_builder::TypedBuilder;
 
-use crate::domain::ids::Level;
 use crate::domain::values::FieldType;
 
 // ---------------------------------------------------------------------------
 // EdgeSpec
 // ---------------------------------------------------------------------------
 
-/// Specification for a directed hierarchy edge (label + optional cardinality).
-///
-/// Faithfully ported from `services/hierarchy/lib/domain/schema.ml`:
-/// `type edge_spec = { label : string; min : int option; max : int option }`.
+/// Cardinality for a directed type edge. The child type name is the key in
+/// `Schema::edges`; v1's separate `label` is gone — the child type IS the label.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct EdgeSpec {
-    pub label: String,
     #[builder(default)]
     pub min: Option<i32>,
     #[builder(default)]
@@ -40,127 +36,202 @@ pub struct FieldSpec {
 // Schema
 // ---------------------------------------------------------------------------
 
-/// A hierarchy schema: versioned edge rules, metadata specs, and sensor levels.
-///
-/// Faithfully ported from `services/hierarchy/lib/domain/schema.ml`:
-/// `type t = { version; edges; metadata; sensors }`.
-///
-/// The `edges` and `metadata` fields use association-list structure matching OCaml's
-/// `(Level.t * (Level.t * edge_spec list) list) list` / `(Level.t * (string * field_spec) list) list`.
+/// Reserved type of the hn2 node itself — root of the type graph.
+pub const COMPANY_TYPE: &str = "company";
+/// Reserved type of hn1 nodes — outside the schema.
+pub const PARTNER_TYPE: &str = "partner";
+
+/// A hierarchy schema (v2): a DAG of node types rooted at "company".
+/// Levels (hnN) are NOT a schema concept — a node's level is its depth.
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
 pub struct Schema {
     pub version: u32,
-    /// Association list: parent level → list of (child level → edge specs).
-    #[allow(clippy::type_complexity)]
-    pub edges: Vec<(Level, Vec<(Level, Vec<EdgeSpec>)>)>,
-    /// Association list: level → list of (field name → field spec).
-    pub metadata: Vec<(Level, Vec<(String, FieldSpec)>)>,
-    /// Levels at which sensors are allowed.
-    pub sensors: Vec<Level>,
+    /// parent type → (child type → cardinality)
+    pub edges: Vec<(String, Vec<(String, EdgeSpec)>)>,
+    /// type → (field name → field spec)
+    pub metadata: Vec<(String, Vec<(String, FieldSpec)>)>,
+    /// types at which sensors may attach
+    pub sensors: Vec<String>,
 }
 
 impl Schema {
-    /// Returns the allowed child entries for `parent`, or an empty slice.
-    ///
-    /// Port of OCaml `allowed_children`:
-    /// `List.assoc_opt parent t.edges |> Option.value ~default:[]`.
-    pub fn allowed_children(&self, parent: Level) -> &[(Level, Vec<EdgeSpec>)] {
+    /// Allowed child types (with cardinality) under `parent` type.
+    pub fn allowed_children(&self, parent: &str) -> &[(String, EdgeSpec)] {
         self.edges
             .iter()
-            .find(|(lvl, _)| *lvl == parent)
+            .find(|(t, _)| t == parent)
             .map(|(_, children)| children.as_slice())
             .unwrap_or(&[])
     }
 
-    /// Returns the edge specs between `parent` and `child`, or empty Vec.
-    ///
-    /// Port of OCaml `edges_between`:
-    /// `List.assoc_opt child (allowed_children t parent) |> Option.value ~default:[]`.
-    pub fn edges_between(&self, parent: Level, child: Level) -> Vec<EdgeSpec> {
+    /// Cardinality of the `parent` → `child` type edge, if allowed.
+    pub fn edge_between(&self, parent: &str, child: &str) -> Option<&EdgeSpec> {
         self.allowed_children(parent)
             .iter()
-            .find(|(lvl, _)| *lvl == child)
-            .map(|(_, specs)| specs.clone())
-            .unwrap_or_default()
+            .find(|(t, _)| t == child)
+            .map(|(_, spec)| spec)
     }
 
-    /// Returns the metadata field specs for `level`, or an empty slice.
-    ///
-    /// Port of OCaml `metadata_for`:
-    /// `List.assoc_opt level t.metadata |> Option.value ~default:[]`.
-    pub fn metadata_for(&self, level: Level) -> &[(String, FieldSpec)] {
+    /// Metadata field specs for a type.
+    pub fn metadata_for(&self, typ: &str) -> &[(String, FieldSpec)] {
         self.metadata
             .iter()
-            .find(|(lvl, _)| *lvl == level)
+            .find(|(t, _)| t == typ)
             .map(|(_, fields)| fields.as_slice())
             .unwrap_or(&[])
     }
 
-    /// Returns whether `level` allows sensors.
-    ///
-    /// Port of OCaml `allows_sensors`: `List.mem level t.sensors`.
-    pub fn allows_sensors(&self, level: Level) -> bool {
-        self.sensors.contains(&level)
+    /// Whether sensors may attach to nodes of this type.
+    pub fn allows_sensors(&self, typ: &str) -> bool {
+        self.sensors.iter().any(|t| t == typ)
     }
 
-    /// Validate schema invariants.
-    ///
-    /// Port of OCaml `validate`:
-    /// 1. Each edge `parent → child` must have `depth(parent) < depth(child)`.
-    /// 2. Within an edge list, labels must be unique.
-    /// 3. If both `min` and `max` are set on a spec, `min <= max`.
-    /// 4. Each metadata field spec must pass `validate_spec`.
-    /// 5. The `sensors` list must have no duplicate levels.
+    /// Validate v2 invariants:
+    /// 1. names non-empty; "partner" nowhere; "company" never a child; no self-edges;
+    ///    per parent no duplicate child; min <= max.
+    /// 2. the type graph is a DAG.
+    /// 3. every referenced type (parents, metadata, sensors) reachable from "company".
+    /// 4. longest path from "company" <= 7 edges (deepest node fits hn9).
+    /// 5. metadata field specs valid; no duplicate sensors entries.
     pub fn validate(&self) -> Result<(), String> {
-        // 1–3: edge ordering, duplicate labels, min <= max
+        use std::collections::{HashMap, HashSet};
+
+        // 1: local name/cardinality rules
         for (parent, children) in &self.edges {
-            for (child, specs) in children {
-                if parent.depth() >= child.depth() {
+            if parent.is_empty() {
+                return Err("empty parent type name".to_string());
+            }
+            if parent == PARTNER_TYPE {
+                return Err("\"partner\" is reserved and cannot appear in the schema".to_string());
+            }
+            let mut seen: HashSet<&str> = HashSet::new();
+            for (child, spec) in children {
+                if child.is_empty() {
+                    return Err(format!("edge from {:?}: empty child type name", parent));
+                }
+                if child == COMPANY_TYPE || child == PARTNER_TYPE {
                     return Err(format!(
-                        "edge {} -> {} violates depth ordering",
+                        "edge {} -> {}: reserved type cannot be a child",
                         parent, child
                     ));
                 }
-                let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
-                for spec in specs {
-                    if !seen.insert(spec.label.as_str()) {
-                        return Err(format!(
-                            "edge {} -> {}: duplicate label {:?}",
-                            parent, child, spec.label
-                        ));
-                    }
-                    if let (Some(a), Some(b)) = (spec.min, spec.max) {
-                        if a > b {
-                            return Err(format!(
-                                "edge {} -> {} ({}) has min > max",
-                                parent, child, spec.label
-                            ));
-                        }
+                if child == parent {
+                    return Err(format!("self edge {} -> {}", parent, child));
+                }
+                if !seen.insert(child.as_str()) {
+                    return Err(format!("duplicate child {} under {}", child, parent));
+                }
+                if let (Some(a), Some(b)) = (spec.min, spec.max) {
+                    if a > b {
+                        return Err(format!("edge {} -> {} has min > max", parent, child));
                     }
                 }
             }
         }
 
-        // 4: metadata field-spec validation
-        for (level, fields) in &self.metadata {
+        // adjacency map
+        let mut adj: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (parent, children) in &self.edges {
+            let entry = adj.entry(parent.as_str()).or_default();
+            for (child, _) in children {
+                entry.push(child.as_str());
+            }
+        }
+
+        // 2: DAG check — 3-color DFS from every declared parent
+        #[derive(Clone, Copy, PartialEq)]
+        enum Color {
+            White,
+            Gray,
+            Black,
+        }
+        fn dfs<'a>(
+            node: &'a str,
+            adj: &HashMap<&'a str, Vec<&'a str>>,
+            color: &mut HashMap<&'a str, Color>,
+        ) -> Result<(), String> {
+            color.insert(node, Color::Gray);
+            for next in adj.get(node).map(|v| v.as_slice()).unwrap_or(&[]) {
+                match color.get(next).copied().unwrap_or(Color::White) {
+                    Color::Gray => return Err(format!("cycle involving type {:?}", next)),
+                    Color::White => dfs(next, adj, color)?,
+                    Color::Black => {}
+                }
+            }
+            color.insert(node, Color::Black);
+            Ok(())
+        }
+        let mut roots: Vec<&str> = adj.keys().copied().collect();
+        roots.sort(); // deterministic error messages
+        let mut color: HashMap<&str, Color> = HashMap::new();
+        for r in roots {
+            if color.get(r).copied().unwrap_or(Color::White) == Color::White {
+                dfs(r, &adj, &mut color)?;
+            }
+        }
+
+        // 3: reachability from "company"
+        let mut reach: HashSet<&str> = HashSet::new();
+        reach.insert(COMPANY_TYPE);
+        let mut queue: Vec<&str> = vec![COMPANY_TYPE];
+        while let Some(t) = queue.pop() {
+            for c in adj.get(t).map(|v| v.as_slice()).unwrap_or(&[]) {
+                if reach.insert(c) {
+                    queue.push(c);
+                }
+            }
+        }
+        for (parent, _) in &self.edges {
+            if !reach.contains(parent.as_str()) {
+                return Err(format!("type {:?} not reachable from \"company\"", parent));
+            }
+        }
+        for (typ, _) in &self.metadata {
+            if !reach.contains(typ.as_str()) {
+                return Err(format!("metadata for unreachable type {:?}", typ));
+            }
+        }
+        let mut seen_sensors: HashSet<&str> = HashSet::new();
+        for typ in &self.sensors {
+            if !reach.contains(typ.as_str()) {
+                return Err(format!("sensors for unreachable type {:?}", typ));
+            }
+            if !seen_sensors.insert(typ.as_str()) {
+                return Err(format!("duplicate sensors entry {:?}", typ));
+            }
+        }
+
+        // 4: longest path from "company" ≤ 7 (DAG → DFS with memo)
+        fn longest<'a>(
+            node: &'a str,
+            adj: &HashMap<&'a str, Vec<&'a str>>,
+            memo: &mut HashMap<&'a str, usize>,
+        ) -> usize {
+            if let Some(d) = memo.get(node) {
+                return *d;
+            }
+            let d = adj
+                .get(node)
+                .map(|v| v.iter().map(|c| 1 + longest(c, adj, memo)).max().unwrap_or(0))
+                .unwrap_or(0);
+            memo.insert(node, d);
+            d
+        }
+        let mut memo: HashMap<&str, usize> = HashMap::new();
+        let depth = longest(COMPANY_TYPE, &adj, &mut memo);
+        if depth > 7 {
+            return Err(format!(
+                "longest type chain from \"company\" is {} edges; max 7 (deepest node must fit hn9)",
+                depth
+            ));
+        }
+
+        // 5: metadata field specs
+        for (typ, fields) in &self.metadata {
             for (name, spec) in fields {
-                validate_spec(spec).map_err(|msg| {
-                    format!("{}.{}: {}", level, name, msg)
-                })?;
+                validate_spec(spec).map_err(|msg| format!("{}.{}: {}", typ, name, msg))?;
             }
         }
-
-        // 5: no duplicate sensor levels
-        let mut seen: std::collections::HashSet<Level> = std::collections::HashSet::new();
-        for level in &self.sensors {
-            if !seen.insert(*level) {
-                return Err(format!(
-                    "duplicate sensors entry for level {}",
-                    level
-                ));
-            }
-        }
-
         Ok(())
     }
 }
@@ -360,7 +431,6 @@ pub fn validate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::ids::Level;
     use crate::domain::values::FieldType;
     use serde_json::json;
 
@@ -368,193 +438,190 @@ mod tests {
 
     fn sample_schema() -> Schema {
         Schema {
-            version: 1,
+            version: 2,
             edges: vec![
-                (
-                    Level::Hn2,
-                    vec![(
-                        Level::Hn3,
-                        vec![EdgeSpec::builder().label("property".to_string()).build()],
-                    )],
-                ),
-                (
-                    Level::Hn3,
-                    vec![(
-                        Level::Hn4,
-                        vec![EdgeSpec::builder()
-                            .label("building".to_string())
-                            .min(Some(1))
-                            .build()],
-                    )],
-                ),
-                (
-                    Level::Hn4,
-                    vec![(
-                        Level::Hn5,
-                        vec![EdgeSpec::builder().label("area".to_string()).build()],
-                    )],
-                ),
+                ("company".to_string(), vec![
+                    ("group".to_string(), EdgeSpec::builder().build()),
+                    ("property".to_string(), EdgeSpec::builder().build()),
+                    ("building".to_string(), EdgeSpec::builder().build()),
+                ]),
+                ("group".to_string(), vec![
+                    ("building".to_string(), EdgeSpec::builder().build()),
+                ]),
+                ("property".to_string(), vec![
+                    ("building".to_string(), EdgeSpec::builder().build()),
+                ]),
+                ("building".to_string(), vec![
+                    ("area".to_string(), EdgeSpec::builder().build()),
+                ]),
             ],
             metadata: vec![(
-                Level::Hn4,
+                "building".to_string(),
                 vec![
-                    (
-                        "lat".to_string(),
-                        FieldSpec {
-                            typ: FieldType::Number {
-                                min: Some(-90.0),
-                                max: Some(90.0),
-                            },
-                            required: true,
-                        },
-                    ),
-                    (
-                        "lng".to_string(),
-                        FieldSpec {
-                            typ: FieldType::Number {
-                                min: Some(-180.0),
-                                max: Some(180.0),
-                            },
-                            required: true,
-                        },
-                    ),
+                    ("lat".to_string(), FieldSpec {
+                        typ: FieldType::Number { min: Some(-90.0), max: Some(90.0) },
+                        required: true,
+                    }),
+                    ("lng".to_string(), FieldSpec {
+                        typ: FieldType::Number { min: Some(-180.0), max: Some(180.0) },
+                        required: true,
+                    }),
                 ],
             )],
-            sensors: vec![],
+            sensors: vec!["building".to_string(), "area".to_string()],
         }
     }
 
     // ---- Schema::validate --------------------------------------------------
 
-    /// Port of `test_domain_schema.ml :: self_check_accepts_sample`
     #[test]
     fn self_check_accepts_sample() {
-        let s = sample_schema();
-        match s.validate() {
-            Ok(()) => {}
-            Err(e) => panic!("unexpected validation error: {}", e),
-        }
+        sample_schema().validate().expect("sample schema must validate");
     }
 
-    /// Port of `test_domain_schema.ml :: rejects_depth_violation`
     #[test]
-    fn rejects_depth_violation() {
+    fn rejects_cycle() {
         let mut bad = sample_schema();
-        bad.edges = vec![(
-            Level::Hn4,
-            vec![(
-                Level::Hn3,
-                vec![EdgeSpec::builder().label("x".to_string()).build()],
-            )],
-        )];
-        match bad.validate() {
-            Ok(()) => panic!("expected failure on hn4 -> hn3"),
-            Err(_) => {}
-        }
+        // area -> group closes a cycle group -> building -> area -> group
+        bad.edges.push((
+            "area".to_string(),
+            vec![("group".to_string(), EdgeSpec::builder().build())],
+        ));
+        let err = bad.validate().unwrap_err();
+        assert!(err.contains("cycle"), "wrong error: {}", err);
     }
 
-    /// Port of `test_domain_schema.ml :: rejects_duplicate_sensor_level`
     #[test]
-    fn rejects_duplicate_sensor_level() {
-        let mut s = sample_schema();
-        s.sensors = vec![Level::Hn4, Level::Hn4];
-        match s.validate() {
-            Ok(()) => panic!("expected duplicate level error"),
-            Err(_) => {}
-        }
-    }
-
-    /// Additional: duplicate edge label within same parent→child arc.
-    #[test]
-    fn rejects_duplicate_edge_label() {
+    fn rejects_self_edge() {
         let mut bad = sample_schema();
-        bad.edges = vec![(
-            Level::Hn2,
-            vec![(
-                Level::Hn3,
-                vec![
-                    EdgeSpec::builder().label("dup".to_string()).build(),
-                    EdgeSpec::builder().label("dup".to_string()).build(),
-                ],
-            )],
-        )];
-        match bad.validate() {
-            Ok(()) => panic!("expected duplicate label error"),
-            Err(e) => assert!(e.contains("duplicate label"), "wrong error: {}", e),
-        }
+        bad.edges.push((
+            "area".to_string(),
+            vec![("area".to_string(), EdgeSpec::builder().build())],
+        ));
+        let err = bad.validate().unwrap_err();
+        assert!(err.contains("self edge"), "wrong error: {}", err);
     }
 
-    /// Additional: min > max on an edge spec.
+    #[test]
+    fn rejects_unreachable_parent() {
+        let mut bad = sample_schema();
+        bad.edges.push((
+            "warehouse".to_string(),
+            vec![("area".to_string(), EdgeSpec::builder().build())],
+        ));
+        let err = bad.validate().unwrap_err();
+        assert!(err.contains("not reachable"), "wrong error: {}", err);
+    }
+
+    #[test]
+    fn rejects_company_as_child() {
+        let mut bad = sample_schema();
+        bad.edges[1].1.push(("company".to_string(), EdgeSpec::builder().build()));
+        let err = bad.validate().unwrap_err();
+        assert!(err.contains("reserved"), "wrong error: {}", err);
+    }
+
+    #[test]
+    fn rejects_partner_anywhere() {
+        let mut bad = sample_schema();
+        bad.edges.push((
+            "partner".to_string(),
+            vec![("building".to_string(), EdgeSpec::builder().build())],
+        ));
+        let err = bad.validate().unwrap_err();
+        assert!(err.contains("reserved"), "wrong error: {}", err);
+    }
+
+    #[test]
+    fn rejects_chain_deeper_than_hn9() {
+        // company -> t1 -> t2 -> ... -> t8 = 8 edges (one too many)
+        let mut edges: Vec<(String, Vec<(String, EdgeSpec)>)> = Vec::new();
+        let mut parent = "company".to_string();
+        for i in 1..=8 {
+            let child = format!("t{}", i);
+            edges.push((parent.clone(), vec![(child.clone(), EdgeSpec::builder().build())]));
+            parent = child;
+        }
+        let bad = Schema { version: 2, edges, metadata: vec![], sensors: vec![] };
+        let err = bad.validate().unwrap_err();
+        assert!(err.contains("max 7"), "wrong error: {}", err);
+
+        // exactly 7 edges is fine
+        let mut edges: Vec<(String, Vec<(String, EdgeSpec)>)> = Vec::new();
+        let mut parent = "company".to_string();
+        for i in 1..=7 {
+            let child = format!("t{}", i);
+            edges.push((parent.clone(), vec![(child.clone(), EdgeSpec::builder().build())]));
+            parent = child;
+        }
+        let ok = Schema { version: 2, edges, metadata: vec![], sensors: vec![] };
+        ok.validate().expect("7-edge chain must validate");
+    }
+
+    #[test]
+    fn rejects_duplicate_child_type() {
+        let mut bad = sample_schema();
+        bad.edges[1].1.push(("building".to_string(), EdgeSpec::builder().build()));
+        let err = bad.validate().unwrap_err();
+        assert!(err.contains("duplicate child"), "wrong error: {}", err);
+    }
+
     #[test]
     fn rejects_min_greater_than_max() {
         let mut bad = sample_schema();
-        bad.edges = vec![(
-            Level::Hn2,
-            vec![(
-                Level::Hn3,
-                vec![EdgeSpec::builder()
-                    .label("x".to_string())
-                    .min(Some(10))
-                    .max(Some(5))
-                    .build()],
-            )],
-        )];
-        match bad.validate() {
-            Ok(()) => panic!("expected min > max error"),
-            Err(e) => assert!(e.contains("min > max"), "wrong error: {}", e),
-        }
+        bad.edges[3].1[0].1 = EdgeSpec::builder().min(Some(10)).max(Some(5)).build();
+        let err = bad.validate().unwrap_err();
+        assert!(err.contains("min > max"), "wrong error: {}", err);
     }
 
-    // ---- Schema query methods ----------------------------------------------
+    #[test]
+    fn rejects_unreachable_sensor_and_metadata_types() {
+        let mut bad = sample_schema();
+        bad.sensors.push("warehouse".to_string());
+        assert!(bad.validate().unwrap_err().contains("unreachable"));
 
-    /// Port of `test_domain_schema.ml :: allowed_children_lookup`
+        let mut bad2 = sample_schema();
+        bad2.metadata.push(("warehouse".to_string(), vec![]));
+        assert!(bad2.validate().unwrap_err().contains("unreachable"));
+    }
+
+    #[test]
+    fn rejects_duplicate_sensor_entry() {
+        let mut bad = sample_schema();
+        bad.sensors.push("building".to_string());
+        assert!(bad.validate().unwrap_err().contains("duplicate sensors"));
+    }
+
     #[test]
     fn allowed_children_lookup() {
         let s = sample_schema();
-        let kids = s.allowed_children(Level::Hn3);
-        assert_eq!(kids.len(), 1, "one child level");
-        let (level, specs) = &kids[0];
-        assert_eq!(level.to_string(), "hn4", "child is hn4");
-        assert_eq!(specs.len(), 1, "one label");
-        assert_eq!(specs[0].label, "building");
+        let kids = s.allowed_children("group");
+        assert_eq!(kids.len(), 1);
+        assert_eq!(kids[0].0, "building");
+        assert!(s.allowed_children("area").is_empty());
+        assert_eq!(s.allowed_children("company").len(), 3);
     }
 
-    /// Port of `test_domain_schema.ml :: metadata_for_lookup`
+    #[test]
+    fn edge_between_lookup() {
+        let s = sample_schema();
+        assert!(s.edge_between("company", "building").is_some());
+        assert!(s.edge_between("group", "area").is_none());
+    }
+
     #[test]
     fn metadata_for_lookup() {
         let s = sample_schema();
-        let md = s.metadata_for(Level::Hn4);
-        assert_eq!(md.len(), 2, "two fields");
-        let md_none = s.metadata_for(Level::Hn5);
-        assert_eq!(md_none.len(), 0, "no fields at hn5");
+        assert_eq!(s.metadata_for("building").len(), 2);
+        assert!(s.metadata_for("area").is_empty());
     }
 
-    /// Port of `test_domain_schema.ml :: allows_sensors_lookup`
     #[test]
     fn allows_sensors_lookup() {
-        let mut s = sample_schema();
-        s.sensors = vec![Level::Hn4];
-        assert!(s.allows_sensors(Level::Hn4), "allowed at hn4");
-        assert!(!s.allows_sensors(Level::Hn3), "not allowed at hn3");
-    }
-
-    /// edges_between returns empty for unknown pair.
-    #[test]
-    fn edges_between_unknown() {
         let s = sample_schema();
-        let specs = s.edges_between(Level::Hn2, Level::Hn9);
-        assert!(specs.is_empty());
-    }
-
-    /// edges_between returns correct specs for known pair.
-    #[test]
-    fn edges_between_known() {
-        let s = sample_schema();
-        let specs = s.edges_between(Level::Hn3, Level::Hn4);
-        assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].label, "building");
-        assert_eq!(specs[0].min, Some(1));
-        assert_eq!(specs[0].max, None);
+        assert!(s.allows_sensors("building"));
+        assert!(s.allows_sensors("area"));
+        assert!(!s.allows_sensors("group"));
     }
 
     // ---- validate_spec -----------------------------------------------------

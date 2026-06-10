@@ -432,44 +432,35 @@ fn edge_spec_to_av(spec: &EdgeSpec) -> AttributeValue {
     AttributeValue::M(m)
 }
 
-/// Encode a `Schema` as a nested `M` AttributeValue.
-/// Mirrors OCaml `schema_to_attr`.
+/// Encode a `Schema` (v2) as a nested `M` AttributeValue.
+/// edges: M{ parent_type -> M{ child_type -> M{min?,max?} } }
 pub fn schema_to_av(sch: &Schema) -> AttributeValue {
-    // edges: M{ level_str -> M{ child_str -> M{ label -> M{min?,max?} } } }
     let edges_m: HashMap<String, AttributeValue> = sch
         .edges
         .iter()
-        .map(|(lvl, children)| {
+        .map(|(parent, children)| {
             let inner: HashMap<String, AttributeValue> = children
                 .iter()
-                .map(|(child, specs)| {
-                    let label_m: HashMap<String, AttributeValue> = specs
-                        .iter()
-                        .map(|sp| (sp.label.clone(), edge_spec_to_av(sp)))
-                        .collect();
-                    (child.to_string(), AttributeValue::M(label_m))
-                })
+                .map(|(child, spec)| (child.clone(), edge_spec_to_av(spec)))
                 .collect();
-            (lvl.to_string(), AttributeValue::M(inner))
+            (parent.clone(), AttributeValue::M(inner))
         })
         .collect();
 
-    // metadata: M{ level_str -> M{ field_name -> M{required, type, ...} } }
     let metadata_m: HashMap<String, AttributeValue> = sch
         .metadata
         .iter()
-        .map(|(lvl, fields)| {
+        .map(|(typ, fields)| {
             let inner: HashMap<String, AttributeValue> = fields
                 .iter()
                 .map(|(name, fs)| (name.clone(), field_spec_to_av(fs)))
                 .collect();
-            (lvl.to_string(), AttributeValue::M(inner))
+            (typ.clone(), AttributeValue::M(inner))
         })
         .collect();
 
-    // sensors: L[ S"hn4", S"hn5", ... ]
     let sensors_l: Vec<AttributeValue> =
-        sch.sensors.iter().map(|lvl| s(lvl.to_string())).collect();
+        sch.sensors.iter().map(|t| s(t.clone())).collect();
 
     let mut m: HashMap<String, AttributeValue> = HashMap::new();
     m.insert("version".to_string(), n(sch.version.to_string()));
@@ -516,17 +507,16 @@ fn decode_field_spec(v: &AttributeValue) -> Result<FieldSpec, RepositoryError> {
     Ok(FieldSpec { typ, required })
 }
 
-fn decode_edge_spec(label: &str, body: &AttributeValue) -> Result<EdgeSpec, RepositoryError> {
+fn decode_edge_spec(body: &AttributeValue) -> Result<EdgeSpec, RepositoryError> {
     let kvs = as_m(body)?;
     Ok(EdgeSpec {
-        label: label.to_string(),
         min: opt_int_of_n(kvs.get("min")),
         max: opt_int_of_n(kvs.get("max")),
     })
 }
 
-/// Decode a `Schema` from a nested `M` AttributeValue.
-/// Mirrors OCaml `decode_schema`.
+/// Decode a `Schema` (v2 only) from a nested `M` AttributeValue.
+/// Version-1 (level-keyed) schemas are rejected with an explicit error.
 #[allow(clippy::type_complexity)]
 pub fn schema_of_av(v: &AttributeValue) -> Result<Schema, RepositoryError> {
     let kvs = as_m(v)?;
@@ -536,49 +526,36 @@ pub fn schema_of_av(v: &AttributeValue) -> Result<Schema, RepositoryError> {
         })?,
         _ => return Err(RepositoryError::Codec("expected N for version".to_string())),
     };
+    if version != 2 {
+        return Err(RepositoryError::Codec(format!(
+            "schema version {} — run the v2 migration (scripts/migrate_schema_v2.py); only version 2 is supported",
+            version
+        )));
+    }
 
-    #[allow(clippy::type_complexity)]
-    let edges_v = field_map(kvs, "edges")?;
-    let edges_kvs = as_m(edges_v)?;
-    let mut edges: Vec<(Level, Vec<(Level, Vec<EdgeSpec>)>)> = Vec::new();
-    for (lvl_s, inner_v) in edges_kvs {
-        let lvl = match lvl_s.parse::<Level>() {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
+    let edges_kvs = as_m(field_map(kvs, "edges")?)?;
+    let mut edges: Vec<(String, Vec<(String, EdgeSpec)>)> = Vec::new();
+    for (parent, inner_v) in edges_kvs {
         let inner_kvs = as_m(inner_v)?;
-        let mut children: Vec<(Level, Vec<EdgeSpec>)> = Vec::new();
-        for (child_s, labels_v) in inner_kvs {
-            let child = match child_s.parse::<Level>() {
-                Ok(l) => l,
-                Err(_) => continue,
-            };
-            let label_kvs = as_m(labels_v)?;
-            let mut specs: Vec<EdgeSpec> = Vec::new();
-            for (label, body) in label_kvs {
-                specs.push(decode_edge_spec(label, body)?);
-            }
-            children.push((child, specs));
+        let mut children: Vec<(String, EdgeSpec)> = Vec::new();
+        for (child, body) in inner_kvs {
+            children.push((child.clone(), decode_edge_spec(body)?));
         }
-        edges.push((lvl, children));
+        edges.push((parent.clone(), children));
     }
 
     let metadata = match kvs.get("metadata") {
         None => vec![],
         Some(m_v) => {
             let m_kvs = as_m(m_v)?;
-            let mut result: Vec<(Level, Vec<(String, FieldSpec)>)> = Vec::new();
-            for (lvl_s, inner_v) in m_kvs {
-                let lvl = match lvl_s.parse::<Level>() {
-                    Ok(l) => l,
-                    Err(_) => continue,
-                };
+            let mut result: Vec<(String, Vec<(String, FieldSpec)>)> = Vec::new();
+            for (typ, inner_v) in m_kvs {
                 let inner_kvs = as_m(inner_v)?;
                 let mut fields: Vec<(String, FieldSpec)> = Vec::new();
                 for (fname, spec_v) in inner_kvs {
                     fields.push((fname.clone(), decode_field_spec(spec_v)?));
                 }
-                result.push((lvl, fields));
+                result.push((typ.clone(), fields));
             }
             result
         }
@@ -588,23 +565,15 @@ pub fn schema_of_av(v: &AttributeValue) -> Result<Schema, RepositoryError> {
         None => vec![],
         Some(v) => {
             let xs = as_l(v)?;
-            let mut result: Vec<Level> = Vec::new();
+            let mut result: Vec<String> = Vec::new();
             for item in xs {
-                let s_str = as_s(item)?;
-                if let Ok(lvl) = s_str.parse::<Level>() {
-                    result.push(lvl);
-                }
+                result.push(as_s(item)?.to_string());
             }
             result
         }
     };
 
-    Ok(Schema {
-        version,
-        edges,
-        metadata,
-        sensors,
-    })
+    Ok(Schema { version, edges, metadata, sensors })
 }
 
 // ---------------------------------------------------------------------------
@@ -657,7 +626,7 @@ pub fn node_of_item(item: &Item) -> Result<Node, RepositoryError> {
     };
     let schema = match item.get("schema") {
         None => None,
-        Some(v) => schema_of_av(v).ok(),
+        Some(v) => Some(schema_of_av(v)?),
     };
     let path = match item.get("gsi1sk") {
         Some(AttributeValue::S(v)) => v.clone(),
@@ -1079,8 +1048,11 @@ mod tests {
         assert_eq!(node.path, "HN0#root|HN1#10001|HN2#10003");
         assert!(node.schema.is_some(), "should have schema");
         let sch = node.schema.as_ref().unwrap();
-        assert_eq!(sch.version, 1);
-        assert_eq!(sch.sensors, vec![Level::Hn4, Level::Hn5]);
+        assert_eq!(sch.version, 2);
+        assert_eq!(
+            sch.sensors.iter().collect::<std::collections::HashSet<_>>(),
+            ["building".to_string(), "area".to_string()].iter().collect()
+        );
         // parent = HN1#10001 (second-to-last segment)
         assert_eq!(
             node.parent.as_ref().map(|id| id.to_string()),
@@ -1143,6 +1115,93 @@ mod tests {
         let item = node_to_item(&nd); // label empty → attribute omitted
         let back = node_of_item(&item).unwrap();
         assert_eq!(back.label, "");
+    }
+
+    /// An item with an unmigrated v1 schema must surface the migration-hint
+    /// Codec error through `node_of_item` (the decode path `get_node` uses) —
+    /// never decode to a schema-less node or collapse to absence.
+    #[test]
+    fn node_with_v1_schema_errors_with_migration_hint() {
+        let nd = crate::domain::node::make(
+            9, Level::Hn2, "OldCo", NodeId::parse("HN1#1").unwrap(),
+            "HN0#root|HN1#1", serde_json::json!({}), None,
+        );
+        let mut item = node_to_item(&nd);
+        let mut v1: HashMap<String, AttributeValue> = HashMap::new();
+        v1.insert("version".to_string(), n("1".to_string()));
+        v1.insert("edges".to_string(), AttributeValue::M(HashMap::new()));
+        item.insert("schema".to_string(), AttributeValue::M(v1));
+
+        let err = node_of_item(&item).unwrap_err();
+        assert!(matches!(err, RepositoryError::Codec(_)), "got: {:?}", err);
+        let msg = format!("{:?}", err);
+        assert!(msg.contains("migration"), "got: {}", msg);
+        assert!(msg.contains("version 1"), "got: {}", msg);
+    }
+
+    // -----------------------------------------------------------------------
+    // schema v2 encode/decode
+    // -----------------------------------------------------------------------
+
+    /// Canonical v2 type-graph fixture (matches the model domain fixture).
+    fn sample_schema() -> Schema {
+        Schema {
+            version: 2,
+            edges: vec![
+                ("company".to_string(), vec![
+                    ("group".to_string(), EdgeSpec::builder().build()),
+                    ("property".to_string(), EdgeSpec::builder().build()),
+                    ("building".to_string(), EdgeSpec::builder().build()),
+                ]),
+                ("group".to_string(), vec![
+                    ("building".to_string(), EdgeSpec::builder().build()),
+                ]),
+                ("property".to_string(), vec![
+                    ("building".to_string(), EdgeSpec::builder().build()),
+                ]),
+                ("building".to_string(), vec![
+                    ("area".to_string(), EdgeSpec::builder().min(Some(1)).build()),
+                ]),
+            ],
+            metadata: vec![(
+                "building".to_string(),
+                vec![("lat".to_string(), FieldSpec {
+                    typ: FieldType::Number { min: Some(-90.0), max: Some(90.0) },
+                    required: true,
+                })],
+            )],
+            sensors: vec!["building".to_string(), "area".to_string()],
+        }
+    }
+
+    #[test]
+    fn schema_v1_rejected_with_migration_hint() {
+        // hand-build a v1-shaped attribute: version 1
+        let mut m: HashMap<String, AttributeValue> = HashMap::new();
+        m.insert("version".to_string(), n("1".to_string()));
+        m.insert("edges".to_string(), AttributeValue::M(HashMap::new()));
+        let err = schema_of_av(&AttributeValue::M(m)).unwrap_err();
+        let msg = format!("{:?}", err);
+        assert!(msg.contains("version 1"), "got: {}", msg);
+        assert!(msg.contains("migration"), "got: {}", msg);
+    }
+
+    #[test]
+    fn schema_v2_roundtrip() {
+        let s0 = sample_schema(); // v2 fixture
+        let av = schema_to_av(&s0);
+        let s1 = schema_of_av(&av).unwrap();
+        // av maps are unordered — compare as sets
+        assert_eq!(s1.version, 2);
+        assert_eq!(s1.edges.len(), s0.edges.len());
+        for (parent, children) in &s0.edges {
+            let dec = s1.edges.iter().find(|(p, _)| p == parent).expect(parent);
+            assert_eq!(dec.1.len(), children.len());
+        }
+        assert_eq!(
+            s1.sensors.iter().collect::<std::collections::HashSet<_>>(),
+            s0.sensors.iter().collect::<std::collections::HashSet<_>>()
+        );
     }
 
     // -----------------------------------------------------------------------

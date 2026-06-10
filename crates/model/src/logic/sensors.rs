@@ -126,13 +126,12 @@ where
         }
     }
 
-    // Check schema allows sensors at this level.
-    let parent_level = parent_node.level();
+    // Check schema allows sensors on this node type.
     let (_host, schema) = schema_check::find_for(parent.clone(), &get_node).await?;
-    if !schema.allows_sensors(parent_level) {
+    if !schema.allows_sensors(&parent_node.label) {
         return Err(validation_err(format!(
-            "sensors not allowed at {}",
-            parent_level
+            "sensors not allowed on {:?} nodes",
+            parent_node.label
         )));
     }
 
@@ -424,18 +423,21 @@ mod tests {
 
     fn sample_schema() -> Schema {
         Schema {
-            version: 1,
-            edges: vec![(
-                Level::Hn2,
-                vec![(
-                    Level::Hn3,
-                    vec![SchemaEdgeSpec::builder()
-                        .label("building".to_string())
-                        .build()],
-                )],
-            )],
+            version: 2,
+            edges: vec![
+                ("company".to_string(), vec![
+                    ("group".to_string(), SchemaEdgeSpec::builder().build()),
+                    ("building".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+                ("group".to_string(), vec![
+                    ("building".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+                ("building".to_string(), vec![
+                    ("area".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+            ],
             metadata: vec![],
-            sensors: vec![Level::Hn3],
+            sensors: vec!["building".to_string()],
         }
     }
 
@@ -449,7 +451,7 @@ mod tests {
 
     fn seed_company(store: &Rc<Store>) -> NodeId {
         let c2 = NodeId::make(Level::Hn2, 10002);
-        let n2 = node::make(
+        let mut n2 = node::make(
             10002,
             Level::Hn2,
             "Acme",
@@ -458,6 +460,7 @@ mod tests {
             serde_json::json!({}),
             Some(sample_schema()),
         );
+        n2.label = "company".to_string();
         store.put_node(&n2);
         c2
     }
@@ -466,7 +469,7 @@ mod tests {
         let n = hierarchy::add_node(
             c2,
             Some(Level::Hn3),
-            None,
+            Some("building".to_string()),
             "B".to_string(),
             serde_json::json!({}),
             None,
@@ -609,6 +612,87 @@ mod tests {
             Ok(_) => panic!("expected Validation at disallowed level"),
             Err(e) => panic!("wrong error: {:?}", e),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: sensors are allowed by node TYPE, regardless of depth.
+    // -----------------------------------------------------------------------
+
+    /// Helper: add a schema-governed child node, returning the created Node.
+    async fn add_child(
+        store: &Rc<Store>,
+        parent: NodeId,
+        label: &str,
+        name: &str,
+    ) -> node::Node {
+        hierarchy::add_node(
+            parent,
+            None,
+            Some(label.to_string()),
+            name.to_string(),
+            serde_json::json!({}),
+            None,
+            {
+                let s = store.clone();
+                move |nid| std::future::ready(Ok(s.get_node(&nid)))
+            },
+            {
+                let s = store.clone();
+                move |nid, kind| std::future::ready(Ok(s.list_children(&nid, kind.as_ref())))
+            },
+            {
+                let s = store.clone();
+                move |level, build: Box<dyn Fn(u32) -> (_, _) + Send>| {
+                    let n = s.add_node(level, build);
+                    std::future::ready(Ok(n))
+                }
+            },
+        )
+        .await
+        .expect("add_child")
+    }
+
+    #[tokio::test]
+    async fn sensors_by_type_at_any_depth() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+
+        // building B1 directly under company → hn3, label "building"
+        let b1 = add_child(&store, c2.clone(), "building", "B1").await;
+        assert_eq!(b1.level(), Level::Hn3);
+        assert_eq!(b1.label, "building");
+
+        // group G under company → hn3, label "group"
+        let g = add_child(&store, c2.clone(), "group", "G").await;
+        assert_eq!(g.label, "group");
+
+        // building B2 under group → hn4, label "building"
+        let b2 = add_child(&store, g.id.clone(), "building", "B2").await;
+        assert_eq!(b2.level(), Level::Hn4);
+        assert_eq!(b2.label, "building");
+
+        // attach to building at hn3 → Ok
+        assert!(do_attach(store.clone(), b1.id.clone(), "daq:b1", Formula::Identity, Some(15))
+            .await
+            .is_ok());
+        // attach to building at hn4 → Ok (same type, different depth)
+        assert!(do_attach(store.clone(), b2.id.clone(), "daq:b2", Formula::Identity, Some(15))
+            .await
+            .is_ok());
+        // attach to group → rejected, message names the type
+        let err = do_attach(store.clone(), g.id.clone(), "daq:g", Formula::Identity, Some(15))
+            .await
+            .unwrap_err();
+        // The validation message names the rejected node type.
+        let msg = match &err {
+            RepositoryError::Validation(errs) => errs[0].message.clone(),
+            other => panic!("expected Validation, got {:?}", other),
+        };
+        assert!(
+            msg.contains("not allowed on \"group\""),
+            "got: {}",
+            msg
+        );
     }
 
     // -----------------------------------------------------------------------

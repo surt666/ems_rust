@@ -357,10 +357,9 @@ pub async fn get_node(
 
     match resp.item {
         None => Ok(None),
-        Some(item) => match codec::node_of_item(&item) {
-            Ok(n) => Ok(Some(n)),
-            Err(_) => Ok(None),
-        },
+        // A decode failure (e.g. an unmigrated v1 schema) is a Codec error,
+        // not absence — only a missing item maps to Ok(None).
+        Some(item) => codec::node_of_item(&item).map(Some),
     }
 }
 

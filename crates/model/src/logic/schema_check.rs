@@ -80,26 +80,14 @@ mod tests {
 
     fn sample_schema() -> Schema {
         Schema {
-            version: 1,
+            version: 2,
             edges: vec![
-                (
-                    Level::Hn2,
-                    vec![(
-                        Level::Hn3,
-                        vec![EdgeSpec::builder()
-                            .label("property".to_string())
-                            .build()],
-                    )],
-                ),
-                (
-                    Level::Hn3,
-                    vec![(
-                        Level::Hn4,
-                        vec![EdgeSpec::builder()
-                            .label("building".to_string())
-                            .build()],
-                    )],
-                ),
+                ("company".to_string(), vec![
+                    ("property".to_string(), EdgeSpec::builder().build()),
+                ]),
+                ("property".to_string(), vec![
+                    ("building".to_string(), EdgeSpec::builder().min(Some(1)).build()),
+                ]),
             ],
             metadata: vec![],
             sensors: vec![],
@@ -145,7 +133,7 @@ mod tests {
             .expect("find_for should succeed");
 
         assert_eq!(result.0, c2, "host should be the HN2 node itself");
-        assert_eq!(result.1.version, 1, "schema version should be 1");
+        assert_eq!(result.1.version, 2, "schema version should be 2");
     }
 
     // -----------------------------------------------------------------------

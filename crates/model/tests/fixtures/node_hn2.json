@@ -15,39 +15,34 @@
         "M": {
             "edges": {
                 "M": {
-                    "hn3": {
+                    "company": {
                         "M": {
-                            "hn4": {
-                                "M": {
-                                    "building": {
-                                        "M": {}
-                                    }
-                                }
+                            "group": {
+                                "M": {}
+                            },
+                            "property": {
+                                "M": {}
                             }
                         }
                     },
-                    "hn2": {
+                    "group": {
                         "M": {
-                            "hn3": {
-                                "M": {
-                                    "property": {
-                                        "M": {}
-                                    },
-                                    "group": {
-                                        "M": {}
-                                    }
-                                }
+                            "building": {
+                                "M": {}
                             }
                         }
                     },
-                    "hn4": {
+                    "property": {
                         "M": {
-                            "hn5": {
-                                "M": {
-                                    "area": {
-                                        "M": {}
-                                    }
-                                }
+                            "building": {
+                                "M": {}
+                            }
+                        }
+                    },
+                    "building": {
+                        "M": {
+                            "area": {
+                                "M": {}
                             }
                         }
                     }
@@ -55,7 +50,7 @@
             },
             "metadata": {
                 "M": {
-                    "hn4": {
+                    "building": {
                         "M": {
                             "lng": {
                                 "M": {
@@ -96,15 +91,15 @@
             "sensors": {
                 "L": [
                     {
-                        "S": "hn4"
+                        "S": "building"
                     },
                     {
-                        "S": "hn5"
+                        "S": "area"
                     }
                 ]
             },
             "version": {
-                "N": "1"
+                "N": "2"
             }
         }
     },

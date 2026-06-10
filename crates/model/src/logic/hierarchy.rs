@@ -86,22 +86,23 @@ where
 
 /// Add a child node under `parent`.
 ///
-/// Mirrors OCaml `Hierarchy.add_node`.
-///
 /// Rules:
 /// - `level = Hn0` → `BadRequest` (cannot create root).
 /// - Parent not found → `NotFound`.
-/// - Parent is root (Hn0): child must be Hn1 (partner); schema must be `None`.
-///   Default label = "partner".
-/// - Parent is Hn1: child must be Hn2 (company); `schema` is **required** and
-///   validated.  Default label = "company".
-/// - Otherwise: call `schema_check::find_for` on the parent, then validate the
-///   proposed edge via the schema's `edges_between` list.  `schema` must be
-///   `None` here.
+/// - The child level is always `parent + 1` (derived); an explicit `level`
+///   must equal that or the call is rejected.
+/// - Parent is root (Hn0): child is type "partner"; schema must be `None`; an
+///   explicit label must be `None` or "partner".
+/// - Parent is Hn1: child is type "company"; `schema` is **required** and
+///   validated; an explicit label must be `None` or "company".
+/// - Otherwise: call `schema_check::find_for`, resolve the child type from the
+///   parent type's `allowed_children` (see `add_under_schema`); `schema` must
+///   be `None` here.
 ///
-/// After edge selection, metadata is validated against `schema.metadata_for(level)`.
-/// Cardinality (`max`) is enforced by counting existing children of that label.
-/// Finally the node is allocated (`add_node`) and the edge written atomically.
+/// For schema-governed children, metadata is validated against
+/// `schema.metadata_for(child_type)` and cardinality (`max`) is enforced by
+/// counting existing children of that type.  Finally the node is allocated
+/// (`add_node`) and the edge written atomically.
 #[allow(clippy::too_many_arguments)]
 pub async fn add_node<FGN, FGNFut, FLC, FLCFut, FAN, FANFut>(
     parent: NodeId,
@@ -138,38 +139,39 @@ where
 
     let parent_level = parent_node.level();
 
-    // Resolve the target level.
-    let resolved_level = match level {
-        Some(lv) => lv,
-        None => resolve_child_level(
-            &parent,
-            parent_level,
-            label.as_deref(),
-            &get_node_fn,
-        )
-        .await?,
-    };
-
-    // Depth check: child must be strictly deeper than parent.
-    if parent_level.depth() >= resolved_level.depth() {
-        return Err(bad("child depth must exceed parent depth"));
+    // Child level is always parent + 1 (derived, never chosen).
+    let derived_level = Level::of_depth(parent_level.depth() + 1)
+        .ok_or_else(|| bad("parent is at maximum depth (hn9)"))?;
+    if let Some(lv) = level {
+        if lv != derived_level {
+            return Err(bad(format!(
+                "level must be {} (parent level + 1), got {}",
+                derived_level, lv
+            )));
+        }
     }
+    let resolved_level = derived_level;
 
-    // Determine edge label and (optional) node schema.
-    let (edge_label, node_schema) = match (parent_level, resolved_level) {
-        (Level::Hn0, Level::Hn1) => {
+    // Determine the node type (edge label) and (optional) node schema.
+    let (edge_label, node_schema) = match parent_level {
+        Level::Hn0 => {
             if schema.is_some() {
                 return Err(RepositoryError::BadRequest(
                     "schema only allowed on hn2 nodes".to_string(),
                 ));
             }
-            let lbl = label.clone().unwrap_or_else(|| "partner".to_string());
-            (lbl, None)
+            match label.as_deref() {
+                None | Some(crate::domain::schema::PARTNER_TYPE) => {}
+                Some(other) => {
+                    return Err(bad(format!(
+                        "hn1 nodes have reserved type \"partner\", got {:?}",
+                        other
+                    )))
+                }
+            }
+            (crate::domain::schema::PARTNER_TYPE.to_string(), None)
         }
-        (Level::Hn0, _) => {
-            return Err(bad("root can only contain hn1 (partner) nodes"));
-        }
-        (Level::Hn1, Level::Hn2) => {
+        Level::Hn1 => {
             let sch = match schema {
                 None => {
                     return Err(RepositoryError::BadRequest(
@@ -186,11 +188,16 @@ where
                     }
                 },
             };
-            let lbl = label.clone().unwrap_or_else(|| "company".to_string());
-            (lbl, Some(sch))
-        }
-        (Level::Hn1, _) => {
-            return Err(bad("partner can only contain hn2 (company) nodes"));
+            match label.as_deref() {
+                None | Some(crate::domain::schema::COMPANY_TYPE) => {}
+                Some(other) => {
+                    return Err(bad(format!(
+                        "hn2 nodes have reserved type \"company\", got {:?}",
+                        other
+                    )))
+                }
+            }
+            (crate::domain::schema::COMPANY_TYPE.to_string(), Some(sch))
         }
         _ => {
             if schema.is_some() {
@@ -200,8 +207,7 @@ where
             }
             let lbl = add_under_schema(
                 &parent,
-                parent_level,
-                resolved_level,
+                &parent_node.label,
                 label.as_deref(),
                 &metadata,
                 &get_node_fn,
@@ -211,12 +217,6 @@ where
             (lbl, None)
         }
     };
-
-    // For non-schema-governed levels (Hn0→Hn1, Hn1→Hn2), we still need to
-    // validate metadata.  For schema-governed levels that was done inside
-    // add_under_schema.  For Hn0→Hn1 and Hn1→Hn2 the schema has no metadata
-    // specs yet (node_schema is None or freshly created), so we skip here.
-    // (OCaml only validates metadata for schema-governed children via add_under_schema.)
 
     // Allocate node and write edge atomically.
     // The closure is `Fn` (not `FnOnce`) so it can be invoked on every retry
@@ -228,7 +228,7 @@ where
     add_node_fn(
         resolved_level,
         Box::new(move |raw_id| {
-            let child = node::make(
+            let mut child = node::make(
                 raw_id,
                 resolved_level,
                 &name.clone(),
@@ -237,6 +237,7 @@ where
                 metadata.clone(),
                 node_schema.clone(),
             );
+            child.label = edge_label.clone();
             let edge = EdgeSpec {
                 from_: parent_clone.to_string(),
                 to_: child.id.to_string(),
@@ -250,75 +251,19 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// resolve_child_level (internal)
-// ---------------------------------------------------------------------------
-
-/// Resolve the child level when it was not specified by the caller.
-///
-/// Mirrors OCaml `resolve_child_level`.
-async fn resolve_child_level<FGN, FGNFut>(
-    parent: &NodeId,
-    parent_level: Level,
-    label: Option<&str>,
-    get_node_fn: &FGN,
-) -> Result<Level, RepositoryError>
-where
-    FGN: Fn(NodeId) -> FGNFut,
-    FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
-{
-    match parent_level {
-        Level::Hn0 => Ok(Level::Hn1),
-        Level::Hn1 => Ok(Level::Hn2),
-        _ => {
-            let (_host, schema) =
-                schema_check::find_for(parent.clone(), get_node_fn).await?;
-            match label {
-                Some(l) => {
-                    let matches: Vec<Level> = schema
-                        .allowed_children(parent_level)
-                        .iter()
-                        .filter_map(|(child_level, specs)| {
-                            if specs.iter().any(|s| s.label == l) {
-                                Some(*child_level)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    match matches.as_slice() {
-                        [c] => Ok(*c),
-                        [] => Err(bad(format!(
-                            "no edge from {} with label {:?}",
-                            parent_level, l
-                        ))),
-                        _ => Err(bad(format!(
-                            "label {:?} matches multiple target levels; specify level",
-                            l
-                        ))),
-                    }
-                }
-                None => Level::of_depth(parent_level.depth() + 1)
-                    .ok_or_else(|| bad(format!("no default child level for {}", parent_level))),
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // add_under_schema (internal)
 // ---------------------------------------------------------------------------
 
-/// Validate and select the edge spec for a schema-governed child add.
+/// Validate and select the child type for a schema-governed add.
+/// Returns the resolved child type (= edge label) on success.
 ///
-/// Returns the resolved edge label on success.
-/// Mirrors OCaml `add_under_schema`.
-///
-/// `list_children_fn` is consumed here (FnOnce) when a cardinality max needs
-/// to be enforced; otherwise it is dropped unused.
+/// The child type is resolved from the parent type's `allowed_children`:
+/// an explicit label must be allowed; an omitted label is accepted only when
+/// exactly one child type exists. Metadata is validated against the child
+/// type's specs and the edge's `max` cardinality is enforced.
 async fn add_under_schema<FGN, FGNFut, FLC, FLCFut>(
     parent: &NodeId,
-    parent_level: Level,
-    level: Level,
+    parent_type: &str,
     label: Option<&str>,
     metadata: &serde_json::Value,
     get_node_fn: &FGN,
@@ -332,57 +277,51 @@ where
 {
     let (_host, schema) = schema_check::find_for(parent.clone(), get_node_fn).await?;
 
-    let candidates = schema.edges_between(parent_level, level);
-
-    // Select the edge spec.
-    let edge_spec = match (label, candidates.as_slice()) {
-        (Some(l), _) => {
-            candidates
-                .iter()
-                .find(|s| s.label == l)
-                .cloned()
-                .ok_or_else(|| {
-                    bad(format!(
-                        "edge {} -> {} ({}) not allowed by schema",
-                        parent_level, level, l
-                    ))
-                })?
-        }
-        (None, [single]) => single.clone(),
+    let allowed = schema.allowed_children(parent_type);
+    let (child_type, spec) = match (label, allowed) {
+        (Some(l), _) => match allowed.iter().find(|(t, _)| t == l) {
+            Some((t, sp)) => (t.clone(), sp.clone()),
+            None => {
+                return Err(bad(format!(
+                    "type {:?} not allowed under {:?}",
+                    l, parent_type
+                )))
+            }
+        },
+        (None, [(only, sp)]) => (only.clone(), sp.clone()),
         (None, []) => {
             return Err(bad(format!(
-                "edge {} -> {} not allowed by schema",
-                parent_level, level
+                "no child types allowed under {:?}",
+                parent_type
             )))
         }
         (None, _many) => {
             return Err(bad(format!(
-                "edge {} -> {} is ambiguous; specify label",
-                parent_level, level
+                "multiple child types allowed under {:?}; specify label",
+                parent_type
             )))
         }
     };
 
-    // Validate metadata against the schema's specs for this level.
-    let specs = schema.metadata_for(level);
-    validate(specs, metadata)
-        .map_err(RepositoryError::Validation)?;
+    // Validate metadata against the child type's specs.
+    let specs = schema.metadata_for(&child_type);
+    validate(specs, metadata).map_err(RepositoryError::Validation)?;
 
     // Enforce cardinality max.
-    if let Some(max) = edge_spec.max {
-        let kind = EdgeKind::HasLabel(edge_spec.label.clone());
-        // list_children_fn is FnOnce — consume it here for the cardinality check.
-        let existing = list_children_fn(parent.clone(), Some(kind)).await
+    if let Some(max) = spec.max {
+        let kind = EdgeKind::HasLabel(child_type.clone());
+        let existing = list_children_fn(parent.clone(), Some(kind))
+            .await
             .unwrap_or_default();
         if existing.len() >= max as usize {
             return Err(bad(format!(
                 "max {} {} per parent already reached",
-                max, edge_spec.label
+                max, child_type
             )));
         }
     }
 
-    Ok(edge_spec.label)
+    Ok(child_type)
 }
 
 // ---------------------------------------------------------------------------
@@ -401,37 +340,33 @@ mod tests {
     use crate::errors::RepositoryError;
     use crate::repository::memory::Store;
 
-    // Sample schema mirroring OCaml `sample_schema` in test_logic_hierarchy.ml:
-    //   Hn2→Hn3: label="property", max=2
-    //   Hn3→Hn4: label="building", min=1
-    //   Hn4: metadata lat (Number, -90..90, required)
+    // Canonical v2 type-graph fixture.
+    //   company → {group, property, building (max=2)}
+    //   group   → building
+    //   property→ building
+    //   building→ area
+    //   building metadata: lat (Number, -90..90, required)
     fn sample_schema() -> Schema {
         Schema {
-            version: 1,
+            version: 2,
             edges: vec![
-                (
-                    Level::Hn2,
-                    vec![(
-                        Level::Hn3,
-                        vec![SchemaEdgeSpec::builder()
-                            .label("property".to_string())
-                            .max(Some(2))
-                            .build()],
-                    )],
-                ),
-                (
-                    Level::Hn3,
-                    vec![(
-                        Level::Hn4,
-                        vec![SchemaEdgeSpec::builder()
-                            .label("building".to_string())
-                            .min(Some(1))
-                            .build()],
-                    )],
-                ),
+                ("company".to_string(), vec![
+                    ("group".to_string(), SchemaEdgeSpec::builder().build()),
+                    ("property".to_string(), SchemaEdgeSpec::builder().max(Some(2)).build()),
+                    ("building".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+                ("group".to_string(), vec![
+                    ("building".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+                ("property".to_string(), vec![
+                    ("building".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
+                ("building".to_string(), vec![
+                    ("area".to_string(), SchemaEdgeSpec::builder().build()),
+                ]),
             ],
             metadata: vec![(
-                Level::Hn4,
+                "building".to_string(),
                 vec![(
                     "lat".to_string(),
                     FieldSpec {
@@ -443,7 +378,7 @@ mod tests {
                     },
                 )],
             )],
-            sensors: vec![],
+            sensors: vec!["building".to_string(), "area".to_string()],
         }
     }
 
@@ -458,7 +393,7 @@ mod tests {
     /// Seed an HN2 company node with the sample schema into the store.
     fn seed_company(store: &Rc<Store>) -> NodeId {
         let c2 = NodeId::make(Level::Hn2, 10002);
-        let n2 = node::make(
+        let mut n2 = node::make(
             10002,
             Level::Hn2,
             "Acme",
@@ -467,6 +402,7 @@ mod tests {
             serde_json::json!({}),
             Some(sample_schema()),
         );
+        n2.label = "company".to_string();
         store.put_node(&n2);
         c2
     }
@@ -529,6 +465,47 @@ mod tests {
         .await
     }
 
+    /// Add a schema-governed child by type label (no explicit level).
+    async fn add_node_helper(
+        store: &Rc<Store>,
+        parent: NodeId,
+        label: Option<&str>,
+        name: &str,
+        metadata: serde_json::Value,
+    ) -> Result<node::Node, RepositoryError> {
+        do_add_node(
+            store.clone(),
+            parent,
+            None,
+            label.map(str::to_string),
+            name,
+            metadata,
+            None,
+        )
+        .await
+    }
+
+    /// Add a child with an explicit level (to exercise the level-derivation check).
+    async fn add_node_level_helper(
+        store: &Rc<Store>,
+        parent: NodeId,
+        level: Option<Level>,
+        label: Option<&str>,
+        name: &str,
+        metadata: serde_json::Value,
+    ) -> Result<node::Node, RepositoryError> {
+        do_add_node(
+            store.clone(),
+            parent,
+            level,
+            label.map(str::to_string),
+            name,
+            metadata,
+            None,
+        )
+        .await
+    }
+
     // -----------------------------------------------------------------------
     // Test: add property + building  (OCaml: `add_property_and_building`)
     // -----------------------------------------------------------------------
@@ -538,26 +515,19 @@ mod tests {
         let store = Rc::new(Store::new());
         let c2 = seed_company(&store);
 
-        let prop = do_add_node(
-            store.clone(),
-            c2,
-            Some(Level::Hn3),
-            None,
-            "Ostergade",
-            serde_json::json!({}),
-            None,
-        )
-        .await
-        .expect("add property should succeed");
+        let prop = add_node_helper(&store, c2, Some("property"), "Ostergade", serde_json::json!({}))
+            .await
+            .expect("add property should succeed");
+        assert_eq!(prop.level(), Level::Hn3);
+        assert_eq!(prop.label, "property");
 
-        let b1 = do_add_node(
-            store.clone(),
+        // property → building (only one child type, label may be omitted).
+        let b1 = add_node_helper(
+            &store,
             prop.id.clone(),
-            Some(Level::Hn4),
             None,
             "B1",
             serde_json::json!({"lat": 55.0}),
-            None,
         )
         .await
         .expect("add building should succeed");
@@ -567,6 +537,7 @@ mod tests {
             prop.id.to_string(),
             "parent wired correctly"
         );
+        assert_eq!(b1.label, "building");
     }
 
     // -----------------------------------------------------------------------
@@ -605,29 +576,13 @@ mod tests {
         let store = Rc::new(Store::new());
         let c2 = seed_company(&store);
 
-        let prop = do_add_node(
-            store.clone(),
-            c2,
-            Some(Level::Hn3),
-            None,
-            "P",
-            serde_json::json!({}),
-            None,
-        )
-        .await
-        .expect("add property");
+        let prop = add_node_helper(&store, c2, Some("property"), "P", serde_json::json!({}))
+            .await
+            .expect("add property");
 
         // lat = 200 is out of range [-90, 90]
-        let result = do_add_node(
-            store.clone(),
-            prop.id,
-            Some(Level::Hn4),
-            None,
-            "B",
-            serde_json::json!({"lat": 200.0}),
-            None,
-        )
-        .await;
+        let result =
+            add_node_helper(&store, prop.id, None, "B", serde_json::json!({"lat": 200.0})).await;
 
         match result {
             Err(RepositoryError::Validation(errs)) => {
@@ -651,41 +606,17 @@ mod tests {
         let store = Rc::new(Store::new());
         let c2 = seed_company(&store);
 
-        // Max is 2 for property (Hn3) under company (Hn2).
-        do_add_node(
-            store.clone(),
-            c2.clone(),
-            Some(Level::Hn3),
-            None,
-            "P1",
-            serde_json::json!({}),
-            None,
-        )
-        .await
-        .expect("add P1");
+        // Max is 2 for property under company.
+        add_node_helper(&store, c2.clone(), Some("property"), "P1", serde_json::json!({}))
+            .await
+            .expect("add P1");
 
-        do_add_node(
-            store.clone(),
-            c2.clone(),
-            Some(Level::Hn3),
-            None,
-            "P2",
-            serde_json::json!({}),
-            None,
-        )
-        .await
-        .expect("add P2");
+        add_node_helper(&store, c2.clone(), Some("property"), "P2", serde_json::json!({}))
+            .await
+            .expect("add P2");
 
-        let result = do_add_node(
-            store.clone(),
-            c2.clone(),
-            Some(Level::Hn3),
-            None,
-            "P3",
-            serde_json::json!({}),
-            None,
-        )
-        .await;
+        let result =
+            add_node_helper(&store, c2.clone(), Some("property"), "P3", serde_json::json!({})).await;
 
         match result {
             Err(RepositoryError::Validation(_)) => {} // expected
@@ -831,19 +762,17 @@ mod tests {
         let store = Rc::new(Store::new());
         let c2 = seed_company(&store);
 
-        let n = do_add_node(
-            store.clone(),
-            c2,
-            None, // no explicit level
-            None,
-            "P",
-            serde_json::json!({}),
-            None,
-        )
-        .await
-        .expect("should succeed with inferred level");
+        // property has exactly one child type (building) → label may be omitted.
+        let prop = add_node_helper(&store, c2, Some("property"), "P", serde_json::json!({}))
+            .await
+            .expect("add property");
 
-        assert_eq!(n.level(), Level::Hn3, "resolved to Hn3");
+        let n = add_node_helper(&store, prop.id, None, "B", serde_json::json!({"lat": 1.0}))
+            .await
+            .expect("should succeed with inferred type");
+
+        assert_eq!(n.level(), Level::Hn4, "resolved to Hn4 (parent + 1)");
+        assert_eq!(n.label, "building");
     }
 
     // -----------------------------------------------------------------------
@@ -855,73 +784,83 @@ mod tests {
         let store = Rc::new(Store::new());
         let c2 = seed_company(&store);
 
-        let n = do_add_node(
-            store.clone(),
-            c2,
-            None, // no explicit level
-            Some("property".to_string()),
-            "P",
-            serde_json::json!({}),
-            None,
-        )
-        .await
-        .expect("should succeed");
+        let n = add_node_helper(&store, c2, Some("property"), "P", serde_json::json!({}))
+            .await
+            .expect("should succeed");
 
         assert_eq!(n.level(), Level::Hn3, "resolved to Hn3 via label");
+        assert_eq!(n.label, "property");
     }
 
     // -----------------------------------------------------------------------
-    // Test: infers level from cross-level label  (OCaml: `infers_level_from_cross_level_label`)
+    // THE driving scenario: building under company (hn3) AND under group (hn4),
+    // children validating as "area" at both depths.
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn infers_level_from_cross_level_label() {
-        // Schema with two edge types from Hn2: floor→Hn3, zone→Hn4.
-        let cross_schema = Schema {
-            version: 1,
-            edges: vec![(
-                Level::Hn2,
-                vec![
-                    (
-                        Level::Hn3,
-                        vec![SchemaEdgeSpec::builder().label("floor".to_string()).build()],
-                    ),
-                    (
-                        Level::Hn4,
-                        vec![SchemaEdgeSpec::builder().label("zone".to_string()).build()],
-                    ),
-                ],
-            )],
-            metadata: vec![],
-            sensors: vec![],
-        };
-
+    async fn building_at_variable_depth() {
         let store = Rc::new(Store::new());
-        let c2 = NodeId::make(Level::Hn2, 10003);
-        let n2 = node::make(
-            10003,
-            Level::Hn2,
-            "X",
-            NodeId::root(),
-            &parent_path_for_hn2(),
-            serde_json::json!({}),
-            Some(cross_schema),
-        );
-        store.put_node(&n2);
+        let c2 = seed_company(&store);
 
-        let n = do_add_node(
-            store.clone(),
-            c2,
-            None, // no explicit level
-            Some("zone".to_string()),
-            "Z",
-            serde_json::json!({}),
-            None,
-        )
-        .await
-        .expect("should succeed");
+        // building directly under company → hn3
+        let b1 = add_node_helper(&store, c2.clone(), Some("building"), "B1",
+            serde_json::json!({"lat": 55.0})).await.unwrap();
+        assert_eq!(b1.level(), Level::Hn3);
+        assert_eq!(b1.label, "building");
 
-        assert_eq!(n.level(), Level::Hn4, "label=zone resolved to Hn4");
+        // group under company → hn3; building under group → hn4
+        let g = add_node_helper(&store, c2.clone(), Some("group"), "G",
+            serde_json::json!({})).await.unwrap();
+        let b2 = add_node_helper(&store, g.id.clone(), Some("building"), "B2",
+            serde_json::json!({"lat": 55.0})).await.unwrap();
+        assert_eq!(b2.level(), Level::Hn4);
+        assert_eq!(b2.label, "building");
+
+        // both buildings allow only "area" children
+        let a1 = add_node_helper(&store, b1.id.clone(), None, "A1",
+            serde_json::json!({})).await.unwrap();
+        assert_eq!(a1.label, "area");
+        assert_eq!(a1.level(), Level::Hn4);
+        let a2 = add_node_helper(&store, b2.id.clone(), None, "A2",
+            serde_json::json!({})).await.unwrap();
+        assert_eq!(a2.label, "area");
+        assert_eq!(a2.level(), Level::Hn5);
+
+        // group under building is rejected
+        let err = add_node_helper(&store, b1.id.clone(), Some("group"), "X",
+            serde_json::json!({})).await.unwrap_err();
+        assert!(format!("{:?}", err).contains("not allowed under"));
+    }
+
+    /// Omitted label: ambiguous under company (3 child types), unique under building.
+    #[tokio::test]
+    async fn omitted_label_resolution() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+        let err = add_node_helper(&store, c2.clone(), None, "X",
+            serde_json::json!({})).await.unwrap_err();
+        assert!(format!("{:?}", err).contains("specify label"));
+    }
+
+    /// Explicit level param must equal parent + 1.
+    #[tokio::test]
+    async fn level_param_must_match_derived() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+        // company is hn2 → only hn3 children; requesting hn4 is rejected
+        let err = add_node_level_helper(&store, c2, Some(Level::Hn4), Some("building"), "B",
+            serde_json::json!({"lat": 1.0})).await.unwrap_err();
+        assert!(format!("{:?}", err).contains("parent level + 1"));
+    }
+
+    /// Metadata required fields enforced per type at any depth.
+    #[tokio::test]
+    async fn metadata_enforced_per_type() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+        let err = add_node_helper(&store, c2, Some("building"), "B",
+            serde_json::json!({})).await.unwrap_err(); // missing lat
+        assert!(matches!(err, RepositoryError::Validation(_)));
     }
 
     // -----------------------------------------------------------------------
@@ -951,17 +890,9 @@ mod tests {
         let store = Rc::new(Store::new());
         let c2 = seed_company(&store);
 
-        do_add_node(
-            store.clone(),
-            c2.clone(),
-            Some(Level::Hn3),
-            None,
-            "P",
-            serde_json::json!({}),
-            None,
-        )
-        .await
-        .expect("add child");
+        add_node_helper(&store, c2.clone(), Some("property"), "P", serde_json::json!({}))
+            .await
+            .expect("add child");
 
         let kids = list_children(
             c2.clone(),
@@ -983,17 +914,9 @@ mod tests {
         let store = Rc::new(Store::new());
         let c2 = seed_company(&store);
 
-        do_add_node(
-            store.clone(),
-            c2.clone(),
-            Some(Level::Hn3),
-            None,
-            "P",
-            serde_json::json!({}),
-            None,
-        )
-        .await
-        .expect("add child");
+        add_node_helper(&store, c2.clone(), Some("property"), "P", serde_json::json!({}))
+            .await
+            .expect("add child");
 
         let refs = list_child_refs(
             c2.clone(),
@@ -1023,17 +946,9 @@ mod tests {
             let store = Rc::new(Store::new());
             let c2 = seed_company(&store);
 
-            let n = do_add_node(
-                store.clone(),
-                c2,
-                Some(Level::Hn3),
-                None,
-                name,
-                serde_json::json!({}),
-                None,
-            )
-            .await
-            .unwrap_or_else(|e| panic!("add_node errored on name={:?}: {:?}", name, e));
+            let n = add_node_helper(&store, c2, Some("property"), name, serde_json::json!({}))
+                .await
+                .unwrap_or_else(|e| panic!("add_node errored on name={:?}: {:?}", name, e));
 
             let fetched = get_node(n.id.clone(), get_node_fn(store.clone()))
                 .await
