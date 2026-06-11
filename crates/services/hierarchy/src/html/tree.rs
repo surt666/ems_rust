@@ -18,10 +18,6 @@ fn nodes_url(id: &str, user: &str, path: &str) -> String {
     )
 }
 
-fn node_url(id: &str, user: &str) -> String {
-    format!("/hierarchy/query/node?id={}&user={}", pct(id), pct(user))
-}
-
 /// The toggle `<svg>` arrow (or a spacer span when leaf).
 fn tree_toggle(is_leaf: bool, bar_class: &str) -> Markup {
     if is_leaf {
@@ -120,7 +116,10 @@ pub fn list_item(
     } else {
         // Standard tree <li> variant.
         let load_url = nodes_url(&id_str, user, &current_path);
-        let detail_url = node_url(&id_str, user);
+        // Clicking a node navigates to the dedicated /node view, passing the id
+        // as a URL query param (trailing slash so the S3 redirect doesn't drop it;
+        // '#' encoded as %23). sessionStorage is still set as a fallback/highlight.
+        let node_href = format!("/node/?id={}", id_str.replace('#', "%23"));
         // node_path for <a data-node-path> is parent_path (not current_path).
         // When there is a parent path it's used as-is; for top-level nodes it's "".
         let node_path = parent_path;
@@ -139,14 +138,11 @@ pub fn list_item(
                     (toggle)
                 }
                 (icon)
-                a href="#"
+                a href=(node_href)
+                    data-astro-reload
                     class="node-name-link"
                     data-node-id=(id_str)
                     data-node-path=(node_path)
-                    data-hx-get=(detail_url)
-                    data-hx-request=(r#"{"noHeaders": true}"#)
-                    data-hx-target=".main-area"
-                    data-hx-swap="innerHTML"
                     _=(hyperscript)
                     style="cursor: pointer; text-decoration: none; color: inherit;"
                 {
