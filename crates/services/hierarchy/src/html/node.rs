@@ -72,19 +72,9 @@ fn json_scalar_str(v: &serde_json::Value) -> String {
 // ---------------------------------------------------------------------------
 
 /// Emit the "Children" header with Add-child button and add-child dialog.
-fn add_child_block(parent_id_str: &str) -> Markup {
+/// The add-child dialog (the button lives in the node-view actions row).
+fn add_child_dialog(parent_id_str: &str) -> Markup {
     html! {
-        div style="margin-top: 2rem;" {
-            div style="display: grid; grid-template-columns: 1fr auto; align-items: center; margin-bottom: 1rem;" {
-                div {}
-                button type="button" class="btn-primary"
-                    _="on click call #add-child-dialog.showModal() then send refresh to #add-child-body"
-                    data-i18n="node.add_child"
-                {
-                    "Add child"
-                }
-            }
-        }
         dialog id="add-child-dialog"
             _="on click if event.target == me then call me.close()"
         {
@@ -214,8 +204,17 @@ pub fn render_node(
                     }
                 }
                 @if is_admin {
-                    div style="display: grid; grid-template-columns: 1fr auto; align-items: center; margin-bottom: 1rem;" {
-                        div {}
+                    // Add-child (when the type allows children) and Delete on one row,
+                    // right-aligned (grid, not flex).
+                    div style="display: grid; grid-auto-flow: column; justify-content: end; gap: 0.5rem; align-items: center; margin-bottom: 1rem;" {
+                        @if allow_children {
+                            button type="button" class="btn-primary"
+                                _="on click call #add-child-dialog.showModal() then send refresh to #add-child-body"
+                                data-i18n="node.add_child"
+                            {
+                                "Add child"
+                            }
+                        }
                         button type="button" class="btn-danger"
                             data-hx-post="/hierarchy/command"
                             data-hx-vals=(delete_vals)
@@ -228,9 +227,9 @@ pub fn render_node(
                             "Slet"
                         }
                     }
-                }
-                @if is_admin && allow_children {
-                    (add_child_block(&nid_str))
+                    @if allow_children {
+                        (add_child_dialog(&nid_str))
+                    }
                 }
                 div style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-medium);" {
                     (metadata_section)

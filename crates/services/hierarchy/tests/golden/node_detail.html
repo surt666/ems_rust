@@ -10,15 +10,9 @@
         <input type="text" id="name" value="SeedCo01" readonly class="form-input">
       </div>
     </div>
-    <div style="display: grid; grid-template-columns: 1fr auto; align-items: center; margin-bottom: 1rem;">
-      <div></div>
+    <div style="display: grid; grid-auto-flow: column; justify-content: end; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+      <button type="button" class="btn-primary" _="on click call #add-child-dialog.showModal() then send refresh to #add-child-body" data-i18n="node.add_child">Add child</button>
       <button type="button" class="btn-danger" data-hx-post="/hierarchy/command" data-hx-vals='{"action": "delete_node", "id": "HN2#10003"}' data-hx-request='{"noHeaders": true}' data-hx-swap="none" data-hx-confirm="Slet denne node og alt under den?" hx-on--after-request="if(event.detail.successful){window.location.href='/main';}" data-i18n="node.delete">Slet</button>
-    </div>
-    <div style="margin-top: 2rem;">
-      <div style="display: grid; grid-template-columns: 1fr auto; align-items: center; margin-bottom: 1rem;">
-        <div></div>
-        <button type="button" class="btn-primary" _="on click call #add-child-dialog.showModal() then send refresh to #add-child-body" data-i18n="node.add_child">Add child</button>
-      </div>
     </div>
     <dialog id="add-child-dialog" _="on click if event.target == me then call me.close()">
       <div class="dialog-header">
