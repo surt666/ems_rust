@@ -127,17 +127,16 @@
   .sd-pane { border: 1px solid var(--border-medium, #d4d9e0); border-radius: 8px; background: #fff; color: #1d2330; margin-bottom: 14px; }
   .sd-pane h4 { margin: 0; padding: 8px 12px; border-bottom: 1px solid #e3e8ef; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #5b6675; background: #f3f6fa; border-radius: 8px 8px 0 0; }
   .sd-body { padding: 10px 12px; }
-  .sd-typeitem { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; color: #1d2330; }
+  .sd-typeitem { display: grid; grid-template-columns: 1fr auto; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; color: #1d2330; }
   .sd-typeitem:hover { background: #f3f6fa; }
   .sd-typeitem.sel { background: #2563eb; color: #fff; }
   .sd-rm { opacity: .6; font-weight: bold; padding: 0 4px; cursor: pointer; }
   .sd-rm:hover { opacity: 1; color: #dc2626; }
-  .sd-addrow { display: flex; gap: 6px; margin-top: 8px; }
-  .sd-addrow input { flex: 1; }
+  .sd-addrow { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-top: 8px; }
   .sd-root input[type=text], .sd-root input[type=number], .sd-root select { border: 1px solid #d4d9e0; border-radius: 6px; padding: 5px 7px; font-size: 13px; color: #1d2330; background: #fff; }
   .sd-grp { margin-bottom: 16px; }
   .sd-lbl { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
-  .sd-chk { display: inline-flex; align-items: center; gap: 5px; margin: 3px 10px 3px 0; font-size: 13px; }
+  .sd-chk { display: inline-grid; grid-auto-flow: column; align-items: center; gap: 5px; margin: 3px 10px 3px 0; font-size: 13px; }
   .sd-chk.disabled { color: #9aa3b0; }
   .sd-why { font-size: 11px; font-style: italic; }
   .sd-md { width: 100%; border-collapse: collapse; font-size: 13px; }
