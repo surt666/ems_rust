@@ -148,4 +148,13 @@ import "../styles/global.css";
 
 	// Re-translate any HTMX-swapped fragment.
 	document.body.addEventListener('htmx:afterSwap', () => applyTranslations());
+
+	// View transitions don't auto-process HTMX. After a transition swaps in the
+	// /node page, (re)process its node panel so hx-trigger="load" fires and the
+	// node detail loads. (after-swap fires on transitions only, not initial load,
+	// where htmx already processes on DOMContentLoaded — so no double fetch.)
+	document.addEventListener('astro:after-swap', () => {
+		const panel = document.getElementById('node-data-panel');
+		if (panel && window.htmx) window.htmx.process(panel);
+	});
 </script>

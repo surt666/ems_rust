@@ -75,10 +75,7 @@ fn json_scalar_str(v: &serde_json::Value) -> String {
 fn add_child_block(parent_id_str: &str) -> Markup {
     html! {
         div style="margin-top: 2rem;" {
-            div style="display: grid; grid-template-columns: 1fr auto; align-items: center; margin-bottom: 1rem;" {
-                h2 class="section-title" style="margin-bottom: 0;" data-i18n="node.children" {
-                    "Children"
-                }
+            div style="margin-bottom: 1rem;" {
                 button type="button" class="btn-primary"
                     _="on click call #add-child-dialog.showModal() then send refresh to #add-child-body"
                     data-i18n="node.add_child"
@@ -207,7 +204,6 @@ pub fn render_node(
                     (add_child_block(&nid_str))
                 }
                 div style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-medium);" {
-                    h2 class="section-title" data-i18n="node.metadata" { "Metadata" }
                     (metadata_section)
                     @if show_sensors && is_admin {
                         (sensor_block(&nid_str, &parent_str))

@@ -118,7 +118,10 @@ pub fn list_item(
         let load_url = nodes_url(&id_str, user, &current_path);
         // Clicking a node navigates to the dedicated /node view, passing the id
         // as a URL query param (trailing slash so the S3 redirect doesn't drop it;
-        // '#' encoded as %23). sessionStorage is still set as a fallback/highlight.
+        // '#' encoded as %23). It's a view-transition navigation (no
+        // data-astro-reload) so the sidebar's transition:persist keeps the tree
+        // expanded; the Layout reprocesses the node panel on astro:after-swap.
+        // sessionStorage is still set as a fallback/highlight.
         let node_href = format!("/node/?id={}", id_str.replace('#', "%23"));
         // node_path for <a data-node-path> is parent_path (not current_path).
         // When there is a parent path it's used as-is; for top-level nodes it's "".
@@ -139,7 +142,6 @@ pub fn list_item(
                 }
                 (icon)
                 a href=(node_href)
-                    data-astro-reload
                     class="node-name-link"
                     data-node-id=(id_str)
                     data-node-path=(node_path)
