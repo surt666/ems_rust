@@ -31,3 +31,6 @@ infra/hierarchy/lambda/cognito-sync/cognito-sync.zip
 # Rust build artifacts
 /target
 crates/**/target
+
+# superpowers brainstorm visual companion (local, not committed)
+.superpowers/
