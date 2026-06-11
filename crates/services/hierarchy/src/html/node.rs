@@ -206,7 +206,7 @@ pub fn render_node(
                 @if is_admin {
                     // Add-child (when the type allows children) and Delete on one row,
                     // right-aligned (grid, not flex).
-                    div style="display: grid; grid-auto-flow: column; justify-content: end; gap: 0.5rem; align-items: center; margin-bottom: 1rem;" {
+                    div style="display: grid; grid-auto-flow: column; justify-content: end; gap: 0.5rem; align-items: center; margin-top: 1.5rem; margin-bottom: 1rem;" {
                         @if allow_children {
                             button type="button" class="btn-primary"
                                 _="on click call #add-child-dialog.showModal() then send refresh to #add-child-body"
