@@ -7,7 +7,6 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 
 <Layout title="Stamdata">
 	<div class="page-container" x-data="{
-		activeTab: 'maindata',
 		deleteDialogOpen: false,
 		openDeleteDialog() {
 			const nodeId = sessionStorage.getItem('selectedNodeId');
@@ -59,9 +58,7 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 				alert('Fejl ved sletning: ' + error.message);
 			}
 		}
-	}"
-	@switch-to-overview.window="activeTab = 'maindata'"
-	@node-selected.window="activeTab = 'maindata'">
+	}">
 		<!-- Action Dropdown -->
 		<div style="display: grid; grid-template-columns: 1fr auto; gap: 1rem; margin-bottom: 1rem;">
 			<div></div>
@@ -77,54 +74,8 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 			</div>
 		</div>
 
-		<!-- Tab Navigation -->
-		<div class="tab-bar">
-			<button
-				class="tab-btn"
-				:class="activeTab === 'maindata' ? 'active' : ''"
-				@click="activeTab = 'maindata'"
-			>
-				Data
-			</button>
-			<button
-				class="tab-btn"
-				:class="activeTab === 'prices' ? 'active' : ''"
-				@click="activeTab = 'prices'"
-			>
-				Energipriser
-			</button>
-			<button
-				class="tab-btn"
-				:class="activeTab === 'co2' ? 'active' : ''"
-				@click="activeTab = 'co2'"
-			>
-				CO2e faktorer
-			</button>
-			<button
-				class="tab-btn"
-				:class="activeTab === 'license' ? 'active' : ''"
-				@click="activeTab = 'license'"
-			>
-				Licens
-			</button>
-		</div>
-
-		<!-- Tab Content -->
-		<div x-show="activeTab === 'maindata'">
-			<MasterData />
-		</div>
-
-		<div x-show="activeTab === 'prices'">
-			<h1 class="page-title">Priser</h1>
-		</div>
-
-		<div x-show="activeTab === 'co2'">
-			<h1 class="page-title">CO2</h1>
-		</div>
-
-		<div x-show="activeTab === 'license'">
-			<h1 class="page-title">License</h1>
-		</div>
+		<!-- Tabbed per-node view -->
+		<MasterData />
 
 		<!-- Create Node Dialog -->
 		<dialog id="create-dialog" x-data="createNode()"
