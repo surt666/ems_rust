@@ -22,7 +22,7 @@ import Layout from "../layouts/Layout.astro";
     <div x-show="tab === 'data'"
       hx-get="/hierarchy/query/node"
       hx-request='{"noHeaders": true}'
-      hx-vals="js:{id: new URLSearchParams(location.search).get('id'), user: localStorage.getItem('loginId'), path: sessionStorage.getItem('selectedNodePath')}"
+      hx-vals="js:{id: (new URLSearchParams(location.search).get('id') || sessionStorage.getItem('selectedNodeId')), user: localStorage.getItem('loginId'), path: sessionStorage.getItem('selectedNodePath')}"
       hx-trigger="load"
       hx-swap="innerHTML"
       id="node-data-panel">
