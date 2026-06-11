@@ -75,7 +75,7 @@ fn json_scalar_str(v: &serde_json::Value) -> String {
 fn add_child_block(parent_id_str: &str) -> Markup {
     html! {
         div style="margin-top: 2rem;" {
-            div style="margin-bottom: 1rem;" {
+            div style="display: flex; justify-content: flex-end; margin-bottom: 1rem;" {
                 button type="button" class="btn-primary"
                     _="on click call #add-child-dialog.showModal() then send refresh to #add-child-body"
                     data-i18n="node.add_child"
