@@ -1,6 +1,7 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import MasterData from '../components/MasterData.astro';
+import SchemaDesigner from '../components/SchemaDesigner.astro';
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 ---
@@ -127,7 +128,9 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 		</div>
 
 		<!-- Create Node Dialog -->
-		<dialog id="create-dialog" _="on click if event.target == me then call me.close()">
+		<dialog id="create-dialog" x-data="createNode()"
+			@schema-updated.window="onSchema($event.detail)"
+			_="on click if event.target == me then call me.close()">
 			<div class="dialog-header">
 				<h2>OPRET HIERARKI ELEMENT</h2>
 				<button _="on click call #create-dialog.close()" class="btn-close">&times;</button>
@@ -140,7 +143,7 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 					hx-swap="none"
 					hx-vals="js:{parent_id: sessionStorage.getItem('selectedNodePath') + '#' + sessionStorage.getItem('selectedNodeId')}"
 					hx-on::after-request="if(event.detail.elt.id === 'create-node-form' && event.detail.successful) { document.querySelector('dialog').close(); location.reload(); } else if(event.detail.elt.id === 'create-node-form') { document.getElementById('node-form-error').textContent = event.detail.xhr.responseText; document.getElementById('node-form-error').style.display = 'block'; }">
-					<input type="hidden" name="action" value="create_node" />
+					<input type="hidden" name="action" value="add_node" />
 
 					<div class="form-row">
 						<label class="form-label">Navn</label>
@@ -151,6 +154,7 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 					<div class="form-row">
 						<label class="form-label">Type</label>
 						<select id="node-type-select" name="data.type" required class="form-select"
+							@change="nodeType = $event.target.value"
 							_="on change
 								for field in .node-fields
 									add @style='display:none' to field
@@ -208,6 +212,14 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 
 					<!-- Company Fields -->
 					<div class="form node-fields node-fields-company" style="display:none">
+						<div class="form-row-2col">
+							<label class="form-label">Hierarki-skema</label>
+							<button type="button" class="btn-secondary"
+								@click="document.getElementById('schema-designer-dialog').showModal()">
+								<span x-show="!schemaValid">Design skema *</span>
+								<span x-show="schemaValid">✓ Skema defineret (rediger)</span>
+							</button>
+						</div>
 						<div class="form-row-2col">
 							<label class="form-label">Email</label>
 							<input type="email" name="data.email" class="form-input" />
@@ -390,11 +402,14 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 					Annuller
 				</button>
 				<div></div>
-				<button type="submit" form="create-node-form" class="btn-primary">
+				<button type="submit" form="create-node-form" class="btn-primary"
+					@click="if (nodeType === 'company') { $event.preventDefault(); submitCompany(); }">
 					Gem
 				</button>
 			</div>
 		</dialog>
+
+		<SchemaDesigner />
 
 		<!-- Delete Confirmation Dialog -->
 		<dialog x-ref="deleteDialog" @click.self="closeDeleteDialog()">
@@ -426,3 +441,59 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 
 	</div>
 </Layout>
+
+<script>
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("createNode", () => ({
+      nodeType: "partner",
+      schema: null,
+      schemaValid: false,
+
+      onSchema(detail) { this.schema = detail.schema; this.schemaValid = detail.valid; },
+
+      // Rebuild nested data from the form's dotted `data.*` field names
+      // (mirrors backend form_to_command_json), skipping empty values and data.type.
+      formToData(form) {
+        const data = {};
+        for (const el of form.querySelectorAll("[name^='data.']")) {
+          if (el.value === "" || el.value == null) continue;
+          if (el.name === "data.type") continue;
+          const path = el.name.slice("data.".length).split(".");
+          let cur = data;
+          for (let i = 0; i < path.length - 1; i++) cur = cur[path[i]] = cur[path[i]] || {};
+          cur[path[path.length - 1]] = el.value;
+        }
+        return data;
+      },
+
+      async submitCompany() {
+        const form = document.getElementById("create-node-form");
+        const errBox = document.getElementById("node-form-error");
+        errBox.style.display = "none";
+        if (!this.schemaValid || !this.schema) {
+          errBox.textContent = "Definér et gyldigt skema først.";
+          errBox.style.display = "block";
+          return;
+        }
+        const parent_id = sessionStorage.getItem("selectedNodePath") + "#" + sessionStorage.getItem("selectedNodeId");
+        try {
+          const resp = await fetch("/hierarchy/command", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "add_node", parent_id, data: this.formToData(form), schema: this.schema }),
+          });
+          if (!resp.ok) {
+            errBox.textContent = await resp.text();
+            errBox.style.display = "block";
+            return;
+          }
+          document.getElementById("create-dialog").close();
+          location.reload();
+        } catch (e) {
+          errBox.textContent = "Fejl: " + e.message;
+          errBox.style.display = "block";
+        }
+      },
+    }));
+  });
+</script>
