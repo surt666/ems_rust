@@ -1,0 +1,52 @@
+---
+// Dedicated node view (unlinked from the nav). Reached by navigating to
+// /node?id=<encoded node id> (e.g. /node?id=HN2%2310003). The id is read
+// client-side and the tabs HTMX-load backend HTML fragments for that node.
+// Spike: Data tab loads the existing render_node fragment; the other tabs are
+// inline HTML stubs (later each gets its own backend HTML-fragment endpoint).
+import Layout from "../layouts/Layout.astro";
+---
+
+<Layout title="Node">
+  <div class="page-container" x-data="{ tab: 'data' }">
+    <!-- Tab bar (pure HTML; adding a tab is pure HTML) -->
+    <div class="tab-bar">
+      <button class="tab-btn" :class="tab === 'data' ? 'active' : ''" @click="tab = 'data'">Data</button>
+      <button class="tab-btn" :class="tab === 'prices' ? 'active' : ''" @click="tab = 'prices'">Energipriser</button>
+      <button class="tab-btn" :class="tab === 'co2' ? 'active' : ''" @click="tab = 'co2'">CO2e faktorer</button>
+      <button class="tab-btn" :class="tab === 'license' ? 'active' : ''" @click="tab = 'license'">Licens</button>
+    </div>
+
+    <!-- Data panel: the server-rendered node detail (render_node), loaded on
+         page load using the id from the URL query string. -->
+    <div x-show="tab === 'data'"
+      hx-get="/hierarchy/query/node"
+      hx-request='{"noHeaders": true}'
+      hx-vals="js:{id: new URLSearchParams(location.search).get('id'), user: localStorage.getItem('loginId'), path: sessionStorage.getItem('selectedNodePath')}"
+      hx-trigger="load"
+      hx-swap="innerHTML"
+      id="node-data-panel">
+      <p style="color: var(--text-muted); padding: 1.5rem;">Indlæser node…</p>
+    </div>
+
+    <!-- Stub panels (inline HTML for now; later: hx-get a backend HTML fragment per tab) -->
+    <div x-show="tab === 'prices'" id="node-energy-panel" style="display:none">
+      <div style="padding: 1.5rem;">
+        <h2 class="section-title">Energipriser</h2>
+        <p style="color: var(--text-muted);">Ingen data for denne node endnu.</p>
+      </div>
+    </div>
+    <div x-show="tab === 'co2'" id="node-co2-panel" style="display:none">
+      <div style="padding: 1.5rem;">
+        <h2 class="section-title">CO2e faktorer</h2>
+        <p style="color: var(--text-muted);">Ingen data for denne node endnu.</p>
+      </div>
+    </div>
+    <div x-show="tab === 'license'" id="node-license-panel" style="display:none">
+      <div style="padding: 1.5rem;">
+        <h2 class="section-title">Licens</h2>
+        <p style="color: var(--text-muted);">Ingen data for denne node endnu.</p>
+      </div>
+    </div>
+  </div>
+</Layout>
