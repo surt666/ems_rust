@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enity EMS — Product Vision</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e2e4e9;
+    --muted: #8b8fa3;
+    --accent: #6c8cff;
+    --green: #4ade80;
+    --red: #f87171;
+    --orange: #fb923c;
+    --yellow: #facc15;
+    --purple: #a78bfa;
+    --cyan: #22d3ee;
+    --teal: #2dd4bf;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html {
+    width: 100%;
+    height: 100%;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Fixed 16:9 canvas — JS scales it to fill the viewport */
+  .deck {
+    width: 1600px;
+    height: 900px;
+    flex-shrink: 0;
+    overflow: hidden;
+    position: relative;
+    background: var(--bg);
+    transform-origin: center center;
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    padding: 48px 64px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  .slide.active { display: flex; opacity: 1; }
+
+  .slide-number {
+    position: fixed; bottom: 20px; right: 32px;
+    font-size: 13px; color: var(--muted);
+    font-variant-numeric: tabular-nums; z-index: 100;
+  }
+
+  h1 { font-size: 48px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
+  h2 { font-size: 36px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 6px; }
+  h3 { font-size: 18px; font-weight: 600; margin-bottom: 8px; color: var(--accent); }
+
+  .subtitle { font-size: 18px; color: var(--muted); margin-bottom: 28px; }
+
+  .tag {
+    display: inline-block; padding: 3px 10px; border-radius: 4px;
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; margin-bottom: 12px;
+  }
+  .tag.vision  { background: rgba(108,140,255,0.15); color: var(--accent); }
+  .tag.domain  { background: rgba(45,212,191,0.15);  color: var(--teal); }
+  .tag.access  { background: rgba(167,139,250,0.15); color: var(--purple); }
+  .tag.arch    { background: rgba(74,222,128,0.15);  color: var(--green); }
+  .tag.pipeline{ background: rgba(250,204,21,0.15);  color: var(--yellow); }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+    gap: 40px; flex: 1; align-items: stretch; min-height: 0;
+  }
+  .two-col.wide-right { grid-template-columns: 2fr 3fr; }
+  .two-col.wide-left  { grid-template-columns: 3fr 2fr; }
+  .three-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr;
+    gap: 24px; flex: 1; align-items: stretch; min-height: 0;
+  }
+
+  .col { display: flex; flex-direction: column; gap: 12px; min-height: 0; justify-content: space-between; }
+  .card { flex: 1; }
+
+  ul { list-style: none; padding: 0; }
+  ul li {
+    position: relative; padding-left: 20px; margin-bottom: 8px;
+    font-size: 17px; line-height: 1.6; color: var(--text);
+  }
+  ul li::before { content: '›'; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
+
+  .diagram {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 200px;
+  }
+  svg text { font-family: 'Inter', -apple-system, sans-serif; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px;
+  }
+  .card h3 { font-size: 17px; margin-bottom: 8px; color: var(--accent); }
+  .card p, .card li { font-size: 15px; color: var(--muted); line-height: 1.6; }
+
+  .matrix { width: 100%; border-collapse: collapse; font-size: 15px; }
+  .matrix th, .matrix td { padding: 11px 16px; text-align: left; border-bottom: 1px solid var(--border); }
+  .matrix th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .matrix td { color: var(--text); }
+
+  .pill {
+    display: inline-block; padding: 3px 10px; border-radius: 12px;
+    font-size: 13px; font-weight: 600;
+  }
+  .pill.admin { background: rgba(248,113,113,0.15); color: var(--red); }
+  .pill.write { background: rgba(250,204,21,0.15); color: var(--yellow); }
+  .pill.read  { background: rgba(74,222,128,0.15);  color: var(--green); }
+  .pill.block { background: rgba(139,143,163,0.15); color: var(--muted); }
+
+  .outcome-box {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px;
+  }
+  .outcome-box.ok-box    { border-left: 3px solid var(--green); }
+  .outcome-box.info-box  { border-left: 3px solid var(--accent); }
+  .outcome-box.warn-box  { border-left: 3px solid var(--orange); }
+
+  .title-slide { justify-content: center; align-items: center; text-align: center; }
+  .title-slide h1 { font-size: 58px; margin-bottom: 16px; }
+  .title-slide .subtitle { font-size: 22px; }
+
+  .small { font-size: 13px; color: var(--muted); }
+  .code-inline {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    background: rgba(108,140,255,0.1); padding: 1px 6px;
+    border-radius: 3px; font-size: 13px; color: var(--accent);
+  }
+
+  .nav-hint {
+    position: fixed; bottom: 20px; left: 32px;
+    font-size: 12px; color: var(--muted); z-index: 100;
+  }
+  .nav-hint kbd {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 3px; padding: 1px 6px; font-family: inherit; font-size: 11px;
+  }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="deck" id="deck">
+
+<!-- ==================== SLIDE 0: TITLE ==================== -->
+<div class="slide title-slide active">
+  <h1>EMS Product Vision</h1>
+  <p class="subtitle">Graph-first Energy Management — Architecture &amp; Design Philosophy</p>
+  <p class="small" style="margin-top:24px">Steen Larsen &mdash; Enity</p>
+</div>
+
+<!-- ==================== SLIDE 1: CUSTOMERS ==================== -->
+<div class="slide">
+  <span class="tag vision">Who We Serve</span>
+  <h2>Customer Segments</h2>
+  <p class="subtitle">Seven distinct roles — one unified platform</p>
+  <div class="two-col wide-right" style="flex:1;align-items:stretch">
+    <div class="col" style="gap:10px">
+      <div class="card" style="border-left:3px solid var(--accent)">
+        <h3>EMS — Licensed Operators</h3>
+        <p>Energy managers running the platform day-to-day</p>
+      </div>
+      <div class="card" style="border-left:3px solid var(--purple)">
+        <h3>Intelligence — ML &amp; BI</h3>
+        <p>Data scientists building models on raw &amp; aggregated data</p>
+      </div>
+      <div class="card" style="border-left:3px solid var(--teal)">
+        <h3>Technicians</h3>
+        <p>Commission devices, manage meter identity &amp; diagnostics</p>
+      </div>
+      <div class="card" style="border-left:3px solid var(--green)">
+        <h3>Energy Advisors</h3>
+        <p>Deep BI reports &amp; consumption analysis beyond EMS defaults</p>
+      </div>
+    </div>
+    <div class="col" style="gap:10px">
+      <div class="card" style="border-left:3px solid var(--yellow)">
+        <h3>Marketing</h3>
+        <p>User activity analytics — what users do and when</p>
+      </div>
+      <div class="card" style="border-left:3px solid var(--orange)">
+        <h3>Billing</h3>
+        <p>Meter inventory &amp; hierarchy-based cost allocation</p>
+      </div>
+      <div class="card" style="border-left:3px solid var(--red)">
+        <h3>External API Users</h3>
+        <p>Third-party integrations via public API</p>
+      </div>
+      <div class="outcome-box info-box" style="margin-top:4px">
+        <p style="font-size:16px;color:var(--muted)">All segments share <strong style="color:var(--text)">one graph model</strong> — no separate product silos. Access is an entry-point into the same graph.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 2: GRAPH PHILOSOPHY ==================== -->
+<div class="slide">
+  <span class="tag domain">Design Philosophy</span>
+  <h2>Everything Is a Graph</h2>
+  <p class="subtitle">A hierarchy is just a DAG — sensors are just leaf nodes</p>
+  <div class="two-col wide-right" style="flex:1;align-items:stretch">
+    <div class="col">
+      <ul>
+        <li>A <strong>hierarchy is a DAG</strong> — no special tree type needed</li>
+        <li>Nodes are typed but homogeneous — structure is metadata</li>
+        <li>Only the traversal mechanism is rigid</li>
+        <li>Everything else is <strong>per-company schema</strong>: allowed node types, edge cardinality, required metadata fields</li>
+        <li><strong>Access = entry-point</strong> into the graph — users see only their sub-graph</li>
+        <li>Edges encode both <em>structure</em> and <em>permissions</em></li>
+        <li>Sensors are leaf nodes — no special-casing</li>
+        <li>DynamoDB adjacency list → sub-millisecond traversals, no joins</li>
+      </ul>
+    </div>
+    <div class="diagram" style="flex:1">
+      <svg viewBox="0 0 480 340" width="100%" height="100%">
+        <defs>
+          <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <path d="M0,0 L8,3 L0,6" fill="var(--border)"/>
+          </marker>
+          <marker id="arr-acc" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <path d="M0,0 L8,3 L0,6" fill="var(--accent)"/>
+          </marker>
+          <marker id="arr-g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <path d="M0,0 L8,3 L0,6" fill="var(--green)"/>
+          </marker>
+        </defs>
+
+        <!-- root -->
+        <circle cx="240" cy="30" r="22" fill="rgba(108,140,255,0.15)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="240" y="34" text-anchor="middle" fill="var(--accent)" font-size="11" font-weight="700">root</text>
+
+        <!-- partners -->
+        <circle cx="120" cy="110" r="20" fill="rgba(167,139,250,0.15)" stroke="var(--purple)" stroke-width="1.5"/>
+        <text x="120" y="114" text-anchor="middle" fill="var(--purple)" font-size="10" font-weight="600">hn1</text>
+        <circle cx="360" cy="110" r="20" fill="rgba(167,139,250,0.15)" stroke="var(--purple)" stroke-width="1.5"/>
+        <text x="360" y="114" text-anchor="middle" fill="var(--purple)" font-size="10" font-weight="600">hn1</text>
+
+        <!-- companies -->
+        <circle cx="70"  cy="195" r="20" fill="rgba(45,212,191,0.15)" stroke="var(--teal)" stroke-width="1.5"/>
+        <text x="70"  y="199" text-anchor="middle" fill="var(--teal)" font-size="10" font-weight="600">hn2</text>
+        <circle cx="170" cy="195" r="20" fill="rgba(45,212,191,0.15)" stroke="var(--teal)" stroke-width="1.5"/>
+        <text x="170" y="199" text-anchor="middle" fill="var(--teal)" font-size="10" font-weight="600">hn2</text>
+        <circle cx="310" cy="195" r="20" fill="rgba(45,212,191,0.15)" stroke="var(--teal)" stroke-width="1.5"/>
+        <text x="310" y="199" text-anchor="middle" fill="var(--teal)" font-size="10" font-weight="600">hn2</text>
+        <circle cx="410" cy="195" r="20" fill="rgba(45,212,191,0.15)" stroke="var(--teal)" stroke-width="1.5"/>
+        <text x="410" y="199" text-anchor="middle" fill="var(--teal)" font-size="10" font-weight="600">hn2</text>
+
+        <!-- schema-defined nodes under company 1 -->
+        <circle cx="70"  cy="275" r="17" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.5"/>
+        <text x="70"  y="279" text-anchor="middle" fill="var(--yellow)" font-size="9">hn3</text>
+        <circle cx="140" cy="275" r="17" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.5"/>
+        <text x="140" y="279" text-anchor="middle" fill="var(--yellow)" font-size="9">hn3</text>
+
+        <!-- sensors -->
+        <circle cx="50"  cy="330" r="12" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="50"  y="334" text-anchor="middle" fill="var(--green)" font-size="8">sen</text>
+        <circle cx="90"  cy="330" r="12" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="90"  y="334" text-anchor="middle" fill="var(--green)" font-size="8">sen</text>
+        <circle cx="140" cy="330" r="12" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="140" y="334" text-anchor="middle" fill="var(--green)" font-size="8">sen</text>
+
+        <!-- edges root->partners -->
+        <line x1="222" y1="48" x2="138" y2="92" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="258" y1="48" x2="342" y2="92" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+
+        <!-- edges partners->companies -->
+        <line x1="104" y1="128" x2="84"  y2="177" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="128" y1="128" x2="160" y2="177" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="348" y1="128" x2="322" y2="177" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="374" y1="128" x2="400" y2="177" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+
+        <!-- edges company->hn3 -->
+        <line x1="68"  y1="215" x2="68"  y2="258" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="78"  y1="214" x2="135" y2="259" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+
+        <!-- edges hn3->sensors -->
+        <line x1="62"  y1="292" x2="54"  y2="318" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="78"  y1="292" x2="87"  y2="318" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="140" y1="292" x2="140" y2="318" stroke="var(--border)" stroke-width="1.5" marker-end="url(#arr)"/>
+
+        <!-- labels -->
+        <text x="240" y="9"   text-anchor="middle" fill="var(--accent)"  font-size="10">Root</text>
+        <text x="80"  y="100" text-anchor="middle" fill="var(--purple)" font-size="9">Partner A</text>
+        <text x="400" y="100" text-anchor="middle" fill="var(--purple)" font-size="9">Partner B</text>
+        <text x="70"  y="183" text-anchor="middle" fill="var(--teal)"  font-size="8">Co A1</text>
+        <text x="170" y="183" text-anchor="middle" fill="var(--teal)"  font-size="8">Co A2</text>
+        <text x="310" y="183" text-anchor="middle" fill="var(--teal)"  font-size="8">Co B1</text>
+        <text x="410" y="183" text-anchor="middle" fill="var(--teal)"  font-size="8">Co B2</text>
+
+        <!-- legend -->
+        <circle cx="310" cy="270" r="8" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.2"/>
+        <text x="325" y="274" fill="var(--green)" font-size="10">Sensor (leaf)</text>
+        <circle cx="310" cy="292" r="8" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.2"/>
+        <text x="325" y="296" fill="var(--yellow)" font-size="10">Schema-defined node</text>
+        <circle cx="310" cy="314" r="8" fill="rgba(45,212,191,0.15)" stroke="var(--teal)" stroke-width="1.2"/>
+        <text x="325" y="318" fill="var(--teal)" font-size="10">Company (owns schema)</text>
+        <circle cx="310" cy="336" r="8" fill="rgba(167,139,250,0.15)" stroke="var(--purple)" stroke-width="1.2"/>
+        <text x="325" y="340" fill="var(--purple)" font-size="10">Partner</text>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 3: HIERARCHY LEVELS ==================== -->
+<div class="slide">
+  <span class="tag domain">Domain Model</span>
+  <h2>Hierarchy Levels — hn0 to hn9</h2>
+  <p class="subtitle">Hard-coded spine (hn0–hn2), schema-defined subtree (hn3+)</p>
+  <div class="two-col" style="flex:1;align-items:stretch">
+    <div class="diagram" style="flex:1;align-self:stretch">
+      <svg viewBox="0 0 380 440" width="100%" height="100%">
+        <defs>
+          <marker id="lvl-arr" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+            <path d="M0,0 L6,2.5 L0,5" fill="var(--muted)"/>
+          </marker>
+        </defs>
+
+        <!-- level rows -->
+        <!-- hn0 -->
+        <rect x="120" y="10" width="140" height="36" rx="6" fill="rgba(108,140,255,0.15)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="190" y="32" text-anchor="middle" fill="var(--accent)" font-size="13" font-weight="700">hn0 — Root</text>
+        <text x="10" y="32" fill="var(--muted)" font-size="10">singleton</text>
+
+        <!-- connector line -->
+        <line x1="190" y1="46" x2="190" y2="66" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#lvl-arr)"/>
+
+        <!-- hn1 -->
+        <rect x="110" y="70" width="160" height="36" rx="6" fill="rgba(167,139,250,0.15)" stroke="var(--purple)" stroke-width="1.5"/>
+        <text x="190" y="92" text-anchor="middle" fill="var(--purple)" font-size="13" font-weight="700">hn1 — Partner</text>
+        <text x="10" y="92" fill="var(--muted)" font-size="10">hard-coded</text>
+
+        <line x1="190" y1="106" x2="190" y2="126" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#lvl-arr)"/>
+
+        <!-- hn2 -->
+        <rect x="100" y="130" width="180" height="40" rx="6" fill="rgba(45,212,191,0.15)" stroke="var(--teal)" stroke-width="1.5"/>
+        <text x="190" y="150" text-anchor="middle" fill="var(--teal)" font-size="13" font-weight="700">hn2 — Company</text>
+        <text x="190" y="164" text-anchor="middle" fill="var(--teal)" font-size="9">owns schema</text>
+        <text x="10" y="150" fill="var(--muted)" font-size="10">hard-coded</text>
+
+        <!-- schema boundary -->
+        <line x1="30" y1="188" x2="360" y2="188" stroke="var(--border)" stroke-width="1" stroke-dasharray="6 4"/>
+        <text x="190" y="200" text-anchor="middle" fill="var(--muted)" font-size="10">▼ schema-defined below this line ▼</text>
+
+        <line x1="190" y1="170" x2="190" y2="208" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#lvl-arr)"/>
+
+        <!-- hn3 -->
+        <rect x="80" y="212" width="220" height="36" rx="6" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.5"/>
+        <text x="190" y="234" text-anchor="middle" fill="var(--yellow)" font-size="12" font-weight="600">hn3 — group / property / building</text>
+        <text x="10" y="234" fill="var(--muted)" font-size="10">schema</text>
+
+        <line x1="190" y1="248" x2="190" y2="268" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#lvl-arr)"/>
+
+        <!-- hn4 -->
+        <rect x="90" y="272" width="200" height="36" rx="6" fill="rgba(251,146,60,0.1)" stroke="var(--orange)" stroke-width="1.5"/>
+        <text x="190" y="294" text-anchor="middle" fill="var(--orange)" font-size="12" font-weight="600">hn4 — area / floor</text>
+        <text x="10" y="294" fill="var(--muted)" font-size="10">schema</text>
+
+        <line x1="190" y1="308" x2="190" y2="328" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#lvl-arr)"/>
+
+        <!-- hn5 -->
+        <rect x="100" y="332" width="180" height="36" rx="6" fill="rgba(248,113,113,0.1)" stroke="var(--red)" stroke-width="1.2"/>
+        <text x="190" y="354" text-anchor="middle" fill="var(--red)" font-size="12" font-weight="600">hn5+ — zone / room / …</text>
+        <text x="10" y="354" fill="var(--muted)" font-size="10">schema</text>
+
+        <line x1="190" y1="368" x2="190" y2="388" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#lvl-arr)"/>
+
+        <!-- sensor -->
+        <rect x="110" y="392" width="160" height="36" rx="6" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="190" y="414" text-anchor="middle" fill="var(--green)" font-size="13" font-weight="700">Sensor — leaf node</text>
+        <text x="10" y="414" fill="var(--green)" font-size="9">leaf</text>
+
+        <!-- level-skip arrow -->
+        <path d="M 300 145 Q 370 250 300 320" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#lvl-arr)"/>
+        <text x="348" y="235" fill="var(--accent)" font-size="9" text-anchor="middle">level-skip</text>
+        <text x="348" y="247" fill="var(--accent)" font-size="9" text-anchor="middle">if schema</text>
+        <text x="348" y="259" fill="var(--accent)" font-size="9" text-anchor="middle">allows</text>
+      </svg>
+    </div>
+    <div class="col">
+      <div class="card">
+        <h3>Fixed spine (hn0–hn2)</h3>
+        <ul>
+          <li><span class="code-inline">hn0</span> — singleton root, <span class="code-inline">HN0#root</span></li>
+          <li><span class="code-inline">hn1</span> — business tenant (partner)</li>
+          <li><span class="code-inline">hn2</span> — company; carries the schema definition</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Schema-defined subtree (hn3–hn9+)</h3>
+        <ul>
+          <li>Semantics are declared by the company schema</li>
+          <li>Different companies → completely different tree shapes</li>
+          <li>Level-skipping allowed if schema declares the edge</li>
+          <li>Sensors can attach at any schema-declared level</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Node identity</h3>
+        <ul>
+          <li>Id format: <span class="code-inline">HN&lt;n&gt;#&lt;int&gt;</span></li>
+          <li>Integer is unique <em>within</em> a level, not globally</li>
+          <li>Full identity = level + integer pair</li>
+          <li>Each level has its own monotonic counter</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 4: USER TYPES ==================== -->
+<div class="slide">
+  <span class="tag access">Access Control</span>
+  <h2>User Types &amp; Permissions</h2>
+  <p class="subtitle">Permissions are structural — they follow the graph</p>
+  <div class="two-col wide-left" style="flex:1;align-items:stretch">
+    <div class="col">
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th>Role</th>
+            <th>Entry point</th>
+            <th>Can do</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="pill admin">Platform Admin</span></td>
+            <td>hn0 (root)</td>
+            <td>Full access — all partners, companies, users</td>
+          </tr>
+          <tr>
+            <td><span class="pill admin">Partner Admin</span></td>
+            <td>hn1</td>
+            <td>Manage companies in their partner; create company admins</td>
+          </tr>
+          <tr>
+            <td><span class="pill admin">Company Admin</span></td>
+            <td>hn2</td>
+            <td>Add/delete nodes, define schema, manage users</td>
+          </tr>
+          <tr>
+            <td><span class="pill write">Write User</span></td>
+            <td>hn3+ (configured)</td>
+            <td>Edit <strong>metadata</strong> on accessible nodes — cannot restructure</td>
+          </tr>
+          <tr>
+            <td><span class="pill read">Read User</span></td>
+            <td>hn3+ (configured)</td>
+            <td>Read-only view of nodes &amp; measurements in sub-graph</td>
+          </tr>
+          <tr>
+            <td><span class="pill block">Blocked</span></td>
+            <td>—</td>
+            <td>Node (and subtree) is invisible — e.g. restricted lab</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="outcome-box info-box" style="margin-top:8px">
+        <p style="font-size:16px;color:var(--muted)"><strong style="color:var(--text)">Inheritance:</strong> permissions flow top-down from the entry-point node unless explicitly overridden on a specific node.</p>
+      </div>
+      <div class="outcome-box ok-box" style="margin-top:4px">
+        <p style="font-size:16px;color:var(--muted)"><strong style="color:var(--text)">Field-level access</strong> (CEDAR rules) is available but generally not needed — graph-level permissions are sufficient for most cases.</p>
+      </div>
+    </div>
+    <div class="diagram" style="align-self:stretch">
+      <svg viewBox="0 0 320 400" width="100%" height="100%">
+        <defs>
+          <marker id="p-arr" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+            <path d="M0,0 L7,2.5 L0,5" fill="var(--muted)"/>
+          </marker>
+        </defs>
+
+        <!-- root node -->
+        <circle cx="160" cy="30" r="24" fill="rgba(108,140,255,0.2)" stroke="var(--accent)" stroke-width="2"/>
+        <text x="160" y="34" text-anchor="middle" fill="var(--accent)" font-size="11" font-weight="700">root</text>
+        <text x="220" y="20" fill="var(--red)" font-size="10" font-weight="600">Platform</text>
+        <text x="220" y="32" fill="var(--red)" font-size="10" font-weight="600">Admin</text>
+
+        <line x1="160" y1="54" x2="100" y2="94" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#p-arr)"/>
+        <line x1="160" y1="54" x2="220" y2="94" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#p-arr)"/>
+
+        <!-- partner nodes -->
+        <circle cx="90"  cy="115" r="22" fill="rgba(167,139,250,0.15)" stroke="var(--purple)" stroke-width="1.5"/>
+        <text x="90"  y="119" text-anchor="middle" fill="var(--purple)" font-size="10" font-weight="600">hn1</text>
+        <circle cx="230" cy="115" r="22" fill="rgba(167,139,250,0.15)" stroke="var(--purple)" stroke-width="1.5"/>
+        <text x="230" y="119" text-anchor="middle" fill="var(--purple)" font-size="10" font-weight="600">hn1</text>
+        <text x="10"  y="112" fill="var(--purple)" font-size="9" font-weight="600">Partner</text>
+        <text x="10"  y="124" fill="var(--purple)" font-size="9" font-weight="600">Admin</text>
+
+        <line x1="90"  y1="137" x2="70"  y2="177" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#p-arr)"/>
+        <line x1="90"  y1="137" x2="130" y2="177" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#p-arr)"/>
+
+        <!-- company nodes -->
+        <circle cx="60"  cy="200" r="22" fill="rgba(45,212,191,0.15)" stroke="var(--teal)" stroke-width="1.5"/>
+        <text x="60"  y="204" text-anchor="middle" fill="var(--teal)" font-size="10" font-weight="600">hn2</text>
+        <circle cx="140" cy="200" r="22" fill="rgba(45,212,191,0.15)" stroke="var(--teal)" stroke-width="1.5"/>
+        <text x="140" y="204" text-anchor="middle" fill="var(--teal)" font-size="10" font-weight="600">hn2</text>
+        <text x="175" y="197" fill="var(--teal)" font-size="9" font-weight="600">Company</text>
+        <text x="175" y="209" fill="var(--teal)" font-size="9" font-weight="600">Admin</text>
+
+        <line x1="60"  y1="222" x2="60"  y2="262" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#p-arr)"/>
+        <line x1="140" y1="222" x2="100" y2="262" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#p-arr)"/>
+        <line x1="140" y1="222" x2="160" y2="262" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#p-arr)"/>
+
+        <!-- hn3 nodes -->
+        <circle cx="50"  cy="285" r="20" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.5"/>
+        <text x="50"  y="289" text-anchor="middle" fill="var(--yellow)" font-size="9">hn3</text>
+        <circle cx="100" cy="285" r="20" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.5"/>
+        <text x="100" y="289" text-anchor="middle" fill="var(--yellow)" font-size="9">hn3</text>
+        <circle cx="160" cy="285" r="20" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.5"/>
+        <text x="160" y="289" text-anchor="middle" fill="var(--yellow)" font-size="9">hn3</text>
+
+        <!-- write user entry point -->
+        <circle cx="100" cy="285" r="20" fill="none" stroke="var(--yellow)" stroke-width="3"/>
+        <text x="188" y="278" fill="var(--yellow)" font-size="9" font-weight="600">Write user</text>
+        <text x="188" y="290" fill="var(--yellow)" font-size="9">entry point →</text>
+        <line x1="183" y1="285" x2="124" y2="285" stroke="var(--yellow)" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#p-arr)"/>
+
+        <!-- sensors -->
+        <line x1="50"  y1="305" x2="50"  y2="335" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#p-arr)"/>
+        <line x1="100" y1="305" x2="90"  y2="335" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#p-arr)"/>
+        <line x1="100" y1="305" x2="110" y2="335" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#p-arr)"/>
+        <line x1="160" y1="305" x2="160" y2="335" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#p-arr)"/>
+
+        <circle cx="50"  cy="350" r="14" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="50"  y="354" text-anchor="middle" fill="var(--green)" font-size="8">sen</text>
+        <circle cx="90"  cy="350" r="14" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="90"  y="354" text-anchor="middle" fill="var(--green)" font-size="8">sen</text>
+        <circle cx="110" cy="350" r="14" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="110" y="354" text-anchor="middle" fill="var(--green)" font-size="8">sen</text>
+        <circle cx="160" cy="350" r="14" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="160" y="354" text-anchor="middle" fill="var(--green)" font-size="8">sen</text>
+
+        <!-- blocked node overlay -->
+        <circle cx="160" cy="285" r="20" fill="rgba(139,143,163,0.2)" stroke="var(--muted)" stroke-width="2" stroke-dasharray="4 3"/>
+        <line x1="145" y1="270" x2="175" y2="300" stroke="var(--muted)" stroke-width="2"/>
+        <line x1="175" y1="270" x2="145" y2="300" stroke="var(--muted)" stroke-width="2"/>
+        <text x="188" y="310" fill="var(--muted)" font-size="9">Blocked node</text>
+        <text x="188" y="322" fill="var(--muted)" font-size="9">(invisible)</text>
+        <line x1="183" y1="312" x2="183" y2="290" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#p-arr)"/>
+
+        <!-- read user annotation -->
+        <text x="240" y="350" fill="var(--green)" font-size="9" font-weight="600">Read user</text>
+        <text x="240" y="362" fill="var(--green)" font-size="9">sees sensors</text>
+        <text x="240" y="374" fill="var(--green)" font-size="9">below entry</text>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 5: SCHEMA ==================== -->
+<div class="slide">
+  <span class="tag domain">Per-Company Schema</span>
+  <h2>Schema — One Model, Many Shapes</h2>
+  <p class="subtitle">Each hn2 company owns a schema that governs its entire subtree independently</p>
+  <div class="two-col" style="flex:1;align-items:stretch">
+    <div class="col">
+      <div class="card">
+        <h3>Schema declares</h3>
+        <ul>
+          <li><strong>Edges</strong> — allowed parent→child pairs with label, min/max cardinality</li>
+          <li><strong>Metadata fields</strong> per level — typed, required or optional</li>
+          <li><strong>Sensor levels</strong> — which levels may have sensors attached</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Typical property management schema</h3>
+        <div style="font-family:'JetBrains Mono','Fira Code',monospace;font-size:11px;color:var(--text);line-height:1.7;margin-top:8px">
+          <span style="color:var(--muted)">hn2</span> → <span style="color:var(--yellow)">hn3</span> <span style="color:var(--muted)">"property"</span> (min:1)<br>
+          <span style="color:var(--muted)">hn2</span> → <span style="color:var(--yellow)">hn3</span> <span style="color:var(--muted)">"group"</span><br>
+          <span style="color:var(--yellow)">hn3</span> → <span style="color:var(--orange)">hn4</span> <span style="color:var(--muted)">"building"</span><br>
+          <span style="color:var(--orange)">hn4</span> → <span style="color:var(--red)">hn5</span> <span style="color:var(--muted)">"floor"</span><br>
+          <span style="color:var(--red)">hn5</span>  → <span style="color:var(--green)">sensor</span><br><br>
+          <span style="color:var(--teal)">hn3 metadata:</span><br>
+          &nbsp;&nbsp;<span style="color:var(--muted)">address</span>: string, required<br>
+          &nbsp;&nbsp;<span style="color:var(--muted)">lat</span>: float, required<br>
+          &nbsp;&nbsp;<span style="color:var(--muted)">lon</span>: float, required
+        </div>
+      </div>
+      <div class="card">
+        <h3>Typical industrial schema</h3>
+        <div style="font-family:'JetBrains Mono','Fira Code',monospace;font-size:11px;color:var(--text);line-height:1.7;margin-top:8px">
+          <span style="color:var(--muted)">hn2</span> → <span style="color:var(--yellow)">hn3</span> <span style="color:var(--muted)">"site"</span><br>
+          <span style="color:var(--yellow)">hn3</span> → <span style="color:var(--orange)">hn4</span> <span style="color:var(--muted)">"machine-room"</span><br>
+          <span style="color:var(--yellow)">hn3</span> → <span style="color:var(--green)">sensor</span> <span style="color:var(--muted)">(skip!)</span><br><br>
+          <span style="color:var(--teal)">hn3 metadata:</span><br>
+          &nbsp;&nbsp;<span style="color:var(--muted)">site_id</span>: string, required<br>
+          &nbsp;&nbsp;<span style="color:var(--muted)">capacity_kw</span>: float
+        </div>
+      </div>
+    </div>
+    <div class="diagram" style="align-self:stretch">
+      <svg viewBox="0 0 340 400" width="100%" height="100%">
+        <defs>
+          <marker id="s-arr" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+            <path d="M0,0 L6,2.5 L0,5" fill="var(--muted)"/>
+          </marker>
+          <marker id="s-arr-y" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+            <path d="M0,0 L6,2.5 L0,5" fill="var(--yellow)"/>
+          </marker>
+          <marker id="s-arr-o" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+            <path d="M0,0 L6,2.5 L0,5" fill="var(--orange)"/>
+          </marker>
+        </defs>
+
+        <!-- Company A (left) -->
+        <text x="80" y="18" text-anchor="middle" fill="var(--teal)" font-size="12" font-weight="700">Company A</text>
+        <text x="80" y="30" text-anchor="middle" fill="var(--muted)" font-size="9">property mgmt schema</text>
+
+        <rect x="30" y="40" width="100" height="30" rx="5" fill="rgba(45,212,191,0.15)" stroke="var(--teal)" stroke-width="1.5"/>
+        <text x="80" y="59" text-anchor="middle" fill="var(--teal)" font-size="11" font-weight="600">hn2 — Co A</text>
+
+        <line x1="50" y1="70" x2="50" y2="108" stroke="var(--yellow)" stroke-width="1.5" marker-end="url(#s-arr-y)"/>
+        <line x1="80" y1="70" x2="80" y2="108" stroke="var(--yellow)" stroke-width="1.5" marker-end="url(#s-arr-y)"/>
+        <text x="100" y="92" fill="var(--yellow)" font-size="8">property</text>
+        <text x="30"  y="92" fill="var(--muted)"  font-size="8">group</text>
+
+        <rect x="20" y="112" width="60" height="26" rx="4" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.2"/>
+        <text x="50" y="129" text-anchor="middle" fill="var(--yellow)" font-size="10">hn3</text>
+        <rect x="55" y="112" width="50" height="26" rx="4" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.2"/>
+        <text x="80" y="129" text-anchor="middle" fill="var(--yellow)" font-size="10">hn3</text>
+
+        <line x1="50" y1="138" x2="50" y2="168" stroke="var(--orange)" stroke-width="1.5" marker-end="url(#s-arr-o)"/>
+        <text x="60" y="158" fill="var(--orange)" font-size="8">building</text>
+        <rect x="20" y="172" width="60" height="26" rx="4" fill="rgba(251,146,60,0.1)" stroke="var(--orange)" stroke-width="1.2"/>
+        <text x="50" y="189" text-anchor="middle" fill="var(--orange)" font-size="10">hn4</text>
+
+        <line x1="50" y1="198" x2="50" y2="228" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#s-arr)"/>
+        <rect x="20" y="232" width="60" height="26" rx="4" fill="rgba(248,113,113,0.1)" stroke="var(--red)" stroke-width="1.2"/>
+        <text x="50" y="249" text-anchor="middle" fill="var(--red)" font-size="10">hn5 floor</text>
+
+        <line x1="50" y1="258" x2="50" y2="285" stroke="var(--green)" stroke-width="1.5" marker-end="url(#s-arr)"/>
+        <circle cx="50" cy="298" r="13" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="50" y="302" text-anchor="middle" fill="var(--green)" font-size="9">sen</text>
+
+        <!-- Divider -->
+        <line x1="170" y1="0" x2="170" y2="400" stroke="var(--border)" stroke-width="1" stroke-dasharray="6 4"/>
+
+        <!-- Company B (right) -->
+        <text x="260" y="18" text-anchor="middle" fill="var(--teal)" font-size="12" font-weight="700">Company B</text>
+        <text x="260" y="30" text-anchor="middle" fill="var(--muted)" font-size="9">industrial schema</text>
+
+        <rect x="210" y="40" width="100" height="30" rx="5" fill="rgba(45,212,191,0.15)" stroke="var(--teal)" stroke-width="1.5"/>
+        <text x="260" y="59" text-anchor="middle" fill="var(--teal)" font-size="11" font-weight="600">hn2 — Co B</text>
+
+        <line x1="260" y1="70" x2="260" y2="108" stroke="var(--yellow)" stroke-width="1.5" marker-end="url(#s-arr-y)"/>
+        <text x="272" y="92" fill="var(--yellow)" font-size="8">site</text>
+
+        <rect x="225" y="112" width="70" height="26" rx="4" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.5"/>
+        <text x="260" y="129" text-anchor="middle" fill="var(--yellow)" font-size="10">hn3 site</text>
+
+        <!-- level-skip to sensor -->
+        <line x1="248" y1="138" x2="220" y2="178" stroke="var(--green)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#s-arr)"/>
+        <text x="196" y="164" fill="var(--green)" font-size="8">direct</text>
+        <text x="196" y="175" fill="var(--green)" font-size="8">sensor</text>
+
+        <line x1="272" y1="138" x2="285" y2="168" stroke="var(--orange)" stroke-width="1.5" marker-end="url(#s-arr-o)"/>
+        <text x="290" y="158" fill="var(--orange)" font-size="8">machine</text>
+        <text x="290" y="169" fill="var(--orange)" font-size="8">room</text>
+
+        <rect x="255" y="172" width="70" height="26" rx="4" fill="rgba(251,146,60,0.1)" stroke="var(--orange)" stroke-width="1.2"/>
+        <text x="290" y="189" text-anchor="middle" fill="var(--orange)" font-size="10">hn4</text>
+
+        <circle cx="218" cy="195" r="13" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="218" y="199" text-anchor="middle" fill="var(--green)" font-size="9">sen</text>
+
+        <line x1="290" y1="198" x2="290" y2="225" stroke="var(--green)" stroke-width="1.5" marker-end="url(#s-arr)"/>
+        <circle cx="275" cy="238" r="13" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="275" y="242" text-anchor="middle" fill="var(--green)" font-size="9">sen</text>
+        <circle cx="305" cy="238" r="13" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="305" y="242" text-anchor="middle" fill="var(--green)" font-size="9">sen</text>
+
+        <!-- key insight box -->
+        <rect x="185" y="300" width="145" height="70" rx="6" fill="rgba(108,140,255,0.08)" stroke="var(--accent)" stroke-width="1"/>
+        <text x="257" y="320" text-anchor="middle" fill="var(--accent)" font-size="10" font-weight="700">Two companies →</text>
+        <text x="257" y="336" text-anchor="middle" fill="var(--accent)" font-size="10" font-weight="700">two independent</text>
+        <text x="257" y="352" text-anchor="middle" fill="var(--accent)" font-size="10" font-weight="700">tree shapes</text>
+        <text x="257" y="366" text-anchor="middle" fill="var(--muted)" font-size="9">same node model</text>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 6: DATA PIPELINE ==================== -->
+<div class="slide">
+  <span class="tag pipeline">Data Pipeline</span>
+  <h2>The Measurement Pipeline</h2>
+  <p class="subtitle">All data through one unified hose — source-specific logic isolated in parsers</p>
+  <div style="flex:1;display:flex;flex-direction:column;gap:20px">
+    <div class="diagram" style="flex:1">
+      <svg viewBox="0 0 860 300" width="100%" height="100%">
+        <defs>
+          <marker id="pip-arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <path d="M0,0 L8,3 L0,6" fill="var(--muted)"/>
+          </marker>
+          <marker id="pip-arr-g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <path d="M0,0 L8,3 L0,6" fill="var(--green)"/>
+          </marker>
+          <marker id="pip-arr-a" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <path d="M0,0 L8,3 L0,6" fill="var(--accent)"/>
+          </marker>
+          <marker id="pip-arr-y" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <path d="M0,0 L8,3 L0,6" fill="var(--yellow)"/>
+          </marker>
+        </defs>
+
+        <!-- Sources -->
+        <rect x="10"  y="30" width="90" height="26" rx="4" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.2"/>
+        <text x="55"  y="47" text-anchor="middle" fill="var(--green)" font-size="10">IoT Devices</text>
+        <rect x="10"  y="70" width="90" height="26" rx="4" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.2"/>
+        <text x="55"  y="87" text-anchor="middle" fill="var(--green)" font-size="10">Physical Meter</text>
+        <rect x="10" y="110" width="90" height="26" rx="4" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.2"/>
+        <text x="55" y="127" text-anchor="middle" fill="var(--green)" font-size="10">File Upload</text>
+        <rect x="10" y="150" width="90" height="26" rx="4" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.2"/>
+        <text x="55" y="167" text-anchor="middle" fill="var(--green)" font-size="10">External API</text>
+
+        <line x1="100"  y1="43" x2="135"  y2="97" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#pip-arr)"/>
+        <line x1="100"  y1="83" x2="135"  y2="98" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#pip-arr)"/>
+        <line x1="100" y1="123" x2="135"  y2="99" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#pip-arr)"/>
+        <line x1="100" y1="163" x2="135" y2="100" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#pip-arr)"/>
+
+        <!-- Parsers -->
+        <rect x="135" y="70" width="80" height="60" rx="6" fill="rgba(167,139,250,0.12)" stroke="var(--purple)" stroke-width="1.5"/>
+        <text x="175" y="96"  text-anchor="middle" fill="var(--purple)" font-size="11" font-weight="600">Parsers</text>
+        <text x="175" y="112" text-anchor="middle" fill="var(--muted)"  font-size="9">(per source)</text>
+        <text x="175" y="124" text-anchor="middle" fill="var(--muted)"  font-size="9">→ SensorRecord</text>
+
+        <line x1="215" y1="100" x2="255" y2="100" stroke="var(--purple)" stroke-width="1.5" marker-end="url(#pip-arr)"/>
+
+        <!-- Kinesis -->
+        <rect x="255" y="74" width="90" height="52" rx="6" fill="rgba(108,140,255,0.12)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="300" y="96"  text-anchor="middle" fill="var(--accent)" font-size="12" font-weight="700">Kinesis</text>
+        <text x="300" y="112" text-anchor="middle" fill="var(--muted)"  font-size="9">stream</text>
+        <text x="300" y="123" text-anchor="middle" fill="var(--muted)"  font-size="9">buffer</text>
+
+        <line x1="345" y1="100" x2="385" y2="100" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#pip-arr-a)"/>
+
+        <!-- Flink -->
+        <rect x="385" y="60" width="100" height="80" rx="8" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="2"/>
+        <text x="435" y="86"  text-anchor="middle" fill="var(--yellow)" font-size="12" font-weight="700">Flink</text>
+        <text x="435" y="102" text-anchor="middle" fill="var(--muted)"  font-size="9">parse → split</text>
+        <text x="435" y="116" text-anchor="middle" fill="var(--muted)"  font-size="9">enrich</text>
+        <text x="435" y="130" text-anchor="middle" fill="var(--muted)"  font-size="9">resample</text>
+
+        <!-- Flink → raw -->
+        <line x1="485" y1="80" x2="545" y2="55" stroke="var(--yellow)" stroke-width="1.5" marker-end="url(#pip-arr-y)"/>
+        <!-- Flink → logical -->
+        <line x1="485" y1="120" x2="545" y2="145" stroke="var(--yellow)" stroke-width="1.5" marker-end="url(#pip-arr-y)"/>
+
+        <!-- raw_data -->
+        <rect x="545" y="30" width="130" height="50" rx="6" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.5"/>
+        <text x="610" y="53" text-anchor="middle" fill="var(--green)" font-size="11" font-weight="600">raw_data</text>
+        <text x="610" y="68" text-anchor="middle" fill="var(--muted)" font-size="9">Iceberg / S3 Tables</text>
+
+        <!-- logical_meter_data -->
+        <rect x="545" y="120" width="140" height="50" rx="6" fill="rgba(108,140,255,0.12)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="615" y="143" text-anchor="middle" fill="var(--accent)" font-size="11" font-weight="600">logical_meter_data</text>
+        <text x="615" y="158" text-anchor="middle" fill="var(--muted)" font-size="9">Iceberg / S3 Tables</text>
+
+        <!-- hourly glue -->
+        <line x1="615" y1="170" x2="615" y2="210" stroke="var(--orange)" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#pip-arr)"/>
+        <text x="628" y="196" fill="var(--orange)" font-size="9">hourly</text>
+        <text x="628" y="207" fill="var(--orange)" font-size="9">Glue job</text>
+
+        <!-- measurements_aggregate -->
+        <rect x="545" y="215" width="150" height="50" rx="6" fill="rgba(251,146,60,0.1)" stroke="var(--orange)" stroke-width="1.5"/>
+        <text x="620" y="238" text-anchor="middle" fill="var(--orange)" font-size="11" font-weight="600">measurements_aggregate</text>
+        <text x="620" y="253" text-anchor="middle" fill="var(--muted)" font-size="9">DynamoDB — fast queries</text>
+
+        <!-- EMS arrow -->
+        <line x1="695" y1="240" x2="740" y2="220" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#pip-arr)"/>
+        <line x1="695" y1="55"  x2="740" y2="90"  stroke="var(--muted)" stroke-width="1.2" marker-end="url(#pip-arr)"/>
+        <rect x="740" y="80" width="100" height="80" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="790" y="110" text-anchor="middle" fill="var(--text)"  font-size="11" font-weight="600">EMS</text>
+        <text x="790" y="126" text-anchor="middle" fill="var(--muted)" font-size="9">Dashboards</text>
+        <text x="790" y="140" text-anchor="middle" fill="var(--muted)" font-size="9">Alarms</text>
+        <text x="790" y="154" text-anchor="middle" fill="var(--muted)" font-size="9">Reports</text>
+
+        <!-- meter-identity -->
+        <rect x="385" y="195" width="110" height="40" rx="5" fill="rgba(45,212,191,0.08)" stroke="var(--teal)" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="440" y="213" text-anchor="middle" fill="var(--teal)" font-size="10" font-weight="600">meter-identity</text>
+        <text x="440" y="227" text-anchor="middle" fill="var(--muted)" font-size="8">DynamoDB lookup</text>
+        <line x1="440" y1="195" x2="440" y2="155" stroke="var(--teal)" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#pip-arr)"/>
+      </svg>
+    </div>
+    <div class="three-col" style="flex:0 0 auto">
+      <div class="outcome-box ok-box">
+        <p style="font-size:13px"><strong style="color:var(--green)">Append-only</strong> — rows are never updated, only appended with <span class="code-inline">ingested_time</span>. Consumers take MAX.</p>
+      </div>
+      <div class="outcome-box info-box">
+        <p style="font-size:13px"><strong style="color:var(--accent)">Common error handling</strong> across all sources. Parser errors are isolated — one bad source doesn't block others.</p>
+      </div>
+      <div class="outcome-box" style="border-left:3px solid var(--yellow)">
+        <p style="font-size:13px"><strong style="color:var(--yellow)"><a href="../docs/system-design-presentation.html">→ Full pipeline deep-dive</a></strong> — 16 scenarios, error handling, Iceberg schema, late data recomputation.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 7: CONCLUSION ==================== -->
+<div class="slide">
+  <span class="tag arch">Conclusion</span>
+  <h2>Key Takeaways</h2>
+  <p class="subtitle">Simplicity through principled thinking — not through restriction</p>
+  <div class="three-col" style="flex:1">
+    <div class="col" style="gap:12px">
+      <div class="card" style="border-top:2px solid var(--teal)">
+        <h3>Graph-first model</h3>
+        <ul>
+          <li>Hierarchy = DAG; access = sub-graph entry-point</li>
+          <li>Sensors are leaf nodes — no special cases</li>
+          <li>One model covers all customer shapes</li>
+          <li>Per-company schema → zero cross-tenant bleed</li>
+        </ul>
+      </div>
+      <div class="card" style="border-top:2px solid var(--accent)">
+        <h3>Extensible by design</h3>
+        <ul>
+          <li>Add a new node type → update schema, no code change</li>
+          <li>New metadata field → schema update, validated at write</li>
+          <li>New company shape → new hn2 schema, independent</li>
+        </ul>
+      </div>
+    </div>
+    <div class="col" style="gap:12px">
+      <div class="card" style="border-top:2px solid var(--green)">
+        <h3>Performance &amp; cost</h3>
+        <ul>
+          <li>DynamoDB adjacency list — sub-ms traversals, no joins</li>
+          <li>All Lambdas — no long-running servers</li>
+          <li>No synchronous call takes &gt; a few seconds</li>
+          <li>Reports as async background jobs</li>
+        </ul>
+      </div>
+      <div class="card" style="border-top:2px solid var(--yellow)">
+        <h3>Pipeline simplicity</h3>
+        <ul>
+          <li>One data hose — all sources, common error handling</li>
+          <li>Append-only, event-sourced — no UPDATE/DELETE</li>
+          <li>Data enrichment in Flink — never blocks user requests</li>
+        </ul>
+      </div>
+    </div>
+    <div class="col" style="gap:12px">
+      <div class="card" style="border-top:2px solid var(--purple)">
+        <h3>Operations</h3>
+        <ul>
+          <li>2–3 true microservices + a few helpers</li>
+          <li>Regional by design — deploy anywhere in minutes</li>
+          <li>All queries isolated — one user's report can't slow others</li>
+        </ul>
+      </div>
+      <div class="diagram" style="min-height:120px;flex:1">
+        <svg viewBox="0 0 220 140" width="100%" height="100%">
+          <!-- before / after comparison -->
+          <text x="55" y="18" text-anchor="middle" fill="var(--red)" font-size="11" font-weight="700">Before</text>
+          <rect x="10" y="25" width="90" height="20" rx="3" fill="rgba(248,113,113,0.1)" stroke="var(--red)" stroke-width="1"/>
+          <rect x="10" y="50" width="90" height="20" rx="3" fill="rgba(248,113,113,0.1)" stroke="var(--red)" stroke-width="1"/>
+          <rect x="10" y="75" width="90" height="20" rx="3" fill="rgba(248,113,113,0.1)" stroke="var(--red)" stroke-width="1"/>
+          <rect x="10" y="100" width="90" height="20" rx="3" fill="rgba(248,113,113,0.1)" stroke="var(--red)" stroke-width="1"/>
+          <text x="55" y="39"  text-anchor="middle" fill="var(--muted)" font-size="9">Hierarchy service</text>
+          <text x="55" y="64"  text-anchor="middle" fill="var(--muted)" font-size="9">Meter service</text>
+          <text x="55" y="89"  text-anchor="middle" fill="var(--muted)" font-size="9">User service</text>
+          <text x="55" y="114" text-anchor="middle" fill="var(--muted)" font-size="9">+ many more…</text>
+
+          <text x="155" y="18" text-anchor="middle" fill="var(--green)" font-size="11" font-weight="700">After</text>
+          <rect x="115" y="25" width="90" height="30" rx="3" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.5"/>
+          <rect x="115" y="62" width="90" height="30" rx="3" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.5"/>
+          <rect x="115" y="99" width="90" height="20" rx="3" fill="rgba(74,222,128,0.08)" stroke="var(--green)" stroke-width="1" stroke-dasharray="3 2"/>
+          <text x="160" y="44"  text-anchor="middle" fill="var(--green)" font-size="10">Hierarchy (Lambda)</text>
+          <text x="160" y="81"  text-anchor="middle" fill="var(--green)" font-size="10">DAQ Pipeline</text>
+          <text x="160" y="113" text-anchor="middle" fill="var(--muted)" font-size="9">helpers (Lambda)</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /deck -->
+
+<div class="nav-hint"><kbd>←</kbd> <kbd>→</kbd> to navigate &nbsp;·&nbsp; <kbd>Space</kbd> next</div>
+<div class="slide-number" id="slide-num"></div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  let cur = 0;
+
+  function show(n) {
+    slides[cur].classList.remove('active');
+    cur = (n + slides.length) % slides.length;
+    slides[cur].classList.add('active');
+    document.getElementById('slide-num').textContent = (cur + 1) + ' / ' + slides.length;
+  }
+
+  show(0);
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); show(cur + 1); }
+    if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')                    { e.preventDefault(); show(cur - 1); }
+  });
+
+  document.getElementById('deck').addEventListener('click', e => {
+    if (e.clientX > window.innerWidth / 2) show(cur + 1);
+    else show(cur - 1);
+  });
+
+  function scaleDeck() {
+    const deck = document.getElementById('deck');
+    const scale = Math.min(window.innerWidth / 1600, window.innerHeight / 900);
+    deck.style.transform = `scale(${scale})`;
+  }
+  scaleDeck();
+  window.addEventListener('resize', scaleDeck);
+</script>
+</body>
+</html>
