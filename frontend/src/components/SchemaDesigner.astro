@@ -120,7 +120,8 @@
 
 
 <style>
-  .sd-dialog { width: min(1100px, 94vw); border: none; border-radius: 12px; padding: 0; }
+  /* override the global `dialog { max-width: 480px }`, which otherwise squishes the 3-column grid */
+  .sd-dialog { width: min(1100px, 94vw); max-width: min(1100px, 94vw); border: none; border-radius: 12px; padding: 0; }
   .sd-root { padding: 1rem 1.25rem 1.25rem; }
   .sd-grid { display: grid; grid-template-columns: 180px 1fr 300px; gap: 14px; align-items: start; margin-top: 1rem; }
   .sd-pane { border: 1px solid var(--border-medium, #d4d9e0); border-radius: 8px; background: #fff; color: #1d2330; margin-bottom: 14px; }

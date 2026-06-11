@@ -16,7 +16,7 @@ export default (Alpine) => {
   // Two-panel schema designer (markup + styles live in components/SchemaDesigner.astro).
   Alpine.data("schemaDesigner", () => ({
     state: defaultPreset(),
-    sel: "building",
+    sel: "company",
     newType: "",
     result: { ok: true, errors: [], depth: 0 },
     FIELD_TYPES,
