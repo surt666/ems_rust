@@ -1,0 +1,238 @@
+---
+// Two-panel type-graph schema designer. Self-contained Alpine component.
+// Emits a `schema-updated` CustomEvent on Done with { schema, valid }.
+---
+<dialog id="schema-designer-dialog" class="sd-dialog"
+  _="on click if event.target == me then call me.close()">
+  <div x-data="schemaDesigner" class="sd-root">
+    <div class="dialog-header">
+      <h2>Design hierarchy schema</h2>
+      <button type="button" class="btn-close" _="on click call #schema-designer-dialog.close()">&times;</button>
+    </div>
+
+    <div class="sd-grid">
+      <!-- Types -->
+      <div class="sd-pane">
+        <h4>Types</h4>
+        <div class="sd-body">
+          <template x-for="t in state.types" :key="t">
+            <div class="sd-typeitem" :class="{ sel: t === sel }" @click="sel = t">
+              <span x-text="t"></span>
+              <span class="sd-rm" x-show="t !== 'company'" @click.stop="removeType(t)">&times;</span>
+            </div>
+          </template>
+          <div class="sd-addrow">
+            <input type="text" x-model="newType" placeholder="new type" @keydown.enter.prevent="addType()" />
+            <button type="button" class="btn-primary" @click="addType()">＋</button>
+          </div>
+          <p class="sd-hint">"company" is the fixed root.</p>
+        </div>
+      </div>
+
+      <!-- Editor -->
+      <div class="sd-pane">
+        <h4>Editing: <span x-text="sel"></span></h4>
+        <div class="sd-body">
+          <div class="sd-grp">
+            <div class="sd-lbl">Allowed children</div>
+            <template x-for="x in childCandidates()" :key="x.name">
+              <label class="sd-chk" :class="{ disabled: x.disabled }">
+                <input type="checkbox" :checked="x.on" :disabled="x.disabled"
+                  @change="toggleChild(sel, x.name, $event.target.checked)" />
+                <span x-text="x.name"></span>
+                <span class="sd-why" x-show="x.disabled">(cycle)</span>
+              </label>
+            </template>
+            <span class="sd-hint" x-show="childCandidates().length === 0">no other types yet</span>
+          </div>
+
+          <div class="sd-grp">
+            <div class="sd-lbl">Metadata fields</div>
+            <table class="sd-md">
+              <template x-for="(f, i) in (state.metadata[sel] || [])" :key="i">
+                <tr>
+                  <td><input type="text" :value="f.name" @change="setField(i,'name',$event.target.value)" /></td>
+                  <td>
+                    <select @change="setField(i,'type',$event.target.value)">
+                      <template x-for="ft in FIELD_TYPES" :key="ft">
+                        <option :value="ft" :selected="ft === f.type" x-text="ft"></option>
+                      </template>
+                    </select>
+                  </td>
+                  <td><label class="sd-chk"><input type="checkbox" :checked="f.required" @change="setField(i,'required',$event.target.checked)" /> req</label></td>
+                  <td class="sd-constraints">
+                    <template x-if="f.type === 'number' || f.type === 'integer'">
+                      <span>
+                        <input type="number" placeholder="min" :value="f.min" @change="setField(i,'min',numOrUndef($event.target.value))" />
+                        <input type="number" placeholder="max" :value="f.max" @change="setField(i,'max',numOrUndef($event.target.value))" />
+                      </span>
+                    </template>
+                    <template x-if="f.type === 'string'">
+                      <span>
+                        <input type="number" placeholder="min len" :value="f.min_len" @change="setField(i,'min_len',numOrUndef($event.target.value))" />
+                        <input type="number" placeholder="max len" :value="f.max_len" @change="setField(i,'max_len',numOrUndef($event.target.value))" />
+                      </span>
+                    </template>
+                    <template x-if="f.type === 'enum'">
+                      <input type="text" placeholder="a, b, c" :value="(f.one_of || []).join(', ')" @change="setField(i,'one_of',csv($event.target.value))" />
+                    </template>
+                  </td>
+                  <td><span class="sd-rm" @click="removeField(i)">&times;</span></td>
+                </tr>
+              </template>
+            </table>
+            <button type="button" class="btn-secondary" @click="addField()">＋ add field</button>
+          </div>
+
+          <div class="sd-grp">
+            <div class="sd-lbl">Sensors</div>
+            <label class="sd-chk">
+              <input type="checkbox" :checked="state.sensors.includes(sel)" @change="toggleSensor(sel,$event.target.checked)" />
+              sensors may attach to <b x-text="sel"></b> nodes
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Validation + preview -->
+      <div class="sd-side">
+        <div class="sd-pane">
+          <h4>Validation</h4>
+          <div class="sd-body">
+            <template x-if="result.ok"><p class="sd-ok">✓ valid (depth <span x-text="result.depth"></span> ≤ 7, deepest node hn<span x-text="2 + result.depth"></span>)</p></template>
+            <template x-for="e in result.errors" :key="e"><p class="sd-bad" x-text="'✗ ' + e"></p></template>
+          </div>
+        </div>
+        <div class="sd-pane">
+          <h4>DAG preview</h4>
+          <div class="sd-body sd-dag" x-text="dagPreview()"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dialog-footer">
+      <p class="sd-hint" x-show="!result.ok">Fix the issues above to enable Done.</p>
+      <button type="button" class="btn-secondary" @click="reset()">Clear</button>
+      <button type="button" class="btn-warning" :disabled="!result.ok" @click="done()">Done</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+  import { defaultPreset, blankState, serialize, validate, wouldCycle, FIELD_TYPES } from "../lib/schema-serialize.js";
+
+  document.addEventListener("alpine:init", () => {
+    window.Alpine.data("schemaDesigner", () => ({
+      state: defaultPreset(),
+      sel: "building",
+      newType: "",
+      result: { ok: true, errors: [], depth: 0 },
+      FIELD_TYPES,
+
+      init() { this.revalidate(); },
+      revalidate() { this.result = validate(this.state); },
+
+      numOrUndef(v) { const n = parseFloat(v); return Number.isNaN(n) ? undefined : n; },
+      csv(v) { return v.split(",").map((s) => s.trim()).filter(Boolean); },
+
+      childCandidates() {
+        return this.state.types
+          .filter((x) => x !== this.sel && x !== "company")
+          .map((x) => {
+            const on = (this.state.edges[this.sel] || []).includes(x);
+            const dis = !on && wouldCycle(this.state.edges, this.sel, x);
+            return { name: x, on, disabled: dis };
+          });
+      },
+      addType() {
+        const v = this.newType.trim().toLowerCase();
+        this.newType = "";
+        if (!v || this.state.types.includes(v) || v === "partner") return;
+        this.state.types.push(v);
+        this.state.edges[v] = [];
+        this.sel = v;
+        this.revalidate();
+      },
+      removeType(t) {
+        if (t === "company") return;
+        this.state.types = this.state.types.filter((x) => x !== t);
+        delete this.state.edges[t];
+        delete this.state.metadata[t];
+        for (const k of Object.keys(this.state.edges)) this.state.edges[k] = this.state.edges[k].filter((x) => x !== t);
+        this.state.sensors = this.state.sensors.filter((x) => x !== t);
+        if (this.sel === t) this.sel = "company";
+        this.revalidate();
+      },
+      toggleChild(p, c, on) {
+        const set = new Set(this.state.edges[p] || []);
+        on ? set.add(c) : set.delete(c);
+        this.state.edges[p] = [...set];
+        this.revalidate();
+      },
+      toggleSensor(t, on) {
+        const set = new Set(this.state.sensors);
+        on ? set.add(t) : set.delete(t);
+        this.state.sensors = [...set];
+        this.revalidate();
+      },
+      addField() {
+        const t = this.sel;
+        const a = (this.state.metadata[t] = this.state.metadata[t] || []);
+        a.push({ name: "field" + (a.length + 1), type: "string", required: false });
+        this.revalidate();
+      },
+      removeField(i) {
+        this.state.metadata[this.sel].splice(i, 1);
+        if (!this.state.metadata[this.sel].length) delete this.state.metadata[this.sel];
+        this.revalidate();
+      },
+      setField(i, k, v) {
+        this.state.metadata[this.sel][i][k] = v;
+        this.revalidate();
+      },
+      dagPreview() {
+        return this.state.types
+          .map((x) => { const ch = this.state.edges[x] || []; return ch.length ? `${x} → ${ch.join(", ")}` : null; })
+          .filter(Boolean)
+          .join("\n");
+      },
+      reset() { this.state = blankState(); this.sel = "company"; this.revalidate(); },
+      done() {
+        this.revalidate();
+        if (!this.result.ok) return;
+        window.dispatchEvent(new CustomEvent("schema-updated", { detail: { schema: serialize(this.state), valid: true } }));
+        document.getElementById("schema-designer-dialog").close();
+      },
+    }));
+  });
+</script>
+
+<style>
+  .sd-dialog { width: min(1100px, 94vw); border: none; border-radius: 12px; padding: 0; }
+  .sd-root { padding: 1rem 1.25rem 1.25rem; }
+  .sd-grid { display: grid; grid-template-columns: 180px 1fr 300px; gap: 14px; align-items: start; margin-top: 1rem; }
+  .sd-pane { border: 1px solid var(--border-medium, #d4d9e0); border-radius: 8px; background: #fff; color: #1d2330; margin-bottom: 14px; }
+  .sd-pane h4 { margin: 0; padding: 8px 12px; border-bottom: 1px solid #e3e8ef; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #5b6675; background: #f3f6fa; border-radius: 8px 8px 0 0; }
+  .sd-body { padding: 10px 12px; }
+  .sd-typeitem { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; color: #1d2330; }
+  .sd-typeitem:hover { background: #f3f6fa; }
+  .sd-typeitem.sel { background: #2563eb; color: #fff; }
+  .sd-rm { opacity: .6; font-weight: bold; padding: 0 4px; cursor: pointer; }
+  .sd-rm:hover { opacity: 1; color: #dc2626; }
+  .sd-addrow { display: flex; gap: 6px; margin-top: 8px; }
+  .sd-addrow input { flex: 1; }
+  .sd-root input[type=text], .sd-root input[type=number], .sd-root select { border: 1px solid #d4d9e0; border-radius: 6px; padding: 5px 7px; font-size: 13px; color: #1d2330; background: #fff; }
+  .sd-grp { margin-bottom: 16px; }
+  .sd-lbl { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+  .sd-chk { display: inline-flex; align-items: center; gap: 5px; margin: 3px 10px 3px 0; font-size: 13px; }
+  .sd-chk.disabled { color: #9aa3b0; }
+  .sd-why { font-size: 11px; font-style: italic; }
+  .sd-md { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .sd-md td { padding: 3px 4px; }
+  .sd-md input[type=text] { width: 96px; }
+  .sd-md input[type=number] { width: 64px; }
+  .sd-dag { font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre; color: #334; }
+  .sd-hint { font-size: 11px; color: #5b6675; margin-top: 4px; }
+  .sd-ok { color: #16a34a; font-size: 13px; }
+  .sd-bad { color: #dc2626; font-size: 13px; margin: 2px 0; }
+</style>

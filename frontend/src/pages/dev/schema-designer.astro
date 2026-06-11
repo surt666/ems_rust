@@ -1,0 +1,16 @@
+---
+// Unauthenticated harness for testing the SchemaDesigner in isolation (Playwright).
+// Not linked from anywhere; renders the designer and exposes the emitted schema on window.
+import SchemaDesigner from "../../components/SchemaDesigner.astro";
+---
+<html>
+  <head><title>SchemaDesigner harness</title></head>
+  <body>
+    <button id="open" onclick="document.getElementById('schema-designer-dialog').showModal()">open</button>
+    <SchemaDesigner />
+    <script>
+      window.__lastSchema = null;
+      window.addEventListener("schema-updated", (e) => { window.__lastSchema = e.detail.schema; });
+    </script>
+  </body>
+</html>
