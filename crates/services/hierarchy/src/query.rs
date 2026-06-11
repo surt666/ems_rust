@@ -712,6 +712,10 @@ where
     // is_multi: false because level is always fixed (only one child level in v2).
     let is_multi = false;
 
+    // Creating a company (hn2) requires designing its hierarchy schema; surface
+    // the schema designer in the form for that case only.
+    let needs_schema = allowed_types.iter().any(|t| t == "company");
+
     // Build metadata inputs.
     let metadata_inputs = build_metadata_inputs(&metadata_fields);
 
@@ -722,6 +726,7 @@ where
         &label_options,
         metadata_inputs,
         is_multi,
+        needs_schema,
     ))
 }
 

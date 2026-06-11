@@ -214,6 +214,17 @@ fn form_fields_to_json(fields: &[(String, String)]) -> Value {
         }
     }
 
+    // A schema posted as a JSON string (the add-child schema designer serialises
+    // the type graph into a hidden `schema_json` field, since a nested object
+    // can't ride in flat form encoding) becomes the `schema` object that
+    // `Command::AddNode` expects. A malformed/empty value is dropped, leaving the
+    // command without a schema so the backend rejects it with a clear error.
+    if let Some(Value::String(s)) = map.remove("schema_json") {
+        if let Ok(parsed) = serde_json::from_str::<Value>(&s) {
+            map.insert("schema".to_string(), parsed);
+        }
+    }
+
     Value::Object(map)
 }
 
@@ -339,6 +350,29 @@ mod tests {
         let v = form_to_command_json(form);
         assert!(v.get("allowed").is_none());
         assert!(v.get("blocked").is_none());
+    }
+
+    /// A `schema_json` string field is parsed into the `schema` object.
+    #[test]
+    fn form_schema_json_becomes_schema_object() {
+        // The schema JSON contains no &, =, %, or + so it survives form parsing unencoded.
+        let schema = r#"{"version":2,"edges":{"company":{"building":{}}},"metadata":{},"sensors":["building"]}"#;
+        let form = format!("action=add_node&data.name=Acme&schema_json={}", schema);
+        let v = form_to_command_json(&form);
+        assert_eq!(v["action"], json!("add_node"));
+        assert!(v.get("schema_json").is_none(), "raw schema_json should be consumed");
+        assert_eq!(v["schema"]["version"], json!(2));
+        assert_eq!(v["schema"]["edges"]["company"]["building"], json!({}));
+        assert_eq!(v["schema"]["sensors"], json!(["building"]));
+    }
+
+    /// A malformed `schema_json` is dropped (command then lacks a schema and is rejected downstream).
+    #[test]
+    fn form_bad_schema_json_dropped() {
+        let form = "action=add_node&schema_json=not-json";
+        let v = form_to_command_json(form);
+        assert!(v.get("schema").is_none());
+        assert!(v.get("schema_json").is_none());
     }
 
     /// Dotted sub-keys (e.g. `data.formula.kind`) become nested objects.

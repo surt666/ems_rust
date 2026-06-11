@@ -9,6 +9,7 @@ import { ClientRouter } from "astro:transitions";
 import Navbar from "../components/Navbar.astro";
 import Hierarchy from "../components/Hierarchy.astro";
 import Breadcrumb from "../components/Breadcrumb.astro";
+import SchemaDesigner from "../components/SchemaDesigner.astro";
 
 import "../styles/global.css";
 
@@ -79,8 +80,22 @@ import "../styles/global.css";
           <main class="main-content main-area">
             <slot />
           </main>
+
+          <!-- Shared hierarchy-schema designer dialog (opened from the add-child
+               form when creating a company). The listener below writes its
+               serialised schema into the add-child form's hidden field. -->
+          <SchemaDesigner />
         </body>
 </html>
+
+<script is:inline>
+  window.addEventListener("schema-updated", (e) => {
+    const field = document.getElementById("add-child-schema-json");
+    if (field) field.value = JSON.stringify(e.detail.schema);
+    const status = document.getElementById("add-child-schema-status");
+    if (status) status.textContent = "✓ skema defineret";
+  });
+</script>
 
 <script>
 	import 'invokers/compatible';

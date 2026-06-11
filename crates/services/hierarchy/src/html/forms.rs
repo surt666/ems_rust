@@ -72,6 +72,8 @@ pub fn render_timezones() -> Markup {
 ///   (empty slice → no label row; single item → disabled selector + hidden input)
 /// - `metadata_inputs`: pre-rendered form rows for metadata fields
 /// - `is_level_choice`: when false the level selector is disabled (only one allowed)
+/// - `needs_schema`: when true (creating a company), render the "Design skema"
+///   button + hidden `schema_json` field that the schema designer populates
 pub fn render_add_child_form(
     parent_id_str: &str,
     chosen_level: &str,
@@ -79,6 +81,7 @@ pub fn render_add_child_form(
     label_options: &[(&str, bool)],  // (value, is_selected)
     metadata_inputs: Markup,
     is_multi_level: bool,
+    needs_schema: bool,
 ) -> Markup {
     let after_request_js = "if(event.detail.elt.id === \
         'add-child-form' && \
@@ -171,6 +174,21 @@ pub fn render_add_child_form(
                 input type="text" name="data.name" required class="form-input";
                 span class="required" { "*" }
             }
+            // Schema designer (company only): button opens the shared designer
+            // dialog; its serialised schema is written into this hidden field by
+            // the Layout's schema-updated listener.
+            @if needs_schema {
+                div class="form-row" {
+                    label class="form-label" data-i18n="node.schema" { "Hierarki-skema" }
+                    button type="button" class="btn-secondary"
+                        onclick="document.getElementById('schema-designer-dialog').showModal()"
+                    {
+                        "Design skema" span class="required" { "*" }
+                    }
+                    span id="add-child-schema-status" style="margin-left:.5rem;color:var(--text-muted);" { "(ikke defineret)" }
+                }
+                input type="hidden" name="schema_json" id="add-child-schema-json";
+            }
             // Schema-driven metadata fields
             (metadata_inputs)
         }
@@ -247,6 +265,7 @@ mod tests {
             &[("property", true)],
             html! {},
             false,
+            false,
         );
         let html = markup.into_string();
         assert!(html.contains(r#"name="action""#), "action input missing");
@@ -254,5 +273,24 @@ mod tests {
         assert!(html.contains(r#"name="data.parent_id""#), "parent_id input missing");
         assert!(html.contains(r#"name="data.name""#), "name input missing");
         assert!(html.contains(r#"name="data.label""#), "label input missing");
+        // No schema designer for a non-company child.
+        assert!(!html.contains(r#"name="schema_json""#), "schema field should be absent");
+    }
+
+    #[test]
+    fn render_add_child_form_company_has_schema_designer() {
+        let markup = render_add_child_form(
+            "HN1#10001",
+            "HN2",
+            &[("HN2", true)],
+            &[("company", true)],
+            html! {},
+            false,
+            true, // needs_schema
+        );
+        let html = markup.into_string();
+        assert!(html.contains(r#"name="schema_json""#), "hidden schema_json field missing");
+        assert!(html.contains("schema-designer-dialog"), "designer open hook missing");
+        assert!(html.contains("Design skema"), "design-schema button missing");
     }
 }

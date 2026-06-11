@@ -1,7 +1,6 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import MasterData from '../components/MasterData.astro';
-import SchemaDesigner from '../components/SchemaDesigner.astro';
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 ---
@@ -408,8 +407,6 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 				</button>
 			</div>
 		</dialog>
-
-		<SchemaDesigner />
 
 		<!-- Delete Confirmation Dialog -->
 		<dialog x-ref="deleteDialog" @click.self="closeDeleteDialog()">
