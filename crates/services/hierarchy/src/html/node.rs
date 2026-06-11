@@ -164,6 +164,18 @@ pub fn render_node(
     // the golden has the name input as readonly, so we keep readonly for Admin too.
     let name_readonly = !can_write || is_admin;
 
+    // Admin-only delete: removes this node (and subtree), then returns to the
+    // parent's node view (full reload so the sidebar tree refreshes).
+    let delete_vals = format!(r#"{{"action": "delete_node", "id": "{}"}}"#, nid_str);
+    let after_delete_url = match &node.parent {
+        Some(p) if !p.is_root() => format!("/node/?id={}", p.to_string().replace('#', "%23")),
+        _ => "/main".to_string(),
+    };
+    let after_delete_js = format!(
+        "if(event.detail.successful){{window.location.href='{}';}}",
+        after_delete_url
+    );
+
     let metadata_section = match &node.metadata {
         serde_json::Value::Object(m) if m.is_empty() => {
             html! {
@@ -199,6 +211,22 @@ pub fn render_node(
                     div class="form-row-2col" {
                         label class="form-label" data-i18n="common.name" { "Name" }
                         input type="text" id="name" value=(node.name) readonly[name_readonly] class="form-input";
+                    }
+                }
+                @if is_admin {
+                    div style="display: grid; grid-template-columns: 1fr auto; align-items: center; margin-bottom: 1rem;" {
+                        div {}
+                        button type="button" class="btn-danger"
+                            data-hx-post="/hierarchy/command"
+                            data-hx-vals=(delete_vals)
+                            data-hx-request=(r#"{"noHeaders": true}"#)
+                            data-hx-swap="none"
+                            data-hx-confirm="Slet denne node og alt under den?"
+                            hx-on--after-request=(after_delete_js)
+                            data-i18n="node.delete"
+                        {
+                            "Slet"
+                        }
                     }
                 }
                 @if is_admin && allow_children {
@@ -577,6 +605,7 @@ mod tests {
         let html = render_node(&node, false, true, Some(CognitoGroup::Admin)).into_string();
         assert!(html.contains("add-child-dialog"), "Admin should show add-child-dialog");
         assert!(html.contains("Add child"), "Admin should show Add child button");
+        assert!(html.contains("delete_node"), "Admin should show the delete button");
     }
 
     /// Admin but the node type allows no children (leaf) → no add-child block.
@@ -592,6 +621,8 @@ mod tests {
             !html.contains("Add child"),
             "Admin on a leaf type should NOT show Add child button"
         );
+        // Delete is gated on admin only (not allow_children) — still present on a leaf.
+        assert!(html.contains("delete_node"), "Admin on a leaf should still show delete");
     }
 
     /// Writer: no add-child block, no add-sensor; name input is editable (no readonly).
@@ -614,6 +645,10 @@ mod tests {
         assert!(
             !html.contains("Add sensor"),
             "Writer should NOT have Add sensor button"
+        );
+        assert!(
+            !html.contains("delete_node"),
+            "Writer should NOT have the delete button"
         );
         // Name input should be editable (no readonly attribute).
         assert!(
