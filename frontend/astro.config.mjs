@@ -7,7 +7,7 @@ import htmx from "astro-htmx";
 import hyperscript from "astro-hyperscript";
 
 export default defineConfig({
-  integrations: [alpinejs(), react(), htmx(), hyperscript()],
+  integrations: [alpinejs({ entrypoint: "/src/alpine-entrypoint" }), react(), htmx(), hyperscript()],
   image: {
     service: { entrypoint: 'astro/assets/services/noop' }
   },
