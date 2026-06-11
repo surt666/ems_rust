@@ -1,9 +1,5 @@
 //! DynamoDB operations for sensors.
 //!
-//! Mirrors `services/hierarchy/lib/repo/dynamo.ml` sensor operations:
-//! `query_active_sensor`, `query_sensor_ids`, `query_sensors_under_path`,
-//! `transact_replace`, `delete_sensor`.
-//!
 //! Sensor id allocation lives in `node.rs` (`allocate_and_put_sensor`).
 
 use std::collections::HashMap;
@@ -26,7 +22,7 @@ const ACTIVE_SK_PREFIX: &str = "active#";
 const HAS_SENSOR_SK_PREFIX: &str = "has_sensor#";
 
 // ---------------------------------------------------------------------------
-// get_active_sensor — mirrors dynamo.ml `query_active_sensor`
+// get_active_sensor
 //
 // Query pk = sensor_id, sk begins_with "active#", limit 1, descending.
 // Returns the most recent active row decoded as a Sensor.
@@ -62,7 +58,7 @@ pub async fn get_active_sensor(
 }
 
 // ---------------------------------------------------------------------------
-// list_sensor_ids — mirrors dynamo.ml `query_sensor_ids`
+// list_sensor_ids
 //
 // Query pk = parent_id, sk begins_with "has_sensor#".
 // Strips the prefix to recover the SensorId.
@@ -105,7 +101,7 @@ pub async fn list_sensor_ids(
 }
 
 // ---------------------------------------------------------------------------
-// list_sensors_under_path — mirrors dynamo.ml `query_sensors_under_path`
+// list_sensors_under_path
 //
 // Uses the GSI: gsi1pk = "S", gsi1sk begins_with path_prefix.
 // Returns only active rows (sk starts with "active#").
@@ -163,7 +159,7 @@ pub async fn list_sensors_under_path(
 }
 
 // ---------------------------------------------------------------------------
-// transact_replace — mirrors dynamo.ml `transact_replace`
+// transact_replace
 //
 // Atomic swap: delete old active → put old as history → put new active.
 // ---------------------------------------------------------------------------
@@ -175,9 +171,9 @@ pub async fn transact_replace(
     new_sensor: &Sensor,
 ) -> Result<(), RepositoryError> {
     // Build the old active item to derive its pk/sk.
-    // The OCaml creates a throwaway sensor with old `created` and new fields,
-    // encoding it with `~active:true` to get the sk, then with `~active:false`
-    // for the history item.
+    // Create a throwaway sensor with old `created` and new fields, encoding it
+    // with `active:true` to get the sk, then with `active:false` for the
+    // history item.
     let old_sensor = Sensor::builder()
         .id(new_sensor.id)
         .created(old_created)
@@ -245,7 +241,7 @@ pub async fn transact_replace(
 }
 
 // ---------------------------------------------------------------------------
-// delete_sensor — mirrors dynamo.ml `delete_sensor`
+// delete_sensor
 //
 // 1. Query all rows under the sensor's pk partition (active + history).
 // 2. Delete each row individually.

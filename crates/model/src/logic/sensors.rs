@@ -1,4 +1,4 @@
-//! Sensors logic — ported 1:1 from `services/hierarchy/lib/logic/sensors.ml`.
+//! Sensors logic.
 //!
 //! All repository operations are injected as async closures; no traits are used.
 
@@ -26,7 +26,7 @@ fn validation_err(msg: impl Into<String>) -> RepositoryError {
     }])
 }
 
-/// Construct a synthetic `NotFound` for a sensor (mirrors OCaml `sensor_not_found`).
+/// Construct a synthetic `NotFound` for a sensor.
 fn sensor_not_found(id: SensorId) -> RepositoryError {
     RepositoryError::NotFound(NodeId::make(crate::domain::ids::Level::Hn9, id.id()))
 }
@@ -71,8 +71,6 @@ fn walk_refs_sync(
 
 /// Check whether `formula` introduces a cycle, given `self_id` is the sensor
 /// whose formula is being set.
-///
-/// Mirrors OCaml `has_cycle`.
 fn has_cycle(
     self_id: SensorId,
     formula: &Formula,
@@ -89,8 +87,6 @@ fn has_cycle(
 // ---------------------------------------------------------------------------
 
 /// Attach a new sensor to `parent`.
-///
-/// Mirrors OCaml `Sensors.attach`.
 #[allow(clippy::too_many_arguments)]
 pub async fn attach<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut>(
     parent: NodeId,
@@ -169,7 +165,7 @@ where
     }))
     .await?;
 
-    // Post-allocation cycle check (mirrors OCaml: check AFTER allocation, roll
+    // Post-allocation cycle check (check AFTER allocation, roll
     // back via delete_sensor if cycle detected).
     let sensor_id = s.id;
     let formula_for_check = formula.clone();
@@ -187,8 +183,6 @@ where
 // ---------------------------------------------------------------------------
 
 /// List all active sensors attached to `parent`.
-///
-/// Mirrors OCaml `Sensors.list_active`.
 pub async fn list_active<FLS, FLSFut, FGA>(
     parent: NodeId,
     list_sensor_ids: FLS,
@@ -212,8 +206,6 @@ where
 // ---------------------------------------------------------------------------
 
 /// Fetch the active sensor for `id`, or error if absent.
-///
-/// Mirrors OCaml `Sensors.get_active`.
 pub fn get_active<FGA>(id: SensorId, get_active_sensor: FGA) -> Result<Sensor, RepositoryError>
 where
     FGA: FnOnce(SensorId) -> Option<Sensor>,
@@ -227,8 +219,6 @@ where
 // ---------------------------------------------------------------------------
 
 /// Replace the daq device on a sensor (bumps `created`).
-///
-/// Mirrors OCaml `Sensors.replace_device`.
 pub async fn replace_device<FGA, FRD, FRDFut>(
     sensor_id: SensorId,
     new_daq_id: String,
@@ -262,8 +252,6 @@ where
 // ---------------------------------------------------------------------------
 
 /// Update the formula on an existing sensor.
-///
-/// Mirrors OCaml `Sensors.set_formula`.
 pub async fn set_formula<FGA, FRD, FRDFut>(
     sensor_id: SensorId,
     formula: Formula,
@@ -304,8 +292,6 @@ where
 // ---------------------------------------------------------------------------
 
 /// Evaluate the formula of a sensor, resolving referenced sensors recursively.
-///
-/// Mirrors OCaml `Sensors.evaluate`.
 pub fn evaluate<FGA, FGR>(
     id: SensorId,
     get_active_sensor: &FGA,
@@ -348,8 +334,6 @@ where
 // ---------------------------------------------------------------------------
 
 /// List all active sensors in the same HN2 company subtree as `parent`.
-///
-/// Mirrors OCaml `Sensors.list_under_company`.
 pub async fn list_under_company<FGN, FGNFut, FLSP, FLSPFut>(
     parent: NodeId,
     get_node: FGN,
@@ -377,8 +361,6 @@ where
 
 /// Extract the path prefix up to and including the HN2 (company) segment,
 /// with a trailing `|`.
-///
-/// Mirrors OCaml `company_prefix_of_path`.
 fn company_prefix_of_path(path: &str) -> Option<String> {
     let segs: Vec<&str> = path.split('|').filter(|s| !s.is_empty()).collect();
     let mut acc: Vec<&str> = Vec::new();
@@ -397,7 +379,7 @@ fn company_prefix_of_path(path: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — port of `services/hierarchy/test/test_logic_sensors.ml`
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -578,7 +560,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: attach_happy  (OCaml: `attach_happy`)
+    // Test: attach_happy
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -596,7 +578,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: rejects_level_not_allowed  (OCaml: `rejects_level_not_allowed`)
+    // Test: rejects_level_not_allowed
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -696,7 +678,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: list_active_returns_attached  (OCaml: `list_active_returns_attached`)
+    // Test: list_active_returns_attached
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -722,7 +704,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: list_active_empty_when_none  (OCaml: `list_active_empty_when_none`)
+    // Test: list_active_empty_when_none
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -743,7 +725,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: get_active_happy  (OCaml: `get_active_happy`)
+    // Test: get_active_happy
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -766,7 +748,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: get_active_unknown  (OCaml: `get_active_unknown`)
+    // Test: get_active_unknown
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -787,7 +769,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: replace_device_promotes_new  (OCaml: `replace_device_promotes_new`)
+    // Test: replace_device_promotes_new
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -821,7 +803,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: replace_unknown_fails  (OCaml: `replace_unknown_fails`)
+    // Test: replace_unknown_fails
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -848,7 +830,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: attach_detects_self_cycle  (OCaml: `attach_detects_self_cycle`)
+    // Test: attach_detects_self_cycle
     //
     // Attach a sensor normally, then call set_formula with a formula that
     // references its own id (cycle).
@@ -908,7 +890,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: evaluate_identity  (OCaml: `evaluate_identity`)
+    // Test: evaluate_identity
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -927,7 +909,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: evaluate_composite  (OCaml: `evaluate_composite`)
+    // Test: evaluate_composite
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -959,7 +941,6 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // Test: evaluate_zero_short_circuits_reading
-    //       (OCaml: `evaluate_zero_short_circuits_reading`)
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -980,7 +961,6 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // Test: list_under_company_scopes_to_hn2
-    //       (OCaml: `list_under_company_scopes_to_hn2`)
     // -----------------------------------------------------------------------
 
     #[tokio::test]

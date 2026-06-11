@@ -13,13 +13,13 @@ pub enum RepositoryError {
     NotFoundUser(UserId),
     #[error("conflict: {0}")]
     Conflict(String),
-    /// Schema missing — mirrors OCaml `Errors.Schema_missing`.
+    /// Schema missing.
     #[error("no hn2 schema found above {0}")]
     SchemaMissing(NodeId),
-    /// Validation failure — mirrors OCaml `Errors.Validation`.
+    /// Validation failure.
     #[error("validation failed")]
     Validation(Vec<MetadataError>),
-    /// Bad request — mirrors OCaml `Errors.Bad_request`.
+    /// Bad request.
     #[error("{0}")]
     BadRequest(String),
     /// AWS SDK call failed.

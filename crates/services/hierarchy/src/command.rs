@@ -1,8 +1,4 @@
 //! Command ADT + form→JSON normaliser.
-//!
-//! Faithfully ported from `services/hierarchy/lib/handler.ml`
-//! (`form_to_command_json`, `parse_form`, `handle_command`) and
-//! `services/hierarchy/lib/api/api_command.ml` (field shapes for each variant).
 
 use serde::Deserialize;
 use serde_json::{Value, Map};
@@ -13,8 +9,7 @@ use serde_json::{Value, Map};
 
 /// Every command accepted by `POST /hierarchy/command`.
 ///
-/// Serde-tagged on `"action"` (snake_case); field names match exactly what
-/// each `run_*` function in `api_command.ml` reads.
+/// Serde-tagged on `"action"` (snake_case).
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Command {
@@ -124,8 +119,7 @@ pub enum Command {
 }
 
 impl Command {
-    /// Resolve the effective user identifier for `DeleteUser`, mirroring
-    /// `run_delete_user` in `api_command.ml`:
+    /// Resolve the effective user identifier for `DeleteUser`:
     /// prefer `email`, fall back to `id`.
     #[cfg(test)]
     pub fn delete_user_id(&self) -> Option<&str> {
@@ -141,12 +135,11 @@ impl Command {
 // ---------------------------------------------------------------------------
 
 /// The form keys that should be collected into JSON arrays rather than scalars.
-/// Mirrors `array_keys` in `handler.ml`.
 const ARRAY_KEYS: &[&str] = &["allowed", "blocked"];
 
 /// Parse an `application/x-www-form-urlencoded` body into `(key, value)` pairs,
 /// URL-decoding both key and value.  `+` is treated as a space (standard form
-/// encoding).  Mirrors `parse_form` in `handler.ml`.
+/// encoding).
 fn parse_form(body: &str) -> Vec<(String, String)> {
     body.split('&')
         .filter_map(|pair| {
@@ -169,7 +162,6 @@ fn parse_form(body: &str) -> Vec<(String, String)> {
 }
 
 /// URL-decode a percent-encoded string, treating `+` as space.
-/// Mirrors `url_decode` in `handler.ml`.
 fn url_decode(s: &str) -> String {
     // urlencoding::decode handles %XX; we pre-replace '+' → ' ' first.
     let with_spaces = s.replace('+', " ");
@@ -179,13 +171,11 @@ fn url_decode(s: &str) -> String {
 }
 
 /// Strip the `"data."` prefix from a form key if present.
-/// Mirrors `norm` / `strip_prefix "data."` in `handler.ml`.
 fn strip_data_prefix(k: &str) -> &str {
     k.strip_prefix("data.").unwrap_or(k)
 }
 
-/// Build a `serde_json::Value` (always `Value::Object`) from flat form fields,
-/// mirroring `form_to_command_json` in `handler.ml`:
+/// Build a `serde_json::Value` (always `Value::Object`) from flat form fields:
 ///
 /// 1. Strip the `"data."` prefix from every key.
 /// 2. Collect repeated `allowed` / `blocked` keys into JSON arrays.
@@ -228,8 +218,8 @@ fn form_fields_to_json(fields: &[(String, String)]) -> Value {
 }
 
 /// Recursively set a dotted-path key inside a JSON object map.
-/// Mirrors `set_path` in `handler.ml` (scalars only; no metadata coercion at
-/// this layer — the `Command` ADT uses `String` fields everywhere).
+/// Scalars only; no metadata coercion at this layer — the `Command` ADT uses
+/// `String` fields everywhere.
 fn set_path(map: &mut Map<String, Value>, path: &[&str], value: &str) {
     match path {
         [] => {}
@@ -257,7 +247,7 @@ fn set_path(map: &mut Map<String, Value>, path: &[&str], value: &str) {
 // ---------------------------------------------------------------------------
 
 /// Detect whether a body string looks like JSON (starts with `{` or `[`,
-/// ignoring leading whitespace).  Mirrors `looks_like_json` in `handler.ml`.
+/// ignoring leading whitespace).
 fn looks_like_json(s: &str) -> bool {
     s.trim_start()
         .chars()
@@ -271,8 +261,6 @@ fn looks_like_json(s: &str) -> bool {
 /// If the content-type is `application/x-www-form-urlencoded` *or* the body
 /// doesn't look like JSON (HTMX default `text/plain` workaround), normalise
 /// the body via `form_to_command_json` first; otherwise parse directly as JSON.
-///
-/// Mirrors `handle_command` in `handler.ml`.
 pub fn parse_command(
     content_type: Option<&str>,
     body: &str,
@@ -305,7 +293,7 @@ mod tests {
 
     // ---- form_to_command_json -----------------------------------------------
 
-    /// Port of the OCaml `form_to_command_json` behaviour:
+    /// `form_to_command_json` behaviour:
     /// repeated `data.allowed`/`data.blocked` become arrays; `data.` prefix stripped;
     /// percent-encoding decoded.
     #[test]
@@ -431,7 +419,7 @@ mod tests {
         assert_eq!(cmd.delete_user_id(), Some("bob@ex"));
     }
 
-    /// `delete_user` with `id` fallback (the OCaml `"U#..."` form).
+    /// `delete_user` with `id` fallback (the `"U#..."` form).
     #[test]
     fn parse_delete_user_by_id() {
         let json = json!({ "action": "delete_user", "id": "U#bob@ex" });

@@ -4,8 +4,6 @@
 //! Enabled by the `testing` cargo feature (or inside `#[cfg(test)]`).
 //! All methods are synchronous; logic-layer tests wrap them in
 //! `|x| async move { Ok(store.get_node(&x)) }` closures.
-//!
-//! Ported from `services/hierarchy/lib/repo/memory.ml`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -50,7 +48,7 @@ struct Counter {
 
 impl Counter {
     fn new() -> Self {
-        // Starting value matches OCaml `memory.ml`: `n = 10_000`.
+        // Starting value: `n = 10_000`.
         Counter { n: 10_000, live: 0 }
     }
 }
@@ -112,7 +110,7 @@ impl Store {
     }
 
     // -----------------------------------------------------------------------
-    // Clock seam — mirrors `Effects.Now`
+    // Clock seam
     // -----------------------------------------------------------------------
 
     pub fn now(&self) -> DateTime<Utc> {
@@ -120,7 +118,7 @@ impl Store {
     }
 
     // -----------------------------------------------------------------------
-    // Counter / id allocation — mirrors `allocate_node_id` / `allocate_sensor_id`
+    // Counter / id allocation
     // -----------------------------------------------------------------------
 
     fn counter_pk_node(level: Level) -> String {
@@ -165,8 +163,7 @@ impl Store {
     }
 
     // -----------------------------------------------------------------------
-    // Node operations — mirrors `Get_node`, `Put_node`, `Delete_node`,
-    //                           `Add_node`
+    // Node operations
     // -----------------------------------------------------------------------
 
     /// Fetch a node by id.  Returns `None` if absent.
@@ -220,11 +217,10 @@ impl Store {
     }
 
     // -----------------------------------------------------------------------
-    // Edge operations — mirrors `Put_edge`, `Delete_edge`,
-    //                           `List_children`, `List_child_refs`
+    // Edge operations
     // -----------------------------------------------------------------------
 
-    /// Append an edge.  Mirrors `Effects.Put_edge`.
+    /// Append an edge.
     pub fn put_edge(&self, spec: EdgeSpec) {
         self.inner.borrow_mut().edges.push(Edge {
             from_: spec.from_,
@@ -244,8 +240,6 @@ impl Store {
 
     /// List child *nodes* reachable via edges from `parent` (optionally
     /// filtered by `kind_opt`).  Missing nodes are silently skipped.
-    ///
-    /// Mirrors `Effects.List_children`.
     pub fn list_children(&self, parent: &NodeId, kind_opt: Option<&EdgeKind>) -> Vec<Node> {
         let inner = self.inner.borrow();
         let parent_s = parent.to_string();
@@ -264,8 +258,6 @@ impl Store {
 
     /// List `(child_node_id, edge_name)` pairs for all edges from `parent`
     /// (optionally filtered by `kind_opt`).
-    ///
-    /// Mirrors `Effects.List_child_refs`.
     pub fn list_child_refs(
         &self,
         parent: &NodeId,
@@ -287,17 +279,13 @@ impl Store {
     }
 
     // -----------------------------------------------------------------------
-    // Sensor operations — mirrors `Add_sensor`, `Get_active_sensor`,
-    //                             `List_sensor_ids`, `Replace_sensor_device`,
-    //                             `Delete_sensor`, `Get_sensor_reading`,
-    //                             `List_sensors_under_path`
+    // Sensor operations
     // -----------------------------------------------------------------------
 
     /// Allocate a new sensor id, call `build(id)` to get `(Sensor, edge_spec)`,
     /// store both, and return the sensor.
     ///
     /// Accepts `Fn` so the same closure can be reused across retries.
-    /// Mirrors `Effects.Add_sensor`.
     pub fn add_sensor<F>(&self, build: F) -> Sensor
     where
         F: Fn(u32) -> (Sensor, EdgeSpec),
@@ -321,8 +309,6 @@ impl Store {
 
     /// Fetch the active sensor for `id`.  Returns `None` if absent or only
     /// history rows exist.
-    ///
-    /// Mirrors `Effects.Get_active_sensor`.
     pub fn get_active_sensor(&self, id: &SensorId) -> Option<Sensor> {
         let inner = self.inner.borrow();
         inner
@@ -340,8 +326,6 @@ impl Store {
 
     /// List all sensor ids directly attached to `parent` via `Has_sensor`
     /// edges.
-    ///
-    /// Mirrors `Effects.List_sensor_ids`.
     pub fn list_sensor_ids(&self, parent: &NodeId) -> Vec<SensorId> {
         let inner = self.inner.borrow();
         let parent_s = parent.to_string();
@@ -355,8 +339,6 @@ impl Store {
 
     /// Demote the currently active sensor row whose `created` matches
     /// `old_created` to `History`, then prepend `new_sensor` as `Active`.
-    ///
-    /// Mirrors `Effects.Replace_sensor_device`.
     pub fn replace_sensor_device(
         &self,
         old_created: DateTime<Utc>,
@@ -380,8 +362,6 @@ impl Store {
 
     /// Delete a sensor: remove its row map, the `Has_sensor` edge from
     /// `parent`, and decrement the sensor counter.
-    ///
-    /// Mirrors `Effects.Delete_sensor`.
     pub fn delete_sensor(&self, sensor_id: &SensorId, parent: &NodeId) {
         let sensor_s = sensor_id.to_string();
         let parent_s = parent.to_string();
@@ -396,16 +376,12 @@ impl Store {
     }
 
     /// Always returns `None` — no reading data in the in-memory store.
-    ///
-    /// Mirrors `Effects.Get_sensor_reading`.
     #[allow(unused_variables)]
     pub fn get_sensor_reading(&self, id: &SensorId) -> Option<()> {
         None
     }
 
     /// List all active sensors whose `path` starts with `prefix`.
-    ///
-    /// Mirrors `Effects.List_sensors_under_path`.
     pub fn list_sensors_under_path(&self, prefix: &str) -> Vec<Sensor> {
         let inner = self.inner.borrow();
         inner
@@ -417,8 +393,7 @@ impl Store {
     }
 
     // -----------------------------------------------------------------------
-    // User operations — mirrors `Put_user`, `Get_user`, `List_users`,
-    //                           `Delete_user`
+    // User operations
     // -----------------------------------------------------------------------
 
     /// Insert or replace a user.
@@ -434,7 +409,7 @@ impl Store {
         self.inner.borrow().users.get(&id.to_string()).cloned()
     }
 
-    /// List all users (order unspecified, matching OCaml `Hashtbl.fold`).
+    /// List all users (order unspecified).
     pub fn list_users(&self) -> Vec<User> {
         self.inner.borrow().users.values().cloned().collect()
     }
@@ -445,14 +420,10 @@ impl Store {
     }
 
     // -----------------------------------------------------------------------
-    // Blocked / administrated lookups — mirrors `List_blocked_nodes`,
-    //                                           `List_blocked_users`,
-    //                                           `List_administrated_nodes`
+    // Blocked / administrated lookups
     // -----------------------------------------------------------------------
 
     /// List all node ids that `user_id` has blocked.
-    ///
-    /// Mirrors `Effects.List_blocked_nodes`.
     pub fn list_blocked_nodes(&self, user_id: &UserId) -> Vec<NodeId> {
         let inner = self.inner.borrow();
         let user_s = user_id.to_string();
@@ -465,8 +436,6 @@ impl Store {
     }
 
     /// List all user ids that have blocked `node_id`.
-    ///
-    /// Mirrors `Effects.List_blocked_users`.
     pub fn list_blocked_users(&self, node_id: &NodeId) -> Vec<UserId> {
         let inner = self.inner.borrow();
         let node_s = node_id.to_string();
@@ -479,8 +448,6 @@ impl Store {
     }
 
     /// List all node ids that `user_id` administrates.
-    ///
-    /// Mirrors `Effects.List_administrated_nodes`.
     pub fn list_administrated_nodes(&self, user_id: &UserId) -> Vec<NodeId> {
         let inner = self.inner.borrow();
         let user_s = user_id.to_string();

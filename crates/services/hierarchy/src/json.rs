@@ -1,10 +1,8 @@
-//! JSON (de)serialisation mirroring `services/hierarchy/lib/api/api_json.ml`.
+//! JSON (de)serialisation for the hierarchy API.
 //!
 //! This module is the single authoritative place for the JSON contract that
 //! the hierarchy API exposes.  `dispatch.rs` and `query.rs` call into here
 //! rather than duplicating the logic.
-//!
-//! All function signatures and error conditions match the OCaml source 1:1.
 
 use serde_json::{json, Value};
 
@@ -17,14 +15,11 @@ use model::domain::user::User;
 use model::domain::values::FieldType;
 
 // ---------------------------------------------------------------------------
-// error_body — mirrors `api_json.ml :: error_body` + `errors.ml :: to_code`
+// error_body
 // ---------------------------------------------------------------------------
 
 /// Build a JSON error body `{ "error": { "code": …, "message": … } }` and
-/// serialise to string.  `code` and `message` are caller-supplied, matching
-/// the OCaml `Errors.to_code` / `Errors.message` values.
-///
-/// Port of `api_json.ml :: error_body`.
+/// serialise to string.  `code` and `message` are caller-supplied.
 #[cfg(test)]
 pub fn error_body(code: &str, message: &str) -> String {
     let j = json!({
@@ -37,12 +32,10 @@ pub fn error_body(code: &str, message: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// node_ref_to_json — mirrors `api_json.ml :: node_ref_to_json`
+// node_ref_to_json
 // ---------------------------------------------------------------------------
 
 /// Serialise an `(id, name)` pair used in node-child listings.
-///
-/// Port of `api_json.ml :: node_ref_to_json`.
 pub fn node_ref_to_json(id: &NodeId, name: &str) -> Value {
     json!({
         "id":   id.to_string(),
@@ -51,12 +44,11 @@ pub fn node_ref_to_json(id: &NodeId, name: &str) -> Value {
 }
 
 // ---------------------------------------------------------------------------
-// schema_to_json / schema_of_json — mirrors `api_json.ml`
+// schema_to_json / schema_of_json
 // ---------------------------------------------------------------------------
 
 /// Serialise a `Schema` (v2) to a `serde_json::Value`.
 ///
-/// Port of `api_json.ml :: schema_to_json`.
 /// Shape: `{"version":2, "edges":{"company":{"building":{"min":1}}}, "metadata":{...}, "sensors":[...]}`
 pub fn schema_to_json(sch: &Schema) -> Value {
     let edges_obj: serde_json::Map<String, Value> = sch
@@ -104,8 +96,6 @@ pub fn schema_to_json(sch: &Schema) -> Value {
 }
 
 /// Serialise a single `FieldSpec`.
-///
-/// Mirrors `api_json.ml :: spec_j` + `field_type_json`.
 fn field_spec_to_json(fs: &FieldSpec) -> Value {
     let mut kv: serde_json::Map<String, Value> = serde_json::Map::new();
     kv.insert("required".to_string(), Value::Bool(fs.required));
@@ -153,8 +143,6 @@ fn field_spec_to_json(fs: &FieldSpec) -> Value {
 }
 
 /// Deserialise a `Schema` from a `serde_json::Value`. Only version 2 is accepted.
-///
-/// Ported from `api_json.ml :: schema_of_json`, then migrated to v2.
 pub fn schema_of_json(v: &Value) -> Result<Schema, String> {
     let kvs = as_object(v)?;
 
@@ -220,8 +208,6 @@ pub fn schema_of_json(v: &Value) -> Result<Schema, String> {
 }
 
 /// Decode a single `FieldSpec` from a JSON value.
-///
-/// Port of `api_json.ml :: decode_field_spec`.
 fn decode_field_spec(v: &Value) -> Result<FieldSpec, String> {
     let kvs = as_object(v)?;
     let typ_s = match kvs.get("type") {
@@ -264,12 +250,10 @@ fn decode_field_spec(v: &Value) -> Result<FieldSpec, String> {
 }
 
 // ---------------------------------------------------------------------------
-// node_to_json — mirrors `api_json.ml :: node_to_json`
+// node_to_json
 // ---------------------------------------------------------------------------
 
 /// Serialise a `Node` to a `serde_json::Value`.
-///
-/// Port of `api_json.ml :: node_to_json`.
 /// Keys: `id`, `name`, `parent` (null if root), `created` (RFC3339 `Z`),
 /// `metadata`; plus `schema` when present.
 pub fn node_to_json(n: &Node) -> Value {
@@ -293,12 +277,10 @@ pub fn node_to_json(n: &Node) -> Value {
 }
 
 // ---------------------------------------------------------------------------
-// formula_to_json — mirrors `api_json.ml :: formula_to_json`
+// formula_to_json
 // ---------------------------------------------------------------------------
 
 /// Serialise a `Formula` to a `serde_json::Value`.
-///
-/// Port of `api_json.ml :: formula_to_json`.
 pub fn formula_to_json(f: &Formula) -> Value {
     match f {
         Formula::Identity => json!({ "kind": "identity" }),
@@ -318,12 +300,12 @@ pub fn formula_to_json(f: &Formula) -> Value {
 }
 
 // ---------------------------------------------------------------------------
-// formula_of_json — mirrors `api_json.ml :: formula_of_json`
+// formula_of_json
 // ---------------------------------------------------------------------------
 
 /// Deserialise a `Formula` from an optional `serde_json::Value`.
 ///
-/// Port of `api_json.ml :: formula_of_json`.  Exact match with OCaml:
+/// Behaviour:
 /// - `None` or `Some(null)` → `Identity`
 /// - `Some("identity")` → `Identity`
 /// - `Some("zero")` → `Zero`
@@ -382,8 +364,6 @@ pub fn formula_of_json(v: Option<&Value>) -> Result<Formula, String> {
 /// - JSON object (`{"a": "S#1", …}`)
 /// - JSON null → empty list
 /// - A JSON-encoded string containing an object (`'{"a":"S#1"}'`)
-///
-/// Port of `api_json.ml :: parse_refs_json`.
 fn parse_refs_json(v: &Value) -> Result<Vec<(String, SensorId)>, String> {
     let kvs: Vec<(String, Value)> = match v {
         Value::Object(map) => map.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
@@ -415,12 +395,10 @@ fn parse_refs_json(v: &Value) -> Result<Vec<(String, SensorId)>, String> {
 }
 
 // ---------------------------------------------------------------------------
-// sensor_to_json — mirrors `api_json.ml :: sensor_to_json`
+// sensor_to_json
 // ---------------------------------------------------------------------------
 
 /// Serialise a `Sensor` to a `serde_json::Value`.
-///
-/// Port of `api_json.ml :: sensor_to_json`.
 pub fn sensor_to_json(s: &Sensor) -> Value {
     let unit = s.unit.as_ref().map(|u| Value::String(u.clone())).unwrap_or(Value::Null);
     let resample = s.resample_minutes.map(|v| json!(v)).unwrap_or(Value::Null);
@@ -439,12 +417,10 @@ pub fn sensor_to_json(s: &Sensor) -> Value {
 }
 
 // ---------------------------------------------------------------------------
-// user_to_json — mirrors `api_json.ml :: user_to_json`
+// user_to_json
 // ---------------------------------------------------------------------------
 
 /// Serialise a `User` to a `serde_json::Value`.
-///
-/// Port of `api_json.ml :: user_to_json`.
 pub fn user_to_json(u: &User) -> Value {
     let created = u.created.format("%Y-%m-%dT%H:%M:%SZ").to_string();
     json!({
@@ -497,7 +473,7 @@ fn opt_f64_of_json(v: &Value) -> Option<f64> {
 
 
 // ---------------------------------------------------------------------------
-// Tests — port of `services/hierarchy/test/test_api_json.ml` (13 cases)
+// Tests (13 cases)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -514,8 +490,8 @@ mod tests {
     // ------------------------------------------------------------------
     // 1. error_body_has_expected_shape
     //
-    // Port of OCaml test: creates Errors.Bad_request "boom",
-    // calls Api_json.error_body, checks code == "bad_request" and message == "boom".
+    // Test: build an error body with code "bad_request" and message "boom",
+    // checks code == "bad_request" and message == "boom".
     // ------------------------------------------------------------------
     #[test]
     fn error_body_has_expected_shape() {
@@ -530,7 +506,7 @@ mod tests {
     // ------------------------------------------------------------------
     // 2. node_to_json_has_expected_keys
     //
-    // Port of OCaml test: creates a Node at Hn4 with parent Hn3,
+    // Test: creates a Node at Hn4 with parent Hn3,
     // calls node_to_json, checks for keys id/name/parent/created/metadata.
     // ------------------------------------------------------------------
     #[test]
@@ -617,7 +593,7 @@ mod tests {
     // ------------------------------------------------------------------
     // 4. formula_of_json_default_identity
     //
-    // Port of OCaml test: formula_of_json None → Identity.
+    // Test: formula_of_json None → Identity.
     // ------------------------------------------------------------------
     #[test]
     fn formula_of_json_default_identity() {
@@ -630,7 +606,7 @@ mod tests {
     // ------------------------------------------------------------------
     // 5. formula_of_json_zero
     //
-    // Port of OCaml test: formula_of_json (Some { kind: "zero" }) → Zero.
+    // Test: formula_of_json (Some { kind: "zero" }) → Zero.
     // ------------------------------------------------------------------
     #[test]
     fn formula_of_json_zero() {
@@ -644,7 +620,7 @@ mod tests {
     // ------------------------------------------------------------------
     // 6. formula_of_json_expr_with_refs
     //
-    // Port of OCaml test: expr "abs(self - a)" with refs {"a": "S#12"}.
+    // Test: expr "abs(self - a)" with refs {"a": "S#12"}.
     // Checks ast → "abs(self - a)", refs.len() == 1.
     // ------------------------------------------------------------------
     #[test]
@@ -666,7 +642,7 @@ mod tests {
     // ------------------------------------------------------------------
     // 7. formula_of_json_refs_as_string
     //
-    // Port of OCaml test: refs given as a JSON-encoded string.
+    // Test: refs given as a JSON-encoded string.
     // ------------------------------------------------------------------
     #[test]
     fn formula_of_json_refs_as_string() {
@@ -684,7 +660,7 @@ mod tests {
     // ------------------------------------------------------------------
     // 8. formula_of_json_unbound_alias_errors
     //
-    // Port of OCaml test: expr uses "a" but refs is empty → Error.
+    // Test: expr uses "a" but refs is empty → Error.
     // ------------------------------------------------------------------
     #[test]
     fn formula_of_json_unbound_alias_errors() {
@@ -702,7 +678,7 @@ mod tests {
     // ------------------------------------------------------------------
     // 9. sensor_to_json_includes_formula
     //
-    // Port of OCaml test: sensor with formula = Zero → serialised formula.kind == "zero".
+    // Test: sensor with formula = Zero → serialised formula.kind == "zero".
     // ------------------------------------------------------------------
     #[test]
     fn sensor_to_json_includes_formula() {
@@ -725,7 +701,7 @@ mod tests {
     // ------------------------------------------------------------------
     // 10. formula_of_json_unused_ref_errors
     //
-    // Port of OCaml test: expr is "self" (no aliases), refs has "a" → Error.
+    // Test: expr is "self" (no aliases), refs has "a" → Error.
     // ------------------------------------------------------------------
     #[test]
     fn formula_of_json_unused_ref_errors() {
@@ -743,7 +719,7 @@ mod tests {
     // ------------------------------------------------------------------
     // 11. formula_of_json_implicit_expr
     //
-    // Port of OCaml test: no "kind" but has "expr" → implicit Expr.
+    // Test: no "kind" but has "expr" → implicit Expr.
     // ------------------------------------------------------------------
     #[test]
     fn formula_of_json_implicit_expr() {
@@ -760,7 +736,7 @@ mod tests {
     // ------------------------------------------------------------------
     // 12. formula_of_json_string_shorthands
     //
-    // Port of OCaml test: null→Identity; "identity"→Identity; "zero"→Zero.
+    // Test: null→Identity; "identity"→Identity; "zero"→Zero.
     // ------------------------------------------------------------------
     #[test]
     fn formula_of_json_string_shorthands() {
@@ -781,7 +757,7 @@ mod tests {
     // ------------------------------------------------------------------
     // 13. formula_json_roundtrips
     //
-    // Port of OCaml test: Formula::Expr with "abs(self - a)" → formula_to_json
+    // Test: Formula::Expr with "abs(self - a)" → formula_to_json
     // → formula_of_json → Expr with same ast/refs.
     // ------------------------------------------------------------------
     #[test]

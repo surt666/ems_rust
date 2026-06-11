@@ -11,8 +11,6 @@ use crate::domain::values::MeterType;
 
 /// A sensor attached to a hierarchy node.
 ///
-/// Ported 1:1 from `sensor.ml`.
-///
 /// `path` is a pipe-separated list of ancestor ids from root down to and
 /// including self (the `gsi1sk` attribute in DynamoDB).
 #[derive(Clone, Debug, PartialEq, TypedBuilder)]
@@ -40,7 +38,7 @@ pub struct Sensor {
 const PATH_SEP: &str = "|";
 
 /// Build the path of a sensor given the parent node's full path and the
-/// sensor id as a string.  Matches OCaml `Sensor.child_path`.
+/// sensor id as a string.
 pub fn child_path(parent_path: &str, sensor_id_str: &str) -> String {
     format!("{}{}{}", parent_path, PATH_SEP, sensor_id_str)
 }
@@ -54,7 +52,6 @@ impl Sensor {
     /// as a `NodeId`.  Sensors must always have a node parent.
     ///
     /// Panics if the path contains no valid node-id segment.
-    /// Matches OCaml `Sensor.parent_id`.
     pub fn parent_id(&self) -> NodeId {
         let parts: Vec<&str> = self
             .path
@@ -76,7 +73,7 @@ impl Sensor {
 }
 
 // ---------------------------------------------------------------------------
-// Tests (port of test_domain_sensor.ml)
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -113,7 +110,6 @@ mod tests {
             .build()
     }
 
-    /// Port of `fields_preserved`.
     #[test]
     fn fields_preserved() {
         let s = make_sample();
@@ -123,14 +119,12 @@ mod tests {
         assert_eq!(s.unit, Some("kWh".to_owned()));
     }
 
-    /// Port of `meter_type_to_string`.
     #[test]
     fn meter_type_to_string() {
         assert_eq!(MeterType::Counter.to_string(), "counter");
         assert_eq!(MeterType::Gauge.to_string(), "gauge");
     }
 
-    /// Port of `meter_type_of_string`.
     #[test]
     fn meter_type_of_string() {
         assert_eq!("counter".parse::<MeterType>(), Ok(MeterType::Counter));
@@ -138,7 +132,6 @@ mod tests {
         assert!("wat".parse::<MeterType>().is_err());
     }
 
-    /// Port of `parent_id_extracts_last_node_segment`.
     #[test]
     fn parent_id_extracts_last_node_segment() {
         let s = make_sample();

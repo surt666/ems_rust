@@ -1,9 +1,8 @@
 //! DynamoDB codec — maps domain structs ⟷ live DynamoDB item format.
 //!
-//! This is a direct port of `services/hierarchy/lib/repo/codec.ml`.  Every
-//! attribute name, encoding choice (N strings, nested-M structure, sk verbs, …)
-//! must match the OCaml reference exactly so that the Rust lambda can read and
-//! write the 8,508 live items without migration.
+//! Every attribute name and encoding choice (N strings, nested-M structure, sk
+//! verbs, …) must match the live item format exactly so that the lambda can read
+//! and write the 8,508 live items without migration.
 
 use std::collections::HashMap;
 
@@ -28,7 +27,7 @@ use crate::errors::RepositoryError;
 pub type Item = HashMap<String, AttributeValue>;
 
 // ---------------------------------------------------------------------------
-// Low-level helpers (mirrors codec.ml's `s`, `n`, `b`)
+// Low-level helpers (`s`, `n`, `b`)
 // ---------------------------------------------------------------------------
 
 fn s(v: impl Into<String>) -> AttributeValue {
@@ -43,8 +42,7 @@ fn b(v: bool) -> AttributeValue {
     AttributeValue::Bool(v)
 }
 
-/// Format a `DateTime<Utc>` as RFC3339 with `Z` suffix — matches OCaml
-/// `Ptime.to_rfc3339 ~tz_offset_s:0`.
+/// Format a `DateTime<Utc>` as RFC3339 with `Z` suffix.
 fn dt_to_rfc3339z(dt: &DateTime<Utc>) -> String {
     let s = dt.to_rfc3339();
     if let Some(stripped) = s.strip_suffix("+00:00") {
@@ -54,7 +52,7 @@ fn dt_to_rfc3339z(dt: &DateTime<Utc>) -> String {
     }
 }
 
-/// Parse an RFC3339 string; fall back to epoch on error (matches OCaml `Ptime.epoch`).
+/// Parse an RFC3339 string; fall back to epoch on error.
 fn parse_ts(s: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
@@ -62,7 +60,7 @@ fn parse_ts(s: &str) -> DateTime<Utc> {
 }
 
 // ---------------------------------------------------------------------------
-// Field-extraction helpers (mirrors codec.ml's `field`, `as_string`, …)
+// Field-extraction helpers (`field`, `as_string`, …)
 // ---------------------------------------------------------------------------
 
 fn field<'a>(item: &'a Item, k: &str) -> Result<&'a AttributeValue, RepositoryError> {
@@ -119,7 +117,7 @@ fn opt_f64_of_n(v: Option<&AttributeValue>) -> Option<f64> {
     }
 }
 
-/// OCaml `Printf.sprintf "%.17g"` — 17 significant digits, shortest representation.
+/// `%.17g` — 17 significant digits, shortest representation.
 fn format_float_g17(f: f64) -> String {
     if f.is_nan() {
         return "nan".to_string();
@@ -140,7 +138,7 @@ fn format_float_g17(f: f64) -> String {
         .unwrap_or_else(|_| format!("{}", f))
 }
 
-/// Reproduce OCaml's `%.17g`: up to 17 significant digits, no trailing zeros,
+/// Reproduce `%.17g`: up to 17 significant digits, no trailing zeros,
 /// scientific for |exp| >= 17 or exp < -4.
 fn ocaml_g17(f: f64) -> String {
     // Use 17-digit scientific, then reformat like %g
@@ -197,7 +195,7 @@ fn ocaml_g17(f: f64) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// GSI key helpers (mirrors codec.ml's node_gsi1pk / sensor_gsi1pk)
+// GSI key helpers (node_gsi1pk / sensor_gsi1pk)
 // ---------------------------------------------------------------------------
 
 fn node_gsi1pk(lvl: Level) -> String {
@@ -207,7 +205,7 @@ fn node_gsi1pk(lvl: Level) -> String {
 const SENSOR_GSI1PK: &str = "S";
 
 // ---------------------------------------------------------------------------
-// Formula encode/decode (mirrors codec.ml's expr_to_attr / formula_to_attr)
+// Formula encode/decode (expr_to_attr / formula_to_attr)
 // ---------------------------------------------------------------------------
 
 fn expr_to_av(e: &Expr) -> AttributeValue {
@@ -346,7 +344,7 @@ fn formula_of_av(v: &AttributeValue) -> Result<Formula, RepositoryError> {
                     }
                 }
             }
-            // Preserve insertion order (OCaml List.rev after fold)
+            // Preserve insertion order
             Ok(Formula::Expr { expr: ast, refs })
         }
         other => Err(RepositoryError::Codec(format!("unknown formula kind {:?}", other))),
@@ -354,7 +352,7 @@ fn formula_of_av(v: &AttributeValue) -> Result<Formula, RepositoryError> {
 }
 
 // ---------------------------------------------------------------------------
-// Schema encode/decode (mirrors codec.ml's schema_to_attr / decode_schema)
+// Schema encode/decode (schema_to_attr / decode_schema)
 // ---------------------------------------------------------------------------
 
 fn field_type_to_av(ft: &FieldType) -> AttributeValue {
@@ -410,7 +408,7 @@ fn field_type_to_av(ft: &FieldType) -> AttributeValue {
 }
 
 fn field_spec_to_av(fs: &FieldSpec) -> AttributeValue {
-    // Mirror OCaml spec_m: start with the field_type map, then add "required"
+    // spec map: start with the field_type map, then add "required"
     let inner = field_type_to_av(&fs.typ);
     match inner {
         AttributeValue::M(mut kvs) => {
@@ -581,7 +579,6 @@ pub fn schema_of_av(v: &AttributeValue) -> Result<Schema, RepositoryError> {
 // ---------------------------------------------------------------------------
 
 /// Encode a `Node` as a DynamoDB `Item`.
-/// Mirrors OCaml `node_to_item`.
 pub fn node_to_item(nd: &Node) -> Item {
     let id = nd.id.to_string();
     let mut item: Item = HashMap::new();
@@ -608,7 +605,6 @@ pub fn node_to_item(nd: &Node) -> Item {
 }
 
 /// Decode a `Node` from a DynamoDB `Item`.
-/// Mirrors OCaml `node_of_item`.
 pub fn node_of_item(item: &Item) -> Result<Node, RepositoryError> {
     let pk_s = as_s(field(item, "pk")?)?;
     let id = NodeId::parse(pk_s)
@@ -655,7 +651,7 @@ pub fn node_of_item(item: &Item) -> Result<Node, RepositoryError> {
 }
 
 /// Extract the parent `NodeId` from a path string.
-/// Mirrors OCaml `parent_from_path`: second-to-last pipe-separated segment.
+/// The second-to-last pipe-separated segment.
 fn parent_from_path(path: &str) -> Option<NodeId> {
     let parts: Vec<&str> = path.split('|').filter(|s| !s.is_empty()).collect();
     match parts.as_slice() {
@@ -665,7 +661,7 @@ fn parent_from_path(path: &str) -> Option<NodeId> {
 }
 
 // ---------------------------------------------------------------------------
-// Edge encode (mirrors codec.ml's edge_item / edge_with_anchor)
+// Edge encode (edge_item / edge_with_anchor)
 // ---------------------------------------------------------------------------
 
 /// Parameters for encoding a generic edge.
@@ -678,7 +674,6 @@ pub struct EdgeParams<'a> {
 }
 
 /// Encode a generic (user-side) edge — `administrates` / `blocked`.
-/// Mirrors OCaml `edge_item`.
 pub fn edge_to_item(p: EdgeParams<'_>) -> Item {
     let mut item: Item = HashMap::new();
     item.insert("pk".to_string(), s(p.from_));
@@ -712,7 +707,6 @@ pub struct AnchorEdgeParams<'a> {
 }
 
 /// Encode a HN-side edge (`has_<label>` / `has_sensor`).
-/// Mirrors OCaml `edge_with_anchor`.
 pub fn anchor_edge_to_item(p: AnchorEdgeParams<'_>) -> Item {
     let gsi1pk_v: String = match p.kind {
         EdgeKind::HasSensor => SENSOR_GSI1PK.to_string(),
@@ -793,7 +787,6 @@ pub fn edge_of_item(
 // ---------------------------------------------------------------------------
 
 /// Encode a `Sensor` as a DynamoDB `Item` (always as the `active` SK).
-/// Mirrors OCaml `sensor_to_item ~active:true`.
 pub fn sensor_to_item(sn: &Sensor) -> Item {
     let pk = sn.id.to_string();
     let sk = SensorSk::Active(sn.created).to_string();
@@ -821,7 +814,6 @@ pub fn sensor_to_item(sn: &Sensor) -> Item {
 }
 
 /// Decode a `Sensor` from a DynamoDB `Item`.
-/// Mirrors OCaml `sensor_of_item`.
 pub fn sensor_of_item(item: &Item) -> Result<Sensor, RepositoryError> {
     let pk_s = as_s(field(item, "pk")?)?;
     let id = SensorId::parse(pk_s)
@@ -861,7 +853,6 @@ pub fn sensor_of_item(item: &Item) -> Result<Sensor, RepositoryError> {
 // ---------------------------------------------------------------------------
 
 /// Encode a `User` as a DynamoDB `Item`.
-/// Mirrors OCaml `user_item`.
 pub fn user_to_item(u: &User) -> Item {
     let uid = u.id.to_string();
     let mut item: Item = HashMap::new();
@@ -879,7 +870,6 @@ pub fn user_to_item(u: &User) -> Item {
 }
 
 /// Decode a `User` from a DynamoDB `Item`.
-/// Mirrors OCaml `user_of_item`.
 pub fn user_of_item(item: &Item) -> Result<User, RepositoryError> {
     let pk_s = as_s(field(item, "pk")?)?;
     let id = UserId::parse(pk_s)

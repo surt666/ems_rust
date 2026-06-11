@@ -7,9 +7,8 @@ use super::{level_visual, pct};
 ///
 /// Params are percent-encoded, and `&` between them is left as a plain `&`
 /// in the string — maud will HTML-escape it to `&amp;` when it appears in an
-/// attribute value (matching OCaml `api_html.ml` where `string_attr` only
-/// HTML-escapes, and the browser DOM parser decodes `&amp;` → `&` when reading
-/// the attribute).
+/// attribute value, and the browser DOM parser decodes `&amp;` → `&` when
+/// reading the attribute.
 fn nodes_url(id: &str, user: &str, path: &str) -> String {
     format!(
         "/hierarchy/query/nodes?id={}&user={}&path={}",
@@ -50,8 +49,7 @@ fn tree_icon(icon_href: &str) -> Markup {
     }
 }
 
-/// Emit one tree `<li>` or one permission-row + child-rows `<div>` pair,
-/// matching `api_html.ml :: list_item`.
+/// Emit one tree `<li>` or one permission-row + child-rows `<div>` pair.
 ///
 /// * `id`              – the node id (`HN1#10001`, etc.)
 /// * `name`            – display name
@@ -72,8 +70,7 @@ pub fn list_item(
     let level = id.level();
 
     // Build current_path: "H#root#HN1#10001" when parent is "H#root".
-    // Mirrors OCaml: parent_path = Some p → sprintf "%s#%s" p id_str
-    //                            = None   → sprintf "H#%s" id_str
+    // With a parent path `p` → `"<p>#<id_str>"`; without → `"H#<id_str>"`.
     // In our API parent_path is always provided (non-empty = has parent,
     // empty = no parent → "H#<id_str>"). The caller passes "H#root" for
     // top-level nodes.
@@ -124,9 +121,8 @@ pub fn list_item(
         // Standard tree <li> variant.
         let load_url = nodes_url(&id_str, user, &current_path);
         let detail_url = node_url(&id_str, user);
-        // node_path for <a data-node-path> is parent_path (not current_path)
-        // — mirrors OCaml: `let node_path = Option.value parent_path ~default:""`
-        // When parent_path is Some p, it's p; when None (top-level), it's "".
+        // node_path for <a data-node-path> is parent_path (not current_path).
+        // When there is a parent path it's used as-is; for top-level nodes it's "".
         let node_path = parent_path;
         let hyperscript = "on click remove .selected from .node-name-link in body \
             then add .selected to me \
@@ -163,8 +159,7 @@ pub fn list_item(
 }
 
 /// Render a sequence of node refs as a series of `list_item`s (no wrapper
-/// element — matches OCaml `render_nodes` which returns `null items`, i.e.
-/// a bare sequence that HTMX swaps into the target).
+/// element — a bare sequence that HTMX swaps into the target).
 pub fn render_nodes(
     refs: &[(NodeId, String)],
     user: &str,
@@ -173,7 +168,7 @@ pub fn render_nodes(
 ) -> Markup {
     html! {
         @for (id, name) in refs {
-            // Leaf detection: OCaml treats Hn4 as deepest displayable level.
+            // Leaf detection: Hn4 is the deepest displayable level.
             @let is_leaf = id.level() == Level::Hn4;
             (list_item(id, name, user, parent_path, with_permissions, is_leaf))
         }

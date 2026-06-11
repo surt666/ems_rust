@@ -6,8 +6,7 @@ use strum::IntoEnumIterator;
 // Option-list renderers
 // ---------------------------------------------------------------------------
 
-/// `<option>` elements for all Profile variants (in OCaml `Profile.all` order).
-/// Mirrors OCaml `api_html.ml :: render_profiles`.
+/// `<option>` elements for all Profile variants (in `Profile::all` order).
 pub fn render_profiles() -> Markup {
     html! {
         @for p in Profile::all() {
@@ -18,7 +17,6 @@ pub fn render_profiles() -> Markup {
 }
 
 /// `<option>` elements for all supported languages (lowercase).
-/// Mirrors OCaml `api_html.ml :: render_languages`.
 pub fn render_languages() -> Markup {
     html! {
         @for l in Language::iter() {
@@ -29,7 +27,6 @@ pub fn render_languages() -> Markup {
 }
 
 /// `<option>` elements for all supported currencies.
-/// Mirrors OCaml `api_html.ml :: render_currencies`.
 pub fn render_currencies() -> Markup {
     html! {
         @for c in Currency::iter() {
@@ -40,7 +37,6 @@ pub fn render_currencies() -> Markup {
 }
 
 /// `<option>` elements for all permission levels.
-/// Mirrors OCaml `api_html.ml :: render_permissions`.
 pub fn render_permissions() -> Markup {
     html! {
         @for p in Permission::iter() {
@@ -51,7 +47,6 @@ pub fn render_permissions() -> Markup {
 }
 
 /// `<option>` elements for all supported timezones.
-/// Mirrors OCaml `api_html.ml :: render_timezones`.
 pub fn render_timezones() -> Markup {
     html! {
         @for tz in Timezone::iter() {
@@ -68,7 +63,6 @@ pub fn render_timezones() -> Markup {
 /// Render the add-child form body.
 ///
 /// This is the fragment loaded into `#add-child-body` via HTMX.
-/// Mirrors OCaml `api_html.ml :: render_add_child_form` (the inner HTML).
 ///
 /// Parameters:
 /// - `parent_id_str`: the parent node id (e.g. `"HN2#10003"`)

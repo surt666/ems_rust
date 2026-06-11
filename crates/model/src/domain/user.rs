@@ -10,12 +10,10 @@ use crate::domain::values::{CognitoGroup, Currency, Language};
 
 /// A user in the hierarchy.
 ///
-/// Ported 1:1 from `user.ml`.
-///
 /// Construct via `User::builder()` (TypedBuilder).  The `id` is derived from
 /// `email` automatically (`UserId::of_email`); `language` defaults to
 /// `Language::Danish`, `currency` to `Currency::Dkk`, and `created` to
-/// `Utc::now()` — all matching the OCaml optional-argument defaults.
+/// `Utc::now()`.
 ///
 /// Every field can still be set explicitly via the builder (codec / tests
 /// that need a specific timestamp or id simply call `.created(ts)` / `.id(id)`).
@@ -47,7 +45,7 @@ pub struct User {
 }
 
 // ---------------------------------------------------------------------------
-// Tests (port of test_domain_user.ml — user struct make + defaults)
+// Tests (user struct make + defaults)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -74,7 +72,7 @@ mod tests {
         assert_eq!(u.cognito_group, CognitoGroup::Writer);
     }
 
-    /// Default language is Danish (matches OCaml `Language.default`).
+    /// Default language is Danish.
     #[test]
     fn make_default_language_is_danish() {
         let u = User::builder()
@@ -85,7 +83,7 @@ mod tests {
         assert_eq!(u.language, Language::Danish);
     }
 
-    /// Default currency is DKK (matches OCaml `Currency.default`).
+    /// Default currency is DKK.
     #[test]
     fn make_default_currency_is_dkk() {
         let u = User::builder()

@@ -1,4 +1,4 @@
-//! Users logic — ported 1:1 from `services/hierarchy/lib/logic/users.ml`.
+//! Users logic.
 //!
 //! All repository operations are injected as async closures; no traits are used.
 
@@ -17,8 +17,6 @@ use crate::errors::RepositoryError;
 ///
 /// Rejects with `Conflict` if a user with the same id already exists.
 /// Otherwise persists via `put_user` and returns the newly created user.
-///
-/// Mirrors OCaml `Users.create`.
 pub async fn create<FGU, FGUFut, FPU, FPUFut>(
     email: String,
     name: String,
@@ -63,8 +61,6 @@ where
 ///
 /// Fails with `NotFoundUser` if the user does not exist.
 /// Returns the updated user.
-///
-/// Mirrors OCaml `Users.update`.
 pub async fn update<FGU, FGUFut, FPU, FPUFut>(
     id: UserId,
     name: Option<String>,
@@ -107,8 +103,6 @@ where
 /// AND Blocked edges, then the user node itself.
 ///
 /// Fails with `NotFoundUser` if the user does not exist.
-///
-/// Mirrors OCaml `Users.delete`.
 pub async fn delete<FGU, FGUFut, FLA, FLAFut, FLB, FLBFut, FDE, FDEFut, FDU, FDUFut>(
     id: UserId,
     get_user: FGU,
@@ -164,8 +158,6 @@ where
 // ---------------------------------------------------------------------------
 
 /// List all users.
-///
-/// Mirrors OCaml `Users.list`.
 pub async fn list<FLU, FLUFut>(list_users: FLU) -> Result<Vec<User>, RepositoryError>
 where
     FLU: FnOnce() -> FLUFut,
@@ -175,7 +167,7 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Tests — port of `services/hierarchy/test/test_logic_users.ml`
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -246,7 +238,7 @@ mod tests {
         }
     }
 
-    /// Make an HN2 node for cascade tests (mirrors OCaml `sample_schema` / `parent_path_for_hn2`).
+    /// Make an HN2 node for cascade tests.
     fn make_hn2(id: u32, name: &str) -> crate::domain::node::Node {
         let parent_path = format!("{}|HN1#10001", NodeId::root());
         node::make(
@@ -261,7 +253,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: create happy path  (OCaml: `create_happy`)
+    // Test: create happy path
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -285,7 +277,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: duplicate rejected  (OCaml: `create_duplicate_conflicts`)
+    // Test: duplicate rejected
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -325,10 +317,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: get unknown → NotFoundUser  (OCaml: `get_unknown_is_not_found`)
+    // Test: get unknown → NotFoundUser
     //
-    // The OCaml `Users.get` is a pure effect; here we inline the equivalent
-    // logic: get_user returning None → NotFoundUser.
+    // We inline the equivalent logic: get_user returning None → NotFoundUser.
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -356,7 +347,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: update changes name  (OCaml: `update_changes_name`)
+    // Test: update changes name
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -391,7 +382,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: list and delete via logic  (OCaml: `list_and_delete_via_logic`)
+    // Test: list and delete via logic
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -445,7 +436,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: delete unknown → NotFoundUser  (OCaml: `delete_unknown_errors`)
+    // Test: delete unknown → NotFoundUser
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -471,7 +462,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: delete cascades Blocked edges  (OCaml: `delete_cascades_blocked_edges`)
+    // Test: delete cascades Blocked edges
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -537,7 +528,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: delete cascades Administrates edges  (OCaml: `delete_cascades_administrates_edges`)
+    // Test: delete cascades Administrates edges
     // -----------------------------------------------------------------------
 
     #[tokio::test]

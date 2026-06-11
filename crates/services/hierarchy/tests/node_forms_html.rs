@@ -149,7 +149,7 @@ fn make_hn2_10003_node() -> Node {
 #[test]
 fn node_detail_matches_golden() {
     let node = make_hn2_10003_node();
-    // Admin case: show_sensors=false; golden was captured from full-permissions OCaml output.
+    // Admin case: show_sensors=false; golden was captured from full-permissions output.
     let rendered = render_node(&node, false, true, Some(CognitoGroup::Admin)).into_string();
     let expected = golden("node_detail.html");
     assert_golden(&rendered, &expected, "node_detail.html");
@@ -245,7 +245,7 @@ fn timezones_structural() {
 #[test]
 fn profiles_order_matches_ocaml() {
     let html = render_profiles().into_string();
-    // OCaml order: Developer, Standard, Technician, Reader, SysAdm
+    // Expected order: Developer, Standard, Technician, Reader, SysAdm
     let dev_pos = html.find("Developer").unwrap();
     let std_pos = html.find("Standard").unwrap();
     let tech_pos = html.find("Technician").unwrap();

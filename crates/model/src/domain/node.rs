@@ -10,8 +10,6 @@ use crate::domain::schema::Schema;
 
 /// A hierarchy node.
 ///
-/// Ported 1:1 from `node.ml`.
-///
 /// `path` is a pipe-separated list of ancestor node-ids from root down to and
 /// including self (the `gsi1sk` attribute in DynamoDB).
 /// `metadata` is an arbitrary JSON object.
@@ -42,7 +40,7 @@ pub struct Node {
 pub const PATH_SEP: &str = "|";
 
 /// Build the path of a child node given the parent's full path and the child's
-/// id as a string.  Matches OCaml `Node.child_path`.
+/// id as a string.
 pub fn child_path(parent_path: &str, child_id_str: &str) -> String {
     format!("{}{}{}", parent_path, PATH_SEP, child_id_str)
 }
@@ -53,7 +51,6 @@ pub fn child_path(parent_path: &str, child_id_str: &str) -> String {
 
 /// Create a non-root node.
 ///
-/// Mirrors OCaml `Node.make`:
 /// - Computes the `NodeId` from (`level`, `id`).
 /// - Computes `path = child_path(parent_path, node_id_str)`.
 ///
@@ -82,8 +79,7 @@ pub fn make(
 
 /// Create the root node.
 ///
-/// Mirrors OCaml `Node.make_root`:
-/// `{ id = Node_id.root; name = "root"; parent = None; path = Node_id.to_string Node_id.root; … }`.
+/// `id = Node_id::root`, `name = "root"`, `parent = None`, `path = root id string`.
 /// `created` is set to the current UTC time via the builder default.
 pub fn make_root() -> Node {
     Node::builder()
@@ -99,7 +95,6 @@ pub fn make_root() -> Node {
 
 impl Node {
     /// Return the hierarchy level of this node's id.
-    /// Matches OCaml `Node.level`.
     pub fn level(&self) -> Level {
         self.id.level()
     }
@@ -107,8 +102,7 @@ impl Node {
 
 /// Extract the path segment whose level matches `lvl`.
 ///
-/// Matches OCaml `Node.segment_at_level`:
-/// `String.split_on_char '|' path |> List.find_opt (String.starts_with ~prefix:("HN<depth>#"))`.
+/// Splits `path` on `|` and returns the first segment starting with `HN<depth>#`.
 pub fn segment_at_level(path: &str, lvl: Level) -> Option<String> {
     let prefix = format!("HN{}#", lvl.depth());
     path.split('|')
@@ -118,7 +112,7 @@ pub fn segment_at_level(path: &str, lvl: Level) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests (port of test_domain_node.ml + documented behaviour)
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -126,7 +120,6 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
-    /// Port of `test_domain_node.ml :: make_root`.
     #[test]
     fn make_root_test() {
         let before = Utc::now();
@@ -139,7 +132,6 @@ mod tests {
         assert!(n.created >= before && n.created <= after);
     }
 
-    /// Port of `test_domain_node.ml :: make_child`.
     #[test]
     fn make_child_test() {
         let parent = NodeId::root();

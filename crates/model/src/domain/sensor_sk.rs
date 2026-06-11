@@ -11,8 +11,7 @@ use chrono::{DateTime, Utc};
 /// `Active(ts)` → `"active#<rfc3339Z>"`
 /// `History(ts)` → `"<rfc3339Z>"`
 ///
-/// Ported 1:1 from `sensor_sk.ml`.  The RFC3339 format uses UTC with the `Z`
-/// suffix, matching OCaml `Ptime.to_rfc3339 ~tz_offset_s:0`.
+/// The RFC3339 format uses UTC with the `Z` suffix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SensorSk {
     Active(DateTime<Utc>),
@@ -21,9 +20,9 @@ pub enum SensorSk {
 
 const ACTIVE_PREFIX: &str = "active#";
 
-/// Format a `DateTime<Utc>` as RFC3339 with `Z` suffix — matches OCaml
-/// `Ptime.to_rfc3339 ~tz_offset_s:0` (no fractional seconds for whole-second
-/// values; chrono's `to_rfc3339` uses `+00:00` so we replace that).
+/// Format a `DateTime<Utc>` as RFC3339 with `Z` suffix (no fractional seconds
+/// for whole-second values; chrono's `to_rfc3339` uses `+00:00` so we replace
+/// that).
 fn dt_to_rfc3339z(dt: &DateTime<Utc>) -> String {
     // chrono formats as "2026-04-18T10:00:00+00:00"; replace the offset with "Z"
     let s = dt.to_rfc3339();
@@ -34,7 +33,7 @@ fn dt_to_rfc3339z(dt: &DateTime<Utc>) -> String {
     }
 }
 
-/// Parse an RFC3339 string (OCaml `Ptime.of_rfc3339`).
+/// Parse an RFC3339 string.
 fn parse_ts(s: &str) -> Result<DateTime<Utc>, String> {
     DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
@@ -43,7 +42,6 @@ fn parse_ts(s: &str) -> Result<DateTime<Utc>, String> {
 
 impl SensorSk {
     /// Parse `"active#<ts>"` → `Active(ts)` or plain `"<ts>"` → `History(ts)`.
-    /// Matches OCaml `Sensor_sk.of_string`.
     pub fn parse(s: &str) -> Result<SensorSk, String> {
         if let Some(rest) = s.strip_prefix(ACTIVE_PREFIX) {
             parse_ts(rest).map(SensorSk::Active)
@@ -64,20 +62,19 @@ impl fmt::Display for SensorSk {
 }
 
 // ---------------------------------------------------------------------------
-// Tests (port of test_domain_sensor_sk.ml)
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-        /// Helper: parse the sample timestamp used in OCaml tests.
+        /// Helper: parse the sample timestamp used in tests.
     fn sample_time() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-04-18T10:00:00Z")
             .unwrap()
             .with_timezone(&Utc)
     }
 
-    /// Port of `active_encodes_with_prefix`.
     #[test]
     fn active_encodes_with_prefix() {
         let t = sample_time();
@@ -87,14 +84,12 @@ mod tests {
         );
     }
 
-    /// Port of `history_encodes_without_prefix`.
     #[test]
     fn history_encodes_without_prefix() {
         let t = sample_time();
         assert_eq!(SensorSk::History(t).to_string(), "2026-04-18T10:00:00Z");
     }
 
-    /// Port of `parse_active`.
     #[test]
     fn parse_active() {
         match SensorSk::parse("active#2026-04-18T10:00:00Z") {
@@ -106,7 +101,6 @@ mod tests {
         }
     }
 
-    /// Port of `parse_history`.
     #[test]
     fn parse_history() {
         match SensorSk::parse("2026-03-01T00:00:00Z") {
@@ -118,7 +112,6 @@ mod tests {
         }
     }
 
-    /// Port of `rejects_garbage`.
     #[test]
     fn rejects_garbage() {
         assert!(SensorSk::parse("garbage").is_err(), "should reject garbage");

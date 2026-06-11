@@ -9,7 +9,6 @@ use model::domain::values::CognitoGroup;
 // ---------------------------------------------------------------------------
 
 /// Format a metadata JSON blob as a simple key/value form.
-/// Mirrors OCaml `api_html.ml :: metadata_rows`.
 fn metadata_rows(j: &serde_json::Value) -> Markup {
     match j {
         serde_json::Value::Object(kvs) => {
@@ -73,7 +72,6 @@ fn json_scalar_str(v: &serde_json::Value) -> String {
 // ---------------------------------------------------------------------------
 
 /// Emit the "Children" header with Add-child button and add-child dialog.
-/// Mirrors OCaml `api_html.ml :: add_child_block`.
 fn add_child_block(parent_id_str: &str) -> Markup {
     html! {
         div style="margin-top: 2rem;" {
@@ -150,8 +148,6 @@ fn add_child_block(parent_id_str: &str) -> Markup {
 /// `allow_children` gates the add-child button independently of capability: even
 /// an admin should not see it on a node whose type has no allowed children
 /// (e.g. a leaf `area`).
-///
-/// Mirrors OCaml `api_html.ml :: render_node` (the inner `html` value).
 pub fn render_node(
     node: &Node,
     show_sensors: bool,
@@ -167,7 +163,7 @@ pub fn render_node(
     let is_admin = capability == Some(CognitoGroup::Admin);
     let can_write = matches!(capability, Some(CognitoGroup::Admin) | Some(CognitoGroup::Writer));
     // Admin output must be byte-identical to the current (pre-capability) output:
-    // the OCaml golden has the name input as readonly, so we keep readonly for Admin too.
+    // the golden has the name input as readonly, so we keep readonly for Admin too.
     let name_readonly = !can_write || is_admin;
 
     let metadata_section = match &node.metadata {
@@ -226,7 +222,7 @@ pub fn render_node(
 // sensor_block + sensor_dialog
 // ---------------------------------------------------------------------------
 
-/// The formula dialog JS script (verbatim from OCaml).
+/// The formula dialog JS script.
 static FORMULA_DIALOG_JS: &str = r#"
 (function () {
   function $(id){ return document.getElementById(id); }
@@ -305,7 +301,6 @@ static FORMULA_DIALOG_JS: &str = r#"
 "#;
 
 /// The sensor add dialog + formula builder dialog + script.
-/// Mirrors OCaml `api_html.ml :: sensor_dialog`.
 fn sensor_dialog(nid_str: &str, parent_str: &str) -> Markup {
     let after_request_js = "if(event.detail.elt.id === 'add-sensor-form' && \
         event.detail.successful) { \
@@ -452,7 +447,6 @@ fn sensor_dialog(nid_str: &str, parent_str: &str) -> Markup {
 }
 
 /// The sensor section: header, add-sensor button, sensor list with htmx.
-/// Mirrors OCaml `api_html.ml :: sensor_block`.
 fn sensor_block(nid_str: &str, parent_str: &str) -> Markup {
     let sensor_vals = format!(r#"{{"nodepath": "{}"}}"#, parent_str);
     html! {
@@ -499,7 +493,6 @@ fn sensor_block(nid_str: &str, parent_str: &str) -> Markup {
 
 /// Render the sensor list as `<li>` items.
 /// An empty list renders a single "No sensors found" item.
-/// Mirrors OCaml `api_html.ml :: render_sensors`.
 pub fn render_sensors(sensors: &[Sensor]) -> Markup {
     if sensors.is_empty() {
         html! {

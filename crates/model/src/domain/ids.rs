@@ -142,7 +142,6 @@ impl NodeId {
 
     /// Parse `"HN0#root"` or `"HN<n>#<id>"`.
     ///
-    /// Matches OCaml `Node_id.of_string`:
     /// - `"HN0#root"` is checked first (exact match → Root).
     /// - Otherwise find `#`; prefix must be exactly 3 chars `HN<digit>`; rest must
     ///   parse as a non-negative integer.
@@ -192,7 +191,7 @@ impl fmt::Display for NodeId {
 
 /// A user identifier: a newtype over an email string.
 ///
-/// Printed/parsed as `"U#<email>"`.  Ported from `user_id.ml`.
+/// Printed/parsed as `"U#<email>"`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UserId(String);
 
@@ -210,7 +209,6 @@ impl UserId {
     /// Parse `"U#<email>"` → `Ok(UserId)`, or `Err(message)`.
     ///
     /// Rejects: missing `U#` prefix, empty email after prefix.
-    /// Matches OCaml `User_id.of_string`.
     pub fn parse(s: &str) -> Result<UserId, String> {
         if let Some(email) = s.strip_prefix("U#") {
             if email.is_empty() {
@@ -225,14 +223,14 @@ impl UserId {
 }
 
 impl fmt::Display for UserId {
-    /// Renders as `"U#<email>"` — matches OCaml `User_id.to_string`.
+    /// Renders as `"U#<email>"`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "U#{}", self.0)
     }
 }
 
 // ---------------------------------------------------------------------------
-// Tests  (ported 1:1 from OCaml test_domain_level.ml / test_domain_node_id.ml)
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -241,7 +239,6 @@ mod tests {
 
     // --- Level tests --------------------------------------------------------
 
-    /// Port of `test_domain_level.ml :: roundtrip`
     /// Checks of_string / depth / to_string for hn0..hn9.
     #[test]
     fn level_of_string_roundtrip() {
@@ -253,7 +250,6 @@ mod tests {
         }
     }
 
-    /// Port of `test_domain_level.ml :: rejects_bad_input`
     #[test]
     fn level_rejects_malformed() {
         for bad in &["", "hn", "hn10", "hn-1", "HN0", "sensor"] {
@@ -265,7 +261,7 @@ mod tests {
         }
     }
 
-    /// Port of the spec requirement: of_depth roundtrip for 0..=9, None for 10.
+    /// of_depth roundtrip for 0..=9, None for 10.
     #[test]
     fn level_depth_roundtrip() {
         for d in 0..=9u8 {
@@ -276,7 +272,6 @@ mod tests {
 
     // --- NodeId tests -------------------------------------------------------
 
-    /// Port of `test_domain_node_id.ml :: roundtrip`
     #[test]
     fn node_id_roundtrip() {
         let id = NodeId::make(Level::Hn4, 10042);
@@ -291,7 +286,6 @@ mod tests {
         }
     }
 
-    /// Port of `test_domain_node_id.ml :: rejects_bad`
     #[test]
     fn node_id_rejects_bad() {
         for bad in &["", "HN4", "HN4#", "hn4#10", "HN10#42", "HN4#not-an-int"] {
@@ -303,7 +297,6 @@ mod tests {
         }
     }
 
-    /// Port of `test_domain_node_id.ml :: root_constant`
     #[test]
     fn node_id_root_constant() {
         assert_eq!(NodeId::root().to_string(), "HN0#root");
@@ -330,7 +323,7 @@ mod tests {
         assert!(NodeId::parse("HN2#abc").is_err()); // non-int id
     }
 
-    /// OCaml `equal` semantics: Root==Root, Node by depth+id.
+    /// Equality semantics: Root==Root, Node by depth+id.
     #[test]
     fn node_id_equality() {
         assert_eq!(NodeId::Root, NodeId::Root);
@@ -347,9 +340,9 @@ mod tests {
         assert!(!NodeId::make(Level::Hn1, 1).is_root());
     }
 
-    // --- SensorId tests (port of test_domain_sensor_id.ml) ------------------
+    // --- SensorId tests -----------------------------------------------------
 
-    /// Port of `round_trip`: make → to_string → parse → equal.
+    /// make → to_string → parse → equal.
     #[test]
     fn sensor_id_round_trip() {
         let id = SensorId::make(10042);
@@ -360,27 +353,24 @@ mod tests {
         assert_eq!(id.id(), id2.id());
     }
 
-    /// Port of `rejects_missing_prefix`.
     #[test]
     fn sensor_id_rejects_missing_prefix() {
         assert!(SensorId::parse("10042").is_err(), "should reject missing S#");
     }
 
-    /// Port of `rejects_wrong_prefix`.
     #[test]
     fn sensor_id_rejects_wrong_prefix() {
         assert!(SensorId::parse("HN4#10042").is_err(), "should reject HN4# prefix");
     }
 
-    /// Port of `rejects_bad_id`.
     #[test]
     fn sensor_id_rejects_bad_id() {
         assert!(SensorId::parse("S#not-an-int").is_err(), "should reject bad id");
     }
 
-    // --- UserId tests (port of test_domain_user.ml user_id cases) -----------
+    // --- UserId tests -------------------------------------------------------
 
-    /// Port of `user_id_rt`: of_email → to_string → of_string roundtrip.
+    /// of_email → to_string → of_string roundtrip.
     #[test]
     fn user_id_roundtrip() {
         let id = UserId::of_email("alice@example.com");
@@ -391,7 +381,7 @@ mod tests {
         }
     }
 
-    /// Port of `user_id_rejects_bad`: missing U# prefix must fail.
+    /// missing U# prefix must fail.
     #[test]
     fn user_id_rejects_missing_prefix() {
         assert!(

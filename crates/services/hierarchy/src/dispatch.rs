@@ -6,10 +6,10 @@
 //! The prod entry-point `run` builds the real repository closures from the
 //! shared AWS clients and calls the matching handler.
 //!
-//! Ported 1:1 from `services/hierarchy/lib/api/api_command.ml`:
-//! - `run_create_user`: Profile→group, Users::create, access grants, then
+//! Handler behaviour:
+//! - create_user: Profile→group, Users::create, access grants, then
 //!   Cognito create + add_to_group; on Cognito failure, roll back the DDB user.
-//! - `run_delete_user`: Users::delete (cascade edges) + AdminDeleteUser.
+//! - delete_user: Users::delete (cascade edges) + AdminDeleteUser.
 //! - All other handlers delegate straight to the logic layer.
 //!
 //! See `../../../model/src/logic/` for the logic functions and their closure
@@ -32,7 +32,7 @@ use crate::command::Command;
 use crate::json;
 
 // ---------------------------------------------------------------------------
-// Response helpers (mirror api_json.ml ok_response / error_response)
+// Response helpers (ok_response / error_response)
 // ---------------------------------------------------------------------------
 
 /// Returns the Lambda V2 envelope — `{statusCode, body}`.
@@ -98,7 +98,6 @@ pub fn user_to_json(u: &User) -> Value {
     json::user_to_json(u)
 }
 
-/// Mirrors OCaml `api_json.ml :: node_ref_to_json`.
 pub fn node_ref_to_json(id: &NodeId, name: &str) -> Value {
     json::node_ref_to_json(id, name)
 }
@@ -204,7 +203,7 @@ where
         Err(e) => return bad_request(&format!("bad id: {}", e)),
     };
 
-    // Verify the node exists (mirrors OCaml behaviour).
+    // Verify the node exists.
     match get_node(node_id.clone()).await {
         Ok(None) => return repo_error_response(RepositoryError::NotFound(node_id)),
         Err(e) => return repo_error_response(e),
@@ -223,7 +222,6 @@ where
 
 /// Handler for `create_user`.
 ///
-/// Mirrors `run_create_user` in `api_command.ml`:
 /// 1. Parse profile → cognito_group.
 /// 2. `users::create` (DDB put).
 /// 3. Best-effort `grant_administrates` for each allowed node (ignore errors).
@@ -333,7 +331,7 @@ where
 
     let user_id = UserId::of_email(&email);
 
-    // 3 & 4. Best-effort access grants (mirrors OCaml `ignore (f ...)` pattern).
+    // 3 & 4. Best-effort access grants (errors ignored).
     // grant_access / block each take FnOnce closures; we drive them manually so
     // that `get_node` and `put_edge` (Fn) can be called once per iteration.
     // The edge kind is determined by the user's cognito group.
@@ -464,7 +462,7 @@ where
 
 /// Handler for `delete_user`.
 ///
-/// Mirrors `run_delete_user`: resolves user id (email preferred, U# fallback),
+/// Resolves user id (email preferred, U# fallback),
 /// cascades ALL access edges via `users::delete`, then `delete_cognito(email)`.
 pub async fn handle_delete_user<
     FGU,
@@ -1184,7 +1182,7 @@ pub async fn run(cmd: Command) -> Value {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — port of `services/hierarchy/test/test_api_command.ml`
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1434,7 +1432,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: add_node happy path  (OCaml: `add_node_happy_path`)
+    // Test: add_node happy path
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -1459,7 +1457,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: add_node parses a schema posted in the api_json.ml shape
+    // Test: add_node parses a schema posted in the JSON API shape
     // (proves handle_add_node wires json::schema_of_json, not serde derive).
     // -----------------------------------------------------------------------
 
@@ -1481,7 +1479,7 @@ mod tests {
         n1.label = "partner".to_string();
         store.put_node(&n1);
 
-        // Schema JSON in the v2 api_json shape (type-keyed).
+        // Schema JSON in the v2 JSON API shape (type-keyed).
         let schema_json = json!({
             "version": 2,
             "edges": {
@@ -1535,7 +1533,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: delete_node roundtrip  (OCaml: `delete_node_roundtrip`)
+    // Test: delete_node roundtrip
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -1583,7 +1581,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: create_user happy  (OCaml: `create_user_happy`)
+    // Test: create_user happy
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -1685,7 +1683,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: delete_user roundtrip  (OCaml: `delete_user_roundtrip`)
+    // Test: delete_user roundtrip
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -1806,7 +1804,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: block_user happy  (OCaml: `block_user_happy`)
+    // Test: block_user happy
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -1848,7 +1846,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: unblock_user roundtrip  (OCaml: `unblock_user_roundtrip`)
+    // Test: unblock_user roundtrip
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -1896,7 +1894,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: attach_sensor happy  (OCaml: `attach_sensor_happy`)
+    // Test: attach_sensor happy
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -1924,7 +1922,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: attach_sensor resample from string  (OCaml: `attach_sensor_resample_from_string`)
+    // Test: attach_sensor resample from string
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -1977,7 +1975,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: attach_sensor with formula  (OCaml: `attach_sensor_with_formula`)
+    // Test: attach_sensor with formula
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -2030,7 +2028,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: attach_sensor unbound alias → 400  (OCaml: `attach_sensor_unbound_alias_400`)
+    // Test: attach_sensor unbound alias → 400
     // -----------------------------------------------------------------------
 
     #[tokio::test]

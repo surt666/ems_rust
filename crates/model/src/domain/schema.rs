@@ -23,9 +23,6 @@ pub struct EdgeSpec {
 // ---------------------------------------------------------------------------
 
 /// A metadata field specification: its type + whether it is required.
-///
-/// Faithfully ported from `services/hierarchy/lib/domain/metadata.ml`:
-/// `type field_spec = { typ : field_type; required : bool }`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FieldSpec {
     pub typ: FieldType,
@@ -237,12 +234,10 @@ impl Schema {
 }
 
 // ---------------------------------------------------------------------------
-// Metadata validation (ported from metadata.ml)
+// Metadata validation
 // ---------------------------------------------------------------------------
 
 /// Metadata validation error.
-///
-/// Port of OCaml `type error = { path : string; message : string }`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetadataError {
     pub path: String,
@@ -251,8 +246,7 @@ pub struct MetadataError {
 
 /// Validate a single field spec's invariants.
 ///
-/// Port of OCaml `Metadata.validate_spec`:
-/// only `Enum { one_of = [] }` is currently rejected.
+/// Only `Enum { one_of = [] }` is currently rejected.
 pub fn validate_spec(spec: &FieldSpec) -> Result<(), String> {
     match &spec.typ {
         FieldType::Enum { one_of } if one_of.is_empty() => {
@@ -263,8 +257,6 @@ pub fn validate_spec(spec: &FieldSpec) -> Result<(), String> {
 }
 
 /// Validate a single value against a field spec.
-///
-/// Port of OCaml `Metadata.validate_one`.
 ///
 /// - `Null` with `required=true` → error "required field missing"
 /// - `Null` with `required=false` → Ok
@@ -277,7 +269,7 @@ pub fn validate_one(path: &str, spec: &FieldSpec, v: &serde_json::Value) -> Resu
         message,
     };
 
-    // Null handling (matches first arm in OCaml)
+    // Null handling
     if v.is_null() {
         return if spec.required {
             Err(err("required field missing".to_string()))
@@ -302,7 +294,7 @@ pub fn validate_one(path: &str, spec: &FieldSpec, v: &serde_json::Value) -> Resu
             Ok(())
         }
 
-        // OCaml: `Number { min; max }, `Float f` — JSON floats
+        // Number field, JSON floats
         (FieldType::Number { min, max }, Value::Number(n)) if n.is_f64() => {
             let f = n.as_f64().unwrap();
             if let Some(lo) = min {
@@ -318,7 +310,7 @@ pub fn validate_one(path: &str, spec: &FieldSpec, v: &serde_json::Value) -> Resu
             Ok(())
         }
 
-        // OCaml: `Number { min; max }, `Int i` — JSON integers treated as floats
+        // Number field, JSON integers treated as floats
         (FieldType::Number { min, max }, Value::Number(n)) if n.is_i64() => {
             let f = n.as_i64().unwrap() as f64;
             if let Some(lo) = min {
@@ -334,7 +326,7 @@ pub fn validate_one(path: &str, spec: &FieldSpec, v: &serde_json::Value) -> Resu
             Ok(())
         }
 
-        // OCaml: `Integer { min; max }, `Int i`
+        // Integer field, JSON integers
         (FieldType::Integer { min, max }, Value::Number(n)) if n.is_i64() => {
             let iv = n.as_i64().unwrap();
             if let Some(lo) = min {
@@ -353,7 +345,6 @@ pub fn validate_one(path: &str, spec: &FieldSpec, v: &serde_json::Value) -> Resu
         (FieldType::Boolean, Value::Bool(_)) => Ok(()),
 
         (FieldType::Timestamp, Value::String(s)) => {
-            // Port of OCaml `is_rfc3339`: parse via Ptime.of_rfc3339
             // Use chrono for RFC3339 parsing
             if chrono::DateTime::parse_from_rfc3339(s).is_ok() {
                 Ok(())
@@ -377,10 +368,9 @@ pub fn validate_one(path: &str, spec: &FieldSpec, v: &serde_json::Value) -> Resu
 
 /// Validate a JSON object against a set of field specs.
 ///
-/// Port of OCaml `Metadata.validate`:
 /// - If `v` is not a JSON object, return a single error with empty path.
 /// - For each spec: if key is absent and required → error; if present → `validate_one`.
-/// - Unknown keys in the JSON object are silently ignored (OCaml: `List.assoc_opt` iterates specs).
+/// - Unknown keys in the JSON object are silently ignored.
 /// - Returns all collected errors.
 pub fn validate(
     specs: &[(String, FieldSpec)],
@@ -626,7 +616,6 @@ mod tests {
 
     // ---- validate_spec -----------------------------------------------------
 
-    /// Port of `test_domain_metadata.ml :: spec rejects empty enum`
     #[test]
     fn spec_rejects_empty_enum() {
         let spec = FieldSpec {
@@ -652,7 +641,6 @@ mod tests {
 
     // ---- validate (metadata against JSON) ----------------------------------
 
-    /// Port of `test_domain_metadata.ml :: validate ok`
     #[test]
     fn validate_ok() {
         let specs: Vec<(String, FieldSpec)> = vec![
@@ -699,7 +687,6 @@ mod tests {
         }
     }
 
-    /// Port of `test_domain_metadata.ml :: missing required`
     #[test]
     fn validate_missing_required() {
         let specs: Vec<(String, FieldSpec)> = vec![(
@@ -727,7 +714,6 @@ mod tests {
         }
     }
 
-    /// Port of `test_domain_metadata.ml :: number out of range`
     #[test]
     fn validate_number_out_of_range() {
         let specs: Vec<(String, FieldSpec)> = vec![(
@@ -747,7 +733,6 @@ mod tests {
         }
     }
 
-    /// Port of `test_domain_metadata.ml :: enum good/bad`
     #[test]
     fn validate_enum() {
         let specs: Vec<(String, FieldSpec)> = vec![(
@@ -906,7 +891,7 @@ mod tests {
         }
     }
 
-    /// Number field accepts JSON integer values (OCaml `Int i` → float coercion).
+    /// Number field accepts JSON integer values (integer → float coercion).
     #[test]
     fn validate_one_number_accepts_integer_json() {
         let spec = FieldSpec {

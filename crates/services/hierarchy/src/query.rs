@@ -6,11 +6,6 @@
 //!
 //! The prod entry-point `run_query` builds real repository closures from the
 //! shared AWS clients and calls the matching handler.
-//!
-//! Ported 1:1 from:
-//! - `services/hierarchy/lib/api/api_query.ml`  (JSON query actions)
-//! - `services/hierarchy/lib/api/api_html.ml`   (HTML query actions)
-//! - `services/hierarchy/lib/handler.ml`        (routing + response shape)
 
 use std::future::Future;
 
@@ -32,7 +27,7 @@ use crate::dispatch::{node_ref_to_json, node_to_json, sensor_to_json, user_to_js
 use crate::html::{forms, node as html_node, tree};
 
 // ---------------------------------------------------------------------------
-// Response helpers — mirror api_json.ml ok_response / error_response
+// Response helpers — ok_response / error_response
 // ---------------------------------------------------------------------------
 
 fn ok(body: Value) -> (u16, String) {
@@ -325,7 +320,7 @@ where
 /// kinds (administrates/reads/writes) — a root grant expands to root's children,
 /// otherwise the user's granted nodes are shown directly.
 /// Drilling (id provided): gated by `access::has_access` (any access edge on the
-/// node or an ancestor). Mirrors OCaml `api_html.ml :: render_nodes`.
+/// node or an ancestor).
 ///
 /// `get_node` must be `Fn + Clone` so it can be called once per start node when
 /// resolving names in the top-level path.
@@ -404,7 +399,7 @@ where
             };
 
             // Resolve display names for each start node.
-            // Mirrors OCaml: List.filter_map (fun g -> match Hierarchy.get_node g with ...) grants
+            // For each grant, look up the node and keep the ones that resolve.
             let mut refs = Vec::new();
             for g in grant_ids {
                 if let Ok(Some(n)) = get_node(g.clone()).await {
@@ -523,7 +518,7 @@ where
 /// `GET /hierarchy/query/company_sensors?nodepath=...`
 ///
 /// Returns `<option>` elements for active sensors under the given node's
-/// path prefix. Mirrors OCaml `render_company_sensors`.
+/// path prefix.
 pub async fn handle_company_sensors<FLS, FLSFut>(
     nodepath: &str,
     list_under_path: FLS,
@@ -822,7 +817,7 @@ pub fn handle_timezones() -> (u16, String) {
 }
 
 // ---------------------------------------------------------------------------
-// leaf_node_id — mirrors OCaml `api_html.ml :: leaf_node_id`
+// leaf_node_id
 //
 // Extract the last `HN{n}#<id>` segment from a nodepath string.
 // The path can be pipe-separated (storage format) or hash-separated (URL).
@@ -1167,7 +1162,7 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
 }
 
 // ---------------------------------------------------------------------------
-// Tests — port of `services/hierarchy/test/test_api_query.ml` 1:1
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1929,7 +1924,7 @@ mod tests {
     // test: top_level_shows_administrated_hn2
     //
     // A user administrating an HN2 node → the rendered HTML tree contains
-    // "HN2#10002". Mirrors OCaml `top_level_shows_administrated_hn2`.
+    // "HN2#10002".
     // -----------------------------------------------------------------------
 
     #[tokio::test]

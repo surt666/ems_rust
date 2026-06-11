@@ -1,28 +1,20 @@
-/// Formula domain — port of OCaml `formula.ml` + `formula_parser.ml`.
+/// Formula domain: arithmetic expression trees and the formula parser.
 ///
-/// The OCaml variant `Self` (a reserved Rust keyword) is renamed `SelfRef`.
-/// The OCaml `Unknown_ref` exception becomes the `Err` variant of `eval`'s
-/// `Result<f64, UnknownRef>` — or is raised via panic in the `resolve`
-/// closure in the OCaml style (the Rust tests mirror the OCaml tests exactly:
-/// they use a `resolve` closure that panics on unknown aliases, and the
-/// `eval_unknown_ref_raises` test checks that eval itself panics for an alias
-/// not in `refs`, i.e. the `lookup` guard raises before calling `resolve`).
-///
-/// To stay faithful to the OCaml semantics (`raise (Unknown_ref alias)`),
-/// `eval` panics with the same information when an alias is not in `refs`.
-/// The test harness wraps that in `std::panic::catch_unwind` to match the
-/// OCaml `try … with Unknown_ref` idiom.
+/// The self-reading variant is named `SelfRef` because `Self` is a reserved
+/// Rust keyword. `eval` panics with `"Unknown_ref: <alias>"` when an alias is
+/// not in `refs` (the `lookup` guard raises before calling `resolve`); the test
+/// harness wraps that in `std::panic::catch_unwind`.
 use crate::domain::ids::SensorId;
 
 // ---------------------------------------------------------------------------
 // Expr ADT
 // ---------------------------------------------------------------------------
 
-/// An arithmetic expression tree.  Mirrors OCaml `formula.ml :: type expr`.
+/// An arithmetic expression tree.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Num(f64),
-    /// The sensor's own reading (`self` in OCaml; renamed because `Self` is a
+    /// The sensor's own reading (renamed from `self` because `Self` is a
     /// Rust keyword).
     SelfRef,
     /// A named alias reference (mapped to a `SensorId` in `Formula::Expr`).
@@ -38,7 +30,7 @@ pub enum Expr {
 // Formula ADT
 // ---------------------------------------------------------------------------
 
-/// A sensor formula.  Mirrors OCaml `formula.ml :: type t`.
+/// A sensor formula.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Formula {
     Identity,
@@ -55,7 +47,7 @@ pub enum Formula {
 // eval_expr (internal)
 // ---------------------------------------------------------------------------
 
-/// Evaluate an expression tree.  Mirrors `formula.ml :: eval_expr`.
+/// Evaluate an expression tree.
 fn eval_expr(e: &Expr, self_reading: f64, resolve: &dyn Fn(&str) -> f64) -> f64 {
     match e {
         Expr::Num(n) => *n,
@@ -74,12 +66,11 @@ fn eval_expr(e: &Expr, self_reading: f64, resolve: &dyn Fn(&str) -> f64) -> f64 
 // ---------------------------------------------------------------------------
 
 impl Formula {
-    /// Evaluate the formula.  Mirrors OCaml `Formula.eval ~self ~resolve`.
+    /// Evaluate the formula.
     ///
     /// For `Formula::Expr`, the `resolve` closure is only called for aliases
     /// present in `refs`; for any alias that is *not* in `refs` the function
-    /// panics with `"Unknown_ref: <alias>"`, mirroring OCaml's
-    /// `raise (Unknown_ref alias)`.
+    /// panics with `"Unknown_ref: <alias>"`.
     pub fn eval(&self, self_reading: f64, resolve: &dyn Fn(&str) -> f64) -> f64 {
         match self {
             Formula::Identity => self_reading,
@@ -98,7 +89,6 @@ impl Formula {
     }
 
     /// Return the `SensorId`s referenced by this formula.
-    /// Mirrors OCaml `Formula.referenced_ids`.
     pub fn referenced_ids(&self) -> Vec<SensorId> {
         match self {
             Formula::Identity | Formula::Zero => vec![],
@@ -108,11 +98,10 @@ impl Formula {
 }
 
 // ---------------------------------------------------------------------------
-// expr helpers (public, mirroring OCaml module-level functions)
+// expr helpers (public)
 // ---------------------------------------------------------------------------
 
 /// Return the distinct alias names in first-seen order.
-/// Mirrors OCaml `Formula.expr_aliases`.
 pub fn expr_aliases(e: &Expr) -> Vec<String> {
     fn go(acc: &mut Vec<String>, e: &Expr) {
         match e {
@@ -135,7 +124,6 @@ pub fn expr_aliases(e: &Expr) -> Vec<String> {
 }
 
 /// Render an expression to source text with minimal parentheses.
-/// Mirrors OCaml `Formula.expr_to_string`.
 ///
 /// Precedence: `+`/`-` = 1, `*`/`/` = 2; all binops left-associative.
 pub fn expr_to_string(e: &Expr) -> String {
@@ -144,7 +132,7 @@ pub fn expr_to_string(e: &Expr) -> String {
     fn go(prec: u8, e: &Expr) -> String {
         match e {
             Expr::Num(n) => format!("{:.17e}", n)
-                // OCaml uses `%.17g` which suppresses trailing zeros and the exponent
+                // `%.17g` suppresses trailing zeros and the exponent
                 // for numbers that don't need it; replicate with a manual formatting.
                 .parse::<f64>()
                 .map_or_else(|_| format!("{}", n), |_| ocaml_g(*n)),
@@ -160,7 +148,7 @@ pub fn expr_to_string(e: &Expr) -> String {
     go(0, e)
 }
 
-/// Render an `f64` with OCaml's `%.17g` format: up to 17 significant digits,
+/// Render an `f64` with `%.17g` format: up to 17 significant digits,
 /// no trailing zeros, no exponent for "small" numbers.
 ///
 /// `%g` rules: use scientific notation when exponent < -4 or exponent >= precision (17);
@@ -227,8 +215,8 @@ fn ocaml_g(n: f64) -> String {
         }
     } else {
         // Scientific notation: <mant>e<exp>
-        // Rust formats exp with sign and at least 2 digits; OCaml uses minimal digits.
-        // e.g. Rust "1.5e10", OCaml "1.5e+10" — let's match OCaml: sign + no leading zero
+        // Rust formats exp with sign and at least 2 digits; we want minimal digits.
+        // e.g. Rust "1.5e10" → "1.5e+10": sign + no leading zero
         let exp_formatted = if exp >= 0 {
             format!("e+{}", exp)
         } else {
@@ -247,10 +235,10 @@ fn wrap(outer: u8, p: u8, s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Parser (port of formula_parser.ml)
+// Parser
 // ---------------------------------------------------------------------------
 //
-// Grammar (same as OCaml):
+// Grammar:
 //   expr    := term (('+' | '-') term)*
 //   term    := factor (('*' | '/') factor)*
 //   factor  := '-' factor | primary
@@ -426,7 +414,7 @@ fn parse_primary(st: &mut State) -> Result<Expr, String> {
     }
 }
 
-/// Parse a formula expression string.  Mirrors `formula_parser.ml :: parse`.
+/// Parse a formula expression string.
 pub fn parse_expr_str(s: &str) -> Result<Expr, String> {
     let mut st = State::new(s);
     let e = parse_expr(&mut st)?;
@@ -439,7 +427,7 @@ pub fn parse_expr_str(s: &str) -> Result<Expr, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests (port of test_domain_sensor_id.ml + test_domain_formula.ml)
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -450,14 +438,12 @@ mod tests {
     // Formula ADT tests
     // -----------------------------------------------------------------------
 
-    /// Port of `identity_constructs`.
     #[test]
     fn identity_constructs() {
         let f = Formula::Identity;
         assert!(matches!(f, Formula::Identity));
     }
 
-    /// Port of `expr_has_refs`.
     #[test]
     fn expr_has_refs() {
         let id_a = SensorId::make(10001);
@@ -480,7 +466,6 @@ mod tests {
         }
     }
 
-    /// Port of `deeply_nested_expr`.
     #[test]
     fn deeply_nested_expr() {
         let id_a = SensorId::make(10001);
@@ -499,14 +484,12 @@ mod tests {
         // Just compiles → pass
     }
 
-    /// Port of `eval_identity`.
     #[test]
     fn eval_identity() {
         let v = Formula::Identity.eval(7.5, &|_| panic!("should not call"));
         assert!((v - 7.5).abs() < 1e-9);
     }
 
-    /// Port of `eval_arithmetic`.
     #[test]
     fn eval_arithmetic() {
         let id_a = SensorId::make(10001);
@@ -530,7 +513,6 @@ mod tests {
         assert!((v - 6.0).abs() < 1e-9, "10 - (3 + 1) = 6, got {}", v);
     }
 
-    /// Port of `eval_abs_flips_negative`.
     #[test]
     fn eval_abs_flips_negative() {
         let id_a = SensorId::make(10001);
@@ -546,7 +528,6 @@ mod tests {
         assert!((v - 7.0).abs() < 1e-9, "|5 - 12| = 7, got {}", v);
     }
 
-    /// Port of `eval_multiplier`.
     #[test]
     fn eval_multiplier() {
         let ast = Expr::Mul(Box::new(Expr::SelfRef), Box::new(Expr::Num(2.5)));
@@ -555,7 +536,6 @@ mod tests {
         assert!((v - 10.0).abs() < 1e-9, "4 * 2.5 = 10, got {}", v);
     }
 
-    /// Port of `eval_div_by_zero_is_infinity`.
     #[test]
     fn eval_div_by_zero_is_infinity() {
         let ast = Expr::Div(Box::new(Expr::SelfRef), Box::new(Expr::Num(0.0)));
@@ -564,7 +544,7 @@ mod tests {
         assert!(v.is_infinite(), "expected infinite, got {}", v);
     }
 
-    /// Port of `eval_unknown_ref_raises` — eval panics for alias not in refs.
+    /// eval panics for an alias not in refs.
     #[test]
     fn eval_unknown_ref_raises() {
         let ast = Expr::Ref("missing".to_string());
@@ -582,28 +562,24 @@ mod tests {
         }
     }
 
-    /// Port of `collect_refs_identity_empty`.
     #[test]
     fn referenced_ids_identity_empty() {
         let xs = Formula::Identity.referenced_ids();
         assert_eq!(xs.len(), 0);
     }
 
-    /// Port of `eval_zero_returns_zero`.
     #[test]
     fn eval_zero_returns_zero() {
         let v = Formula::Zero.eval(123.0, &|_| panic!("should not call"));
         assert_eq!(v, 0.0);
     }
 
-    /// Port of `referenced_ids_zero_empty`.
     #[test]
     fn referenced_ids_zero_empty() {
         let xs = Formula::Zero.referenced_ids();
         assert_eq!(xs.len(), 0);
     }
 
-    /// Port of `collect_refs_of_expr`.
     #[test]
     fn referenced_ids_expr() {
         let id_a = SensorId::make(10001);
@@ -622,7 +598,6 @@ mod tests {
         assert_eq!(xs, vec![10001, 10002]);
     }
 
-    /// Port of `expr_aliases_distinct_in_order`.
     #[test]
     fn expr_aliases_distinct_in_order() {
         let e = Expr::Abs(Box::new(Expr::Sub(
@@ -639,7 +614,6 @@ mod tests {
         assert_eq!(aliases, vec!["a", "b"], "distinct aliases, first-seen order");
     }
 
-    /// Port of `to_string_renders_minimal_parens`.
     #[test]
     fn expr_to_string_minimal_parens() {
         // abs(self - a - b)  — no parens needed because Sub is left-associative
@@ -654,7 +628,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Parser tests (port of `parser_precedence_and_assoc` + `parser_rejects_garbage`)
+    // Parser tests
     // -----------------------------------------------------------------------
 
     /// Helper: parse `s`, render with `expr_to_string`, compare to rendered `expected`.
@@ -677,7 +651,6 @@ mod tests {
         );
     }
 
-    /// Port of `parser_precedence_and_assoc`.
     #[test]
     fn parser_precedence_and_assoc() {
         // "self - a - b"  →  Sub(Sub(Self, a), b)  left-assoc
@@ -733,7 +706,6 @@ mod tests {
         );
     }
 
-    /// Port of `parser_rejects_garbage`.
     #[test]
     fn parser_rejects_garbage() {
         parse_err_check("");

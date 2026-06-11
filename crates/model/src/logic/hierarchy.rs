@@ -1,4 +1,4 @@
-//! Hierarchy logic — ported 1:1 from `services/hierarchy/lib/logic/hierarchy.ml`.
+//! Hierarchy logic.
 //!
 //! All repository operations are injected as async closures; no traits are used.
 
@@ -28,8 +28,6 @@ fn bad(message: impl Into<String>) -> RepositoryError {
 // ---------------------------------------------------------------------------
 
 /// Fetch a node by id, returning `Err(NotFound)` if absent.
-///
-/// Mirrors OCaml `Hierarchy.get_node`.
 pub async fn get_node<FGN, FGNFut>(
     id: NodeId,
     get_node_fn: FGN,
@@ -49,8 +47,6 @@ where
 // ---------------------------------------------------------------------------
 
 /// List children of `parent`, optionally filtered by `label`.
-///
-/// Mirrors OCaml `Hierarchy.list_children`.
 pub async fn list_children<FLC, FLCFut>(
     parent: NodeId,
     label: Option<String>,
@@ -65,8 +61,6 @@ where
 }
 
 /// List (child_id, edge_name) refs under `parent`, optionally filtered by `label`.
-///
-/// Mirrors OCaml `Hierarchy.list_child_refs`.
 pub async fn list_child_refs<FLC, FLCFut>(
     parent: NodeId,
     label: Option<String>,
@@ -325,7 +319,7 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Tests — port of `services/hierarchy/test/test_logic_hierarchy.ml`
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -507,7 +501,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: add property + building  (OCaml: `add_property_and_building`)
+    // Test: add property + building
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -541,7 +535,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: rejects disallowed edge  (OCaml: `rejects_disallowed_edge`)
+    // Test: rejects disallowed edge
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -568,7 +562,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: rejects bad metadata  (OCaml: `rejects_bad_metadata`)
+    // Test: rejects bad metadata
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -598,7 +592,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: enforces cardinality max  (OCaml: `enforces_cardinality_max`)
+    // Test: enforces cardinality max
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -626,7 +620,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: creates partner under root  (OCaml: `creates_partner_under_root`)
+    // Test: creates partner under root
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -652,7 +646,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: rejects creating root  (OCaml: `rejects_root_creation`)
+    // Test: rejects creating root
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -679,7 +673,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: creates company with schema  (OCaml: `creates_company_with_schema`)
+    // Test: creates company with schema
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -715,7 +709,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: company without schema fails  (OCaml: `company_without_schema_fails`)
+    // Test: company without schema fails
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -754,7 +748,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: infers level = parent+1 by default  (OCaml: `infers_level_default_parent_plus_one`)
+    // Test: infers level = parent+1 by default
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -776,7 +770,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: infers level from label  (OCaml: `infers_level_from_label`)
+    // Test: infers level from label
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -934,10 +928,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: add_node → get_node roundtrip  (port of test_logic_properties.ml)
+    // Test: add_node → get_node roundtrip
     //
-    // OCaml uses a quickcheck generator over non-empty printable strings.
-    // Here we test a representative set of names instead.
+    // We test a representative set of names.
     // -----------------------------------------------------------------------
 
     #[tokio::test]

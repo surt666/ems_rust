@@ -6,8 +6,6 @@ use strum::{EnumIter, IntoEnumIterator};
 // ---------------------------------------------------------------------------
 
 /// The kind of a directed hierarchy edge.
-///
-/// Faithfully ported from `services/hierarchy/lib/domain/edge_kind.ml`.
 #[derive(Debug, Clone, PartialEq, Eq, strum::Display)]
 pub enum EdgeKind {
     #[strum(to_string = "has_label:{0}")]
@@ -26,7 +24,6 @@ pub enum EdgeKind {
 
 impl EdgeKind {
     /// The sort-key verb fragment used when writing the edge to DynamoDB.
-    /// Matches OCaml `Edge_kind.sk_verb`.
     pub fn sk_verb(&self) -> String {
         match self {
             EdgeKind::HasLabel(l) => format!("has_{}", l),
@@ -39,14 +36,12 @@ impl EdgeKind {
     }
 
     /// The serialised form stored in the `kind` attribute.
-    /// Matches OCaml `Edge_kind.to_string`.
     pub fn kind_string(&self) -> String {
         self.to_string()
     }
 
     /// Reverse-direction verb used on `gsi1sk` for user-edge lookups.
     /// `HasLabel` and `HasSensor` return `None`; others carry a verb.
-    /// Matches OCaml `Edge_kind.gsi_verb`.
     pub fn gsi_verb(&self) -> Option<&str> {
         match self {
             EdgeKind::Blocked => Some("blocks"),
@@ -57,8 +52,7 @@ impl EdgeKind {
         }
     }
 
-    /// Parse the serialised form produced by `kind_string` / OCaml `to_string`.
-    /// Matches OCaml `Edge_kind.of_string`.
+    /// Parse the serialised form produced by `kind_string`.
     pub fn parse(s: &str) -> Result<EdgeKind, String> {
         if s == "has_sensor" {
             return Ok(EdgeKind::HasSensor);
@@ -103,7 +97,6 @@ impl EdgeKind {
 
 /// The three real Cognito user-pool groups.
 ///
-/// Faithfully ported from `services/hierarchy/lib/domain/cognito_group.ml`.
 /// Canonical `to_string` is capitalised; `parse` is case-insensitive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq,
          strum::Display, strum::EnumString)]
@@ -144,8 +137,7 @@ impl CognitoGroup {
 
 /// User-facing access profiles (UI/input concept, never stored directly).
 ///
-/// Faithfully ported from `services/hierarchy/lib/domain/profile.ml`.
-/// Variant order matches OCaml `all` list: `[ Developer; Standard; Technician; Reader; Sysadm ]`.
+/// Variant order is significant: Developer, Standard, Technician, Reader, Sysadm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter,
          strum::Display, strum::EnumString)]
 pub enum Profile {
@@ -162,13 +154,12 @@ pub enum Profile {
 }
 
 impl Profile {
-    /// All variants in OCaml list order: `[ Developer; Standard; Technician; Reader; Sysadm ]`.
+    /// All variants in order: Developer, Standard, Technician, Reader, Sysadm.
     pub fn all() -> Vec<Profile> {
         Profile::iter().collect()
     }
 
     /// Map a profile to its Cognito group.
-    /// Matches OCaml `Profile.to_cognito_group`.
     pub fn to_cognito_group(&self) -> CognitoGroup {
         match self {
             Profile::Sysadm => CognitoGroup::Admin,
@@ -185,12 +176,11 @@ impl Profile {
 
 /// Supported currencies.
 ///
-/// Faithfully ported from `services/hierarchy/lib/domain/currency.ml`.
 /// Variant order backs the `render_currencies` option list: DKK, SEK, NOK, USD, EUR.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default,
          strum::Display, strum::EnumString, EnumIter)]
 pub enum Currency {
-    /// Matches OCaml `Currency.default = DKK`.
+    /// Default currency.
     #[default]
     #[strum(serialize = "DKK")]
     Dkk,
@@ -211,12 +201,11 @@ pub enum Currency {
 
 /// Supported UI languages.
 ///
-/// Faithfully ported from `services/hierarchy/lib/domain/language.ml`.
 /// Variant order backs the `render_languages` option list: danish, swedish, norwegian, english, german.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default,
          strum::Display, strum::EnumString, EnumIter)]
 pub enum Language {
-    /// Matches OCaml `Language.default = Danish`.
+    /// Default language.
     #[default]
     #[strum(serialize = "danish")]
     Danish,
@@ -236,9 +225,6 @@ pub enum Language {
 // ---------------------------------------------------------------------------
 
 /// Measurement accumulation style for a sensor.
-///
-/// Faithfully ported from `services/hierarchy/lib/domain/sensor.ml`
-/// (`meter_type` type + `meter_type_to_string` / `meter_type_of_string`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq,
          strum::Display, strum::EnumString)]
 pub enum MeterType {
@@ -308,11 +294,7 @@ pub enum Permission {
 
 /// Schema field type for metadata validation.
 ///
-/// Faithfully ported from `services/hierarchy/lib/domain/metadata.ml`
-/// (`field_type` variant definition only; validation functions are a later task).
-///
-/// OCaml `int option` maps to `Option<i64>` (the OCaml `Int64` / `int64` variant)
-/// and `float option` to `Option<f64>`.
+/// Integer bounds use `Option<i64>` and float bounds use `Option<f64>`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum FieldType {
@@ -336,7 +318,7 @@ pub enum FieldType {
 }
 
 // ---------------------------------------------------------------------------
-// Tests (ported 1:1 from OCaml test files + plan examples)
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -345,7 +327,6 @@ mod tests {
 
     // ---- EdgeKind -----------------------------------------------------------
 
-    /// Port of `test_domain_edge_kind.ml :: has_label_verbs`
     #[test]
     fn edge_kind_has_label_verbs() {
         let k = EdgeKind::HasLabel("building".to_string());
@@ -353,7 +334,6 @@ mod tests {
         assert_eq!(k.gsi_verb(), None);
     }
 
-    /// Port of `test_domain_edge_kind.ml :: has_sensor_verbs`
     #[test]
     fn edge_kind_has_sensor_verbs() {
         let k = EdgeKind::HasSensor;
@@ -361,7 +341,6 @@ mod tests {
         assert_eq!(k.gsi_verb(), None);
     }
 
-    /// Port of `test_domain_edge_kind.ml :: blocked_verbs`
     #[test]
     fn edge_kind_blocked_verbs() {
         let k = EdgeKind::Blocked;
@@ -369,7 +348,6 @@ mod tests {
         assert_eq!(k.gsi_verb(), Some("blocks"));
     }
 
-    /// Port of `test_domain_edge_kind.ml :: administrates_verbs`
     #[test]
     fn edge_kind_administrates_verbs() {
         let k = EdgeKind::Administrates;
@@ -393,7 +371,6 @@ mod tests {
         assert_eq!(k.kind_string(), "writes");
     }
 
-    /// Port of `test_domain_edge_kind.ml :: roundtrip_to_string`
     #[test]
     fn edge_kind_roundtrip() {
         let kinds = vec![
@@ -466,7 +443,6 @@ mod tests {
         assert_eq!("reader".parse::<CognitoGroup>().unwrap(), CognitoGroup::Reader);
     }
 
-    /// Port of `test_domain_user.ml :: cognito_group_parses`
     #[test]
     fn cognito_group_parses() {
         assert_eq!("reader".parse::<CognitoGroup>().unwrap(), CognitoGroup::Reader);
@@ -531,7 +507,6 @@ mod tests {
         }
     }
 
-    /// Port of `test_domain_profile.ml :: maps_to_groups`
     #[test]
     fn profile_maps_to_groups() {
         let group_of = |s: &str| s.parse::<Profile>().unwrap().to_cognito_group();
@@ -542,13 +517,11 @@ mod tests {
         assert_eq!(group_of("Reader"), CognitoGroup::Reader);
     }
 
-    /// Port of `test_domain_profile.ml :: rejects_unknown`
     #[test]
     fn profile_rejects_unknown() {
         assert!("Nope".parse::<Profile>().is_err());
     }
 
-    /// Port of `test_domain_profile.ml :: all_roundtrip`
     #[test]
     fn profile_all_roundtrip() {
         for p in Profile::all() {
@@ -559,7 +532,7 @@ mod tests {
         }
     }
 
-    /// `all()` returns all 5 variants (OCaml list order: Developer, Standard, Technician, Reader, Sysadm).
+    /// `all()` returns all 5 variants (order: Developer, Standard, Technician, Reader, Sysadm).
     #[test]
     fn profile_all_order() {
         let all = Profile::all();

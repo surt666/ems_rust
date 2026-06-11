@@ -1,6 +1,5 @@
-//! DynamoDB operations for hierarchy nodes.
+//! DynamoDB operations for hierarchy nodes and subtree operations.
 //!
-//! Mirrors `services/hierarchy/lib/repo/dynamo.ml` node + subtree operations.
 //! All item encoding/decoding goes through `codec`; never re-encode here.
 
 use std::collections::HashMap;
@@ -20,7 +19,7 @@ use crate::repository::dynamodb::codec::{
 };
 
 // ---------------------------------------------------------------------------
-// Constants — mirror dynamo.ml / codec.ml
+// Constants
 // ---------------------------------------------------------------------------
 
 const COUNTER_SK: &str = "count";
@@ -31,7 +30,7 @@ const COUNTER_INITIAL_N: i64 = 10_000;
 const BATCH_DELETE_CHUNK: usize = 25;
 
 // ---------------------------------------------------------------------------
-// Counter key helpers — mirror codec.ml
+// Counter key helpers
 // ---------------------------------------------------------------------------
 
 pub(crate) fn counter_pk_node(level: Level) -> String {
@@ -55,7 +54,7 @@ fn pk_key(id: &str) -> Item {
 }
 
 // ---------------------------------------------------------------------------
-// Counter reads/writes — mirror dynamo.ml counter_ops
+// Counter reads/writes
 // ---------------------------------------------------------------------------
 
 /// Read the counter at `pk`; returns `(n, live)` or `None` if missing.
@@ -110,7 +109,7 @@ pub(crate) async fn bump_live(client: &Client, table: &str, pk: &str, delta: i64
 }
 
 // ---------------------------------------------------------------------------
-// Atomic allocate + put — mirror dynamo.ml try_transact_alloc
+// Atomic allocate + put
 // ---------------------------------------------------------------------------
 
 /// Result of a single attempt; used internally by the allocation loop.
@@ -202,7 +201,7 @@ async fn try_transact_alloc(
 }
 
 // ---------------------------------------------------------------------------
-// Edge spec type (mirrors OCaml Effects.edge_spec, local to alloc fns)
+// Edge spec type (local to alloc fns)
 // ---------------------------------------------------------------------------
 
 pub struct AllocEdgeSpec {
@@ -215,7 +214,7 @@ pub struct AllocEdgeSpec {
 }
 
 // ---------------------------------------------------------------------------
-// allocate_and_put_node — mirror dynamo.ml
+// allocate_and_put_node
 // ---------------------------------------------------------------------------
 
 /// Allocate a new node id for `level`, call `build(id)` → `(Node, AllocEdgeSpec)`,
@@ -278,7 +277,7 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// allocate_and_put_sensor — mirror dynamo.ml
+// allocate_and_put_sensor
 // ---------------------------------------------------------------------------
 
 /// Allocate a new sensor id, call `build(id)` → `(Sensor_item, AllocEdgeSpec)`,
@@ -339,7 +338,7 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// get_node — mirror dynamo.ml `get_item`
+// get_node
 // ---------------------------------------------------------------------------
 
 pub async fn get_node(
@@ -364,7 +363,7 @@ pub async fn get_node(
 }
 
 // ---------------------------------------------------------------------------
-// put_node — mirror dynamo.ml `put_node`
+// put_node
 // ---------------------------------------------------------------------------
 
 pub async fn put_node(
@@ -383,7 +382,7 @@ pub async fn put_node(
 }
 
 // ---------------------------------------------------------------------------
-// delete_subtree — mirror dynamo.ml `delete_subtree`
+// delete_subtree
 // ---------------------------------------------------------------------------
 
 /// List all levels at or below `starting_level` (inclusive).
@@ -395,7 +394,7 @@ fn levels_at_or_below(starting_level: Level) -> Vec<Level> {
 }
 
 /// Page through the GSI partition `gsi1pk_v` for rows whose `gsi1sk` begins
-/// with `path_prefix`.  Mirrors `query_gsi_partition`.
+/// with `path_prefix`.
 async fn query_gsi_partition(
     client: &Client,
     table: &str,
@@ -438,7 +437,6 @@ async fn query_gsi_partition(
 }
 
 /// Delete a list of `(pk, sk)` pairs in 25-row `BatchWriteItem` chunks.
-/// Mirrors `batch_delete`.
 async fn batch_delete(client: &Client, table: &str, keys: Vec<(AttributeValue, AttributeValue)>) {
     for chunk in keys.chunks(BATCH_DELETE_CHUNK) {
         let requests: Vec<WriteRequest> = chunk
@@ -468,7 +466,7 @@ async fn batch_delete(client: &Client, table: &str, keys: Vec<(AttributeValue, A
 
 /// Delete the node at `id` and everything beneath it.
 ///
-/// Strategy mirrors `dynamo.ml delete_subtree`:
+/// Strategy:
 /// - Query each level partition in GSI with `gsi1sk begins_with self.path`.
 /// - Query the `S` sensor partition the same way.
 /// - Batch-delete all matched keys.
@@ -535,11 +533,10 @@ pub async fn delete_subtree(
 }
 
 // ---------------------------------------------------------------------------
-// list_child_refs / list_children — mirror dynamo.ml `query_child_refs` / `query_children`
+// list_child_refs / list_children
 // ---------------------------------------------------------------------------
 
 /// Query child edge rows under `parent`, optionally filtered to a specific kind.
-/// Mirrors `query_child_edges`.
 async fn query_child_edges(
     client: &Client,
     table: &str,
@@ -575,7 +572,6 @@ fn child_id_from_edge_sk(sk: &str) -> Option<&str> {
 }
 
 /// List `(child_id, edge_name)` pairs for edges from `parent`.
-/// Mirrors `query_child_refs`.
 pub async fn list_child_refs(
     client: &Client,
     table: &str,
@@ -603,7 +599,7 @@ pub async fn list_child_refs(
 }
 
 /// List child *nodes* (not sensors) reachable from `parent`.
-/// Mirrors `query_children` (skips `has_sensor#` edges).
+/// Skips `has_sensor#` edges.
 pub async fn list_children(
     client: &Client,
     table: &str,

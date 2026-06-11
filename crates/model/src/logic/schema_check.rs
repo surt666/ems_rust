@@ -1,4 +1,4 @@
-//! Schema-check logic — ported 1:1 from `services/hierarchy/lib/logic/schema_check.ml`.
+//! Schema-check logic.
 //!
 //! The single entry point `find_for` locates the HN2 (company) ancestor of a
 //! node and returns its `(NodeId, Schema)`.  All repository access is injected
@@ -17,7 +17,7 @@ use crate::errors::RepositoryError;
 
 /// Locate the HN2 ancestor of `id` and return `(hn2_id, schema)`.
 ///
-/// Algorithm (mirrors OCaml `Schema_check.find_for`):
+/// Algorithm:
 /// 1. If `id` is root → `Err(SchemaMissing(id))`.
 /// 2. Fetch the node; absent → `Err(NotFound(id))`.
 /// 3. If the node *is* an HN2 → return its schema (or `SchemaMissing`).
@@ -64,7 +64,7 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Tests — port of `services/hierarchy/test/test_logic_schema_check.ml`
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -110,7 +110,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: find_schema_from_self  (OCaml: `find_schema_from_self`)
+    // Test: find_schema_from_self
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -137,7 +137,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: find_schema_by_walking_up  (OCaml: `find_schema_by_walking_up`)
+    // Test: find_schema_by_walking_up
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -175,7 +175,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: schema_missing_when_no_hn2  (OCaml: `schema_missing_when_no_hn2`)
+    // Test: schema_missing_when_no_hn2
     //
     // An HN3 node whose path has no HN2 ancestor → SchemaMissing.
     // -----------------------------------------------------------------------

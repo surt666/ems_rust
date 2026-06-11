@@ -1,7 +1,4 @@
-//! DynamoDB operations for hierarchy edges.
-//!
-//! Mirrors `services/hierarchy/lib/repo/dynamo.ml` edge operations:
-//! `put_edge_spec` and `delete_edge`.
+//! DynamoDB operations for hierarchy edges: `put_edge` and `delete_edge`.
 
 use aws_sdk_dynamodb::{types::AttributeValue, Client};
 use chrono::DateTime;
@@ -12,7 +9,7 @@ use crate::errors::RepositoryError;
 use crate::repository::dynamodb::codec::{self, AnchorEdgeParams, EdgeParams};
 
 // ---------------------------------------------------------------------------
-// Edge put — mirrors dynamo.ml `put_edge_spec`
+// Edge put
 // ---------------------------------------------------------------------------
 
 /// Write an edge item.
@@ -20,8 +17,6 @@ use crate::repository::dynamodb::codec::{self, AnchorEdgeParams, EdgeParams};
 /// When `self_path` is `Some`, uses `anchor_edge_to_item` (hierarchy-side
 /// `has_<label>` / `has_sensor` edges).  When `None`, uses the generic
 /// `edge_to_item` (user-side `administrates` / `blocked` edges).
-///
-/// Mirrors OCaml `put_edge_spec`.
 #[allow(clippy::too_many_arguments)]
 pub async fn put_edge(
     client: &Client,
@@ -63,12 +58,12 @@ pub async fn put_edge(
 }
 
 // ---------------------------------------------------------------------------
-// Edge delete — mirrors dynamo.ml `delete_edge`
+// Edge delete
 // ---------------------------------------------------------------------------
 
 /// Delete a single edge item identified by `(from_, to_, kind)`.
 ///
-/// sk = `"<sk_verb>#<to_>"`.  Mirrors OCaml `delete_edge`.
+/// sk = `"<sk_verb>#<to_>"`.
 pub async fn delete_edge(
     client: &Client,
     table: &str,

@@ -1,9 +1,5 @@
 //! DynamoDB operations for users and the user-edge relationships
 //! (administrated nodes, blocked nodes, blocked users).
-//!
-//! Mirrors `services/hierarchy/lib/repo/dynamo.ml` user ops:
-//! `put_user`, `get_user`, `list_users`, `delete_user`,
-//! `query_administrated_nodes`, `query_blocked_nodes`, `query_blocked_users`.
 
 use aws_sdk_dynamodb::{types::AttributeValue, Client};
 
@@ -14,7 +10,7 @@ use crate::errors::RepositoryError;
 use crate::repository::dynamodb::codec;
 
 // ---------------------------------------------------------------------------
-// put_user — mirrors dynamo.ml `put_user`
+// put_user
 // ---------------------------------------------------------------------------
 
 pub async fn put_user(
@@ -33,7 +29,7 @@ pub async fn put_user(
 }
 
 // ---------------------------------------------------------------------------
-// get_user — mirrors dynamo.ml `get_user`
+// get_user
 // ---------------------------------------------------------------------------
 
 pub async fn get_user(
@@ -64,7 +60,7 @@ pub async fn get_user(
 }
 
 // ---------------------------------------------------------------------------
-// list_users — mirrors dynamo.ml `list_users`
+// list_users
 //
 // Query on gsi1 index: gsi1pk = "user".  No begins_with condition (all users).
 // ---------------------------------------------------------------------------
@@ -93,7 +89,7 @@ pub async fn list_users(
 }
 
 // ---------------------------------------------------------------------------
-// delete_user — mirrors dynamo.ml `delete_user`
+// delete_user
 // ---------------------------------------------------------------------------
 
 pub async fn delete_user(
@@ -117,7 +113,7 @@ pub async fn delete_user(
 }
 
 // ---------------------------------------------------------------------------
-// list_blocked_nodes — mirrors dynamo.ml `query_blocked_nodes`
+// list_blocked_nodes
 //
 // Query pk = user_id, sk begins_with "blocked#"
 // ---------------------------------------------------------------------------
@@ -159,7 +155,7 @@ pub async fn list_blocked_nodes(
 }
 
 // ---------------------------------------------------------------------------
-// list_administrated_nodes — mirrors dynamo.ml `query_administrated_nodes`
+// list_administrated_nodes
 //
 // Query pk = user_id, sk begins_with "administrates#"
 // ---------------------------------------------------------------------------
@@ -251,7 +247,7 @@ pub async fn list_access_edges(
 }
 
 // ---------------------------------------------------------------------------
-// list_blocked_users — mirrors dynamo.ml `query_blocked_users`
+// list_blocked_users
 //
 // Query on gsi1: gsi1pk = node_id, gsi1sk begins_with "blocks#".
 // Returns user ids extracted from the main `pk` attribute of matched rows.

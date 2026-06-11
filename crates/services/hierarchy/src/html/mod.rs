@@ -5,7 +5,7 @@ pub mod tree;
 /// Percent-encode a string component for use in URL paths/query values.
 ///
 /// Only unreserved chars (`A-Z a-z 0-9 - _ . ~`) are left as-is; everything
-/// else is `%XX`-encoded (uppercase hex, matching OCaml `api_html.ml :: pct`).
+/// else is `%XX`-encoded (uppercase hex).
 pub fn pct(s: &str) -> String {
     let mut buf = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -21,8 +21,7 @@ pub fn pct(s: &str) -> String {
     buf
 }
 
-/// Return `(icon_href, bar_class)` for a given level, matching OCaml
-/// `api_html.ml :: level_visual`.
+/// Return `(icon_href, bar_class)` for a given level.
 pub fn level_visual(level: model::domain::ids::Level) -> (&'static str, &'static str) {
     use model::domain::ids::Level;
     match level {

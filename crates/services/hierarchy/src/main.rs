@@ -7,7 +7,7 @@ mod query;
 use lambda_http::{http::Method, run, service_fn, Body, Error, Request, Response};
 
 // ---------------------------------------------------------------------------
-// Lambda HTTP handler — mirrors handler.ml routing
+// Lambda HTTP handler — routing
 //
 // Routes:
 //   GET  /query/<action>          → query::run_query (JSON)
@@ -41,7 +41,7 @@ async fn handler(event: Request) -> Result<Response<Body>, Error> {
         .unwrap_or_default();
 
     // ---------------------------------------------------------------------------
-    // Routing — matches handler.ml `handler` match
+    // Routing
     // ---------------------------------------------------------------------------
 
     fn strip(prefix: &str, path: &str) -> Option<String> {
@@ -94,7 +94,7 @@ async fn handler(event: Request) -> Result<Response<Body>, Error> {
                 Ok(cmd) => {
                     let resp = dispatch::run(cmd).await;
                     // dispatch::run returns a serde_json::Value with statusCode +
-                    // body fields (mirrors OCaml Lambda V2 envelope).
+                    // body fields (the Lambda V2 envelope).
                     let status = resp["statusCode"]
                         .as_u64()
                         .unwrap_or(200) as u16;

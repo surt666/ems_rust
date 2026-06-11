@@ -1,4 +1,4 @@
-//! Access-control logic — ported 1:1 from `services/hierarchy/lib/logic/access.ml`.
+//! Access-control logic.
 //!
 //! All repository operations are injected as async closures; no traits are used.
 //! Pure helpers (e.g. `ancestors_of_path`) are plain sync functions.
@@ -19,7 +19,6 @@ use crate::repository::EdgeSpec;
 /// Return all ancestor node-ids (root-first, self excluded) by parsing the
 /// pipe-separated `path` stored in the node.
 ///
-/// Mirrors OCaml `ancestors_of`:
 /// - Returns `[]` for root.
 /// - Otherwise splits `node.path` on `'|'`, drops empty segments and the node's
 ///   own id, then parses each remaining segment.
@@ -42,8 +41,6 @@ pub fn ancestors_of_path(node_id: &NodeId, path: &str) -> Vec<NodeId> {
 ///
 /// Fails with `NotFoundUser` if the user does not exist, or `NotFound` if the
 /// node does not exist.
-///
-/// Mirrors OCaml `Access.block`.
 pub async fn block<FGU, FGUFut, FGN, FGNFut, FPE, FPEFut>(
     user_id: UserId,
     node_id: NodeId,
@@ -83,9 +80,7 @@ where
 
 /// Remove the `Blocked` edge from `user_id` → `node_id`.
 ///
-/// No-op if the edge is absent (matches OCaml semantics).
-///
-/// Mirrors OCaml `Access.unblock`.
+/// No-op if the edge is absent.
 pub async fn unblock<FDE, FDEFut>(
     user_id: UserId,
     node_id: NodeId,
@@ -113,8 +108,6 @@ where
 /// 4. If any chain node is in `blocked` → `None`.
 /// 5. Walk the chain from `node_id` upward; return the `EdgeKind::capability`
 ///    of the **first** chain node that has an access edge.  If none → `None`.
-///
-/// Mirrors the new OCaml `Access.effective_permission` semantics.
 pub async fn effective_permission<FGU, FGUFut, FGN, FGNFut, FLB, FLBFut, FLA, FLAFut>(
     user_id: UserId,
     node_id: NodeId,
@@ -171,8 +164,6 @@ where
 // ---------------------------------------------------------------------------
 
 /// List all node-ids that `user_id` has blocked.
-///
-/// Mirrors OCaml `Access.list_blocked_nodes`.
 pub async fn list_blocked_nodes<FLB, FLBFut>(
     user_id: UserId,
     list_blocked: FLB,
@@ -185,8 +176,6 @@ where
 }
 
 /// List all user-ids that have blocked `node_id`.
-///
-/// Mirrors OCaml `Access.list_blocked_users`.
 pub async fn list_blocked_users<FLB, FLBFut>(
     node_id: NodeId,
     list_blocked: FLB,
@@ -252,8 +241,6 @@ where
 /// Delegates to `grant_access` with `EdgeKind::Administrates`.
 /// Fails with `NotFoundUser` if the user does not exist.  For non-root nodes,
 /// also fails with `NotFound` if the node does not exist.  Root is always valid.
-///
-/// Mirrors OCaml `Access.grant_administrates`.
 pub async fn grant_administrates<FGU, FGUFut, FGN, FGNFut, FPE, FPEFut>(
     user_id: UserId,
     node_id: NodeId,
@@ -277,8 +264,6 @@ where
 // ---------------------------------------------------------------------------
 
 /// List all node-ids that `user_id` administrates.
-///
-/// Mirrors OCaml `Access.list_administrated_nodes`.
 pub async fn list_administrated_nodes<FLA, FLAFut>(
     user_id: UserId,
     list_administrated: FLA,
@@ -299,8 +284,6 @@ where
 /// This means the **nearest** access edge up the chain is `Administrates`.
 /// A `Reads` or `Writes` edge closer to the node takes precedence and results
 /// in `false`.
-///
-/// Mirrors OCaml `Access.has_admin_access`.
 pub async fn has_admin_access<FLA, FLAFut, FGN, FGNFut>(
     user_id: UserId,
     node_id: NodeId,
@@ -379,19 +362,16 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// start_nodes  (OCaml `start_refs` / start-nodes for a user's scope)
+// start_nodes  (start-nodes for a user's scope)
 // ---------------------------------------------------------------------------
 
 /// Return the set of "start nodes" for a user's access scope.
 ///
-/// Rules (mirrors the OCaml `top_level_shows_administrated_hn2` behaviour,
-/// extended to all access edge kinds):
+/// Rules (covering all access edge kinds):
 /// - If the user has ANY access edge on **root**, expand to root's direct
 ///   children (the partners / HN1 nodes).
 /// - Otherwise return the granted nodes as-is (nodes with Administrates,
 ///   Reads, or Writes edges).
-///
-/// Mirrors OCaml `start_refs`.
 pub async fn start_nodes<FLA, FLAFut, FLC, FLCFut>(
     user_id: UserId,
     list_access_edges: FLA,
@@ -416,7 +396,7 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Tests — port of `services/hierarchy/test/test_logic_access.ml`
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -532,7 +512,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Seed helper — mirrors OCaml `seed ()`
+    // Seed helper
     //
     // Creates:
     //   - c2 = HN2#10002  "Acme"  (parent: root, path includes HN1#10001 as intermediate)
@@ -555,7 +535,7 @@ mod tests {
         let bldg = make_hn3(bldg_id_raw, "B", c2.id.clone(), &c2.path);
         store.put_node(&bldg);
 
-        // parent→child edge (mirrors `Hierarchy.add_node`)
+        // parent→child edge
         store.put_edge(EdgeSpec {
             from_: c2.id.to_string(),
             to_: bldg.id.to_string(),
@@ -574,7 +554,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: block then list  (OCaml: `block_then_list`)
+    // Test: block then list
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -600,7 +580,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: block unknown user fails  (OCaml: `block_unknown_user_fails`)
+    // Test: block unknown user fails
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -779,7 +759,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: list_blocked_users reverse  (OCaml: `list_blocked_users_reverse`)
+    // Test: list_blocked_users reverse
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -805,10 +785,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: delete_node cascades blocks  (OCaml: `delete_node_cascades_blocks`)
+    // Test: delete_node cascades blocks
     //
     // When a node is deleted from the store, all edges touching it are removed
-    // (that is Store::delete_node behaviour, ported from memory.ml).
+    // (that is Store::delete_node behaviour).
     // After deletion, list_blocked_nodes for the user should be empty.
     // -----------------------------------------------------------------------
 
