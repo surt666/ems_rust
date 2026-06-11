@@ -95,7 +95,7 @@ spark.conf.set("spark.sql.catalog.s3tables.warehouse", warehouse)
 # ── Helper functions ──
 
 def parse_hierarchy_path(path: str) -> dict:
-    """Parse OCaml-style hierarchy path "HN0#root|HN1#<int>|HN2#<int>|..." into hn1..hn9 ints.
+    """Parse hierarchy path "HN0#root|HN1#<int>|HN2#<int>|..." into hn1..hn9 ints.
     HN0 is the root and ignored. Sensor segment (S#<int>) must NOT be present — the sensor
     id is the meter-identity row's logical_id, not part of hierarchy_path."""
     result: dict = {f"hn{i}": None for i in range(1, 10)}

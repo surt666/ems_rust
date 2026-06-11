@@ -134,13 +134,13 @@ fn format_float_g17(f: f64) -> String {
     // but we need exactly %.17g behavior (17 significant digits).
     format!("{:.17e}", f)
         .parse::<f64>()
-        .map(|_| ocaml_g17(f))
+        .map(|_| format_g17(f))
         .unwrap_or_else(|_| format!("{}", f))
 }
 
 /// Reproduce `%.17g`: up to 17 significant digits, no trailing zeros,
 /// scientific for |exp| >= 17 or exp < -4.
-fn ocaml_g17(f: f64) -> String {
+fn format_g17(f: f64) -> String {
     // Use 17-digit scientific, then reformat like %g
     let s = format!("{:.16e}", f); // 17 sig figs in "d.dddde+XX" form
     let (mant_s, exp_s) = s.split_once('e').unwrap();

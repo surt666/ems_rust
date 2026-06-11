@@ -7,7 +7,7 @@ import java.time.Instant
   * Uses java.lang.Integer for nullable fields to avoid Flink Kryo serialization
   * corrupting Scala Option[Int] across operator boundaries.
   *
-  * `logicalId` is the OCaml sensor_id (int). `hn1`/`hn2` are partner/company; `hn3..hn9`
+  * `logicalId` is the sensor id (int). `hn1`/`hn2` are partner/company; `hn3..hn9`
   * are schema-defined per company. `purpose` is human-readable sensor purpose
   * (e.g., "supply temperature", "main meter"). */
 case class MeterMapping(

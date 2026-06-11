@@ -135,7 +135,7 @@ pub fn expr_to_string(e: &Expr) -> String {
                 // `%.17g` suppresses trailing zeros and the exponent
                 // for numbers that don't need it; replicate with a manual formatting.
                 .parse::<f64>()
-                .map_or_else(|_| format!("{}", n), |_| ocaml_g(*n)),
+                .map_or_else(|_| format!("{}", n), |_| format_g(*n)),
             Expr::SelfRef => "self".to_string(),
             Expr::Ref(a) => a.clone(),
             Expr::Abs(inner) => format!("abs({})", go(0, inner)),
@@ -153,7 +153,7 @@ pub fn expr_to_string(e: &Expr) -> String {
 ///
 /// `%g` rules: use scientific notation when exponent < -4 or exponent >= precision (17);
 /// otherwise fixed.  Strip trailing zeros (and trailing decimal point).
-fn ocaml_g(n: f64) -> String {
+fn format_g(n: f64) -> String {
     if n.is_nan() {
         return "nan".to_string();
     }

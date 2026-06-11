@@ -1462,7 +1462,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn add_node_parses_api_json_schema_shape() {
+    async fn add_node_parses_json_schema_shape() {
         let store = Rc::new(Store::new());
 
         // Seed an HN1 partner node so we can create an HN2 company under it.
@@ -1515,7 +1515,7 @@ mod tests {
         assert_eq!(
             status(&resp),
             200,
-            "add_node with api_json-shape schema should return 200; got {resp:?}"
+            "add_node with JSON-shape schema should return 200; got {resp:?}"
         );
 
         // The created node id is in the response body; fetch it from the Store

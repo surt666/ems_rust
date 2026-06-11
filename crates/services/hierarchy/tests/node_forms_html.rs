@@ -243,7 +243,7 @@ fn timezones_structural() {
 }
 
 #[test]
-fn profiles_order_matches_ocaml() {
+fn profiles_order_is_stable() {
     let html = render_profiles().into_string();
     // Expected order: Developer, Standard, Technician, Reader, SysAdm
     let dev_pos = html.find("Developer").unwrap();

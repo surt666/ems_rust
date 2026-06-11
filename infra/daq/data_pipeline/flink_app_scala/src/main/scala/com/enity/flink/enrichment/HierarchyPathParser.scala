@@ -1,7 +1,7 @@
 package com.enity.flink.enrichment
 
 /** Hierarchy levels hn1..hn9. hn1 always = partner, hn2 always = company; hn3..hn9 are
-  * schema-defined per company (see ems_ocaml hierarchy model). java.lang.Integer for
+  * schema-defined per company. java.lang.Integer for
   * nullable optional levels — Flink Kryo corrupts Scala Option[Int] across operator boundaries. */
 case class HierarchyIds(
   hn1: Int,
@@ -17,7 +17,7 @@ case class HierarchyIds(
 
 object HierarchyPathParser:
 
-  /** Parse an OCaml-style hierarchy path into level ids.
+  /** Parse a hierarchy path into level ids.
     *
     * Input shape: `HN0#root|HN1#<int>|HN2#<int>|...` — pipe-separated `HN<n>#<id>` segments
     * starting at the root (`HN0#root`, ignored) and descending. The trailing `S#<id>` segment
