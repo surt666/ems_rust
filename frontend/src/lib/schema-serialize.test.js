@@ -59,3 +59,64 @@ test("serialize drops metadata for types not in the types list", () => {
   const state = { types: ["company"], edges: { company: [] }, metadata: { ghost: [{ name: "x", type: "string", required: false }] }, sensors: [] };
   assert.deepEqual(serialize(state).metadata, {});
 });
+
+import { reachable, reachableFromRoot, longestDepth, wouldCycle, hasCycle, validate } from "./schema-serialize.js";
+
+test("wouldCycle blocks an edge that closes a loop", () => {
+  const edges = { company: ["group"], group: ["building"], building: [], area: [] };
+  assert.equal(wouldCycle(edges, "building", "group"), true);
+  assert.equal(wouldCycle(edges, "building", "area"), false);
+  assert.equal(wouldCycle(edges, "building", "building"), true);
+});
+
+test("reachableFromRoot finds all connected types", () => {
+  const edges = { company: ["group"], group: ["building"], building: [], orphan: [] };
+  const r = reachableFromRoot(edges);
+  assert.ok(r.has("building"));
+  assert.ok(!r.has("orphan"));
+});
+
+test("longestDepth counts edges from company; boundary 7 ok / 8 too deep", () => {
+  const mk = (n) => {
+    const edges = {}; let p = "company";
+    for (let i = 1; i <= n; i++) { const c = "t" + i; edges[p] = [c]; p = c; }
+    edges[p] = [];
+    return edges;
+  };
+  assert.equal(longestDepth(mk(7)), 7);
+  const ok = validate({ types: ["company", ...Array.from({ length: 7 }, (_, i) => "t" + (i + 1))], edges: mk(7), metadata: {}, sensors: [] });
+  assert.equal(ok.errors.some((e) => e.includes("too deep")), false);
+  const bad = validate({ types: ["company", ...Array.from({ length: 8 }, (_, i) => "t" + (i + 1))], edges: mk(8), metadata: {}, sensors: [] });
+  assert.equal(bad.errors.some((e) => e.includes("too deep")), true);
+});
+
+test("validate flags unreachable, partner, dup field, min>max, empty enum", () => {
+  const state = {
+    types: ["company", "building", "orphan", "partner"],
+    edges: { company: ["building"], building: [], orphan: [], partner: [] },
+    metadata: {
+      building: [
+        { name: "a", type: "number", required: true, min: 5, max: 1 },
+        { name: "a", type: "string", required: false },
+        { name: "e", type: "enum", required: true, one_of: [] },
+      ],
+    },
+    sensors: [],
+  };
+  const { ok, errors } = validate(state);
+  assert.equal(ok, false);
+  assert.ok(errors.some((e) => e.includes("orphan") && e.includes("reachable")));
+  assert.ok(errors.some((e) => e.includes("partner") && e.includes("reserved")));
+  assert.ok(errors.some((e) => e.includes('duplicate field "a"')));
+  assert.ok(errors.some((e) => e.includes("min > max")));
+  assert.ok(errors.some((e) => e.includes("enum") && e.includes("value")));
+});
+
+test("validate catches a cycle even without the UI guard", () => {
+  const state = { types: ["company", "a", "b"], edges: { company: ["a"], a: ["b"], b: ["a"] }, metadata: {}, sensors: [] };
+  assert.ok(validate(state).errors.some((e) => e.includes("cycle")));
+});
+
+test("preset validates clean", () => {
+  assert.equal(validate(defaultPreset()).ok, true);
+});
