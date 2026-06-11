@@ -19,11 +19,12 @@ use serde_json::{json, Value};
 
 use model::domain::ids::{NodeId, SensorId, UserId};
 use model::domain::node::Node;
+use model::domain::schema::Schema;
 use model::domain::sensor::Sensor;
 use model::domain::user::User;
 use model::domain::values::{CognitoGroup, EdgeKind};
 use model::errors::RepositoryError;
-use model::logic::{access, hierarchy, users};
+use model::logic::{access, hierarchy, schema_check, users};
 #[cfg(test)]
 use model::logic::sensors;
 
@@ -110,6 +111,32 @@ fn html_repo_error(e: RepositoryError) -> (u16, String) {
     };
     use maud::html;
     (status, html! { div class="error" { (msg) } }.into_string())
+}
+
+// ---------------------------------------------------------------------------
+// Schema resolution helper
+// ---------------------------------------------------------------------------
+
+/// Resolve the effective company schema for a node by walking up to its HN2.
+///
+/// The schema is stored only on the HN2 (company) node; deeper nodes have
+/// `node.schema == None`. This walks up via `schema_check::find_for`, which
+/// returns the node's own schema when it IS an HN2, otherwise extracts the HN2
+/// segment from the node's path and fetches it.
+///
+/// Returns `None` for hn0/hn1 (no schema applies) or if the schema is missing.
+async fn effective_schema<F, Fut>(node: &Node, get_node: F) -> Option<Schema>
+where
+    F: Fn(NodeId) -> Fut,
+    Fut: Future<Output = Result<Option<Node>, RepositoryError>>,
+{
+    if node.id.level().depth() < 2 {
+        return None;
+    }
+    schema_check::find_for(node.id.clone(), get_node)
+        .await
+        .ok()
+        .map(|(_, s)| s)
 }
 
 // ---------------------------------------------------------------------------
@@ -426,9 +453,21 @@ where
     FLA: FnOnce(UserId) -> FLAFut,
     FLAFut: Future<Output = Result<Vec<(NodeId, EdgeKind)>, RepositoryError>>,
 {
+    use model::domain::ids::Level;
+
     let nid = match NodeId::parse(id_s) {
         Ok(id) => id,
         Err(e) => return html_error(&format!("bad id: {}", e)),
+    };
+
+    // Clone `get_node` BEFORE it is consumed by effective_permission / get_node
+    // so it can also drive the schema walk-up (find_for needs an `Fn`).
+    let schema_lookup = {
+        let gn = get_node.clone();
+        move |nid: NodeId| {
+            let gn = gn.clone();
+            async move { gn(nid).await }
+        }
     };
 
     // Compute capability: normalise user string to "U#..." prefix.
@@ -456,14 +495,25 @@ where
 
     match hierarchy::get_node(nid, get_node).await {
         Ok(n) => {
+            // Resolve the effective company schema once (it lives on the HN2,
+            // so deeper nodes must walk up to find it).
+            let schema = effective_schema(&n, &schema_lookup).await;
             // show_sensors: whether the schema allows sensors on this node's type.
-            // The schema is carried on the node itself in the Rust model.
-            let show_sensors = n
-                .schema
+            let show_sensors = schema
                 .as_ref()
                 .map(|s| s.allows_sensors(&n.label))
                 .unwrap_or(false);
-            html_ok(html_node::render_node(&n, show_sensors, capability))
+            // allow_children: whether this node's type can have children at all.
+            // Hn0 (root) can add partners; Hn1 (partner) can add companies; for
+            // Hn2+ it depends on the schema's allowed children for this type.
+            let allow_children = match n.id.level() {
+                Level::Hn0 | Level::Hn1 => true,
+                _ => schema
+                    .as_ref()
+                    .map(|s| !s.allowed_children(&n.label).is_empty())
+                    .unwrap_or(false),
+            };
+            html_ok(html_node::render_node(&n, show_sensors, allow_children, capability))
         }
         Err(e) => html_repo_error(e),
     }
@@ -568,7 +618,7 @@ pub async fn handle_add_child_form<FGN, FGNFut>(
     get_node: FGN,
 ) -> (u16, String)
 where
-    FGN: FnOnce(NodeId) -> FGNFut,
+    FGN: FnOnce(NodeId) -> FGNFut + Clone,
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
 {
     use model::domain::ids::Level;
@@ -576,6 +626,16 @@ where
     let parent_id = match NodeId::parse(parent_s) {
         Ok(id) => id,
         Err(e) => return html_error(&format!("bad parent: {}", e)),
+    };
+
+    // Build an `Fn` adapter from the `FnOnce + Clone` closure so it can drive
+    // both the initial parent fetch and the schema walk-up (find_for needs `Fn`).
+    let schema_lookup = {
+        let gn = get_node.clone();
+        move |nid: NodeId| {
+            let gn = gn.clone();
+            async move { gn(nid).await }
+        }
     };
 
     let parent_node = match hierarchy::get_node(parent_id.clone(), get_node).await {
@@ -597,11 +657,15 @@ where
     };
     let child_level_s = child_level.to_string();
 
+    // Resolve the effective company schema by walking up to the HN2 (the schema
+    // is stored only on the company node, not on deeper hn3+ nodes).
+    let schema = effective_schema(&parent_node, &schema_lookup).await;
+
     // Determine allowed child types.
     let allowed_types: Vec<String> = match parent_level {
         Level::Hn0 => vec!["partner".to_string()],
         Level::Hn1 => vec!["company".to_string()],
-        _ => match &parent_node.schema {
+        _ => match &schema {
             Some(sch) => sch
                 .allowed_children(&parent_node.label)
                 .iter()
@@ -623,7 +687,7 @@ where
     // Metadata fields for the first allowed type (default selection).
     let chosen_type = &allowed_types[0];
     let metadata_fields: Vec<(String, model::domain::schema::FieldSpec)> =
-        match &parent_node.schema {
+        match &schema {
             Some(sch) => sch
                 .metadata_for(chosen_type)
                 .iter()
@@ -1247,7 +1311,8 @@ mod tests {
                 ]),
             ],
             metadata: vec![],
-            sensors: vec![],
+            // Sensors may attach to `building` nodes.
+            sensors: vec!["building".to_string()],
         }
     }
 
@@ -1402,26 +1467,44 @@ mod tests {
     }
 
     /// A parent whose type allows no children → the schema error message.
+    ///
+    /// Mirrors production: the schema lives ONLY on the company (hn2); the leaf
+    /// node ("area") has `schema=None` and its company must be reached by
+    /// walking up its path via `schema_check::find_for`.  "area" has no outgoing
+    /// edges, so no child types are allowed → cannot-have-children message.
     #[tokio::test]
     async fn add_child_form_no_children_for_leaf_type() {
         let store = Rc::new(Store::new());
-        // An hn3 node labeled "area" carrying the company schema: "area" has
-        // no outgoing edges, so no child types are allowed.
-        let a3 = NodeId::make(Level::Hn3, 10042);
-        let mut n3 = node::make(
-            10042,
-            Level::Hn3,
-            "A",
-            NodeId::make(Level::Hn2, 10002),
-            &format!("{}|HN1#10001|HN2#10002", NodeId::root()),
+
+        // Company (hn2) carries the schema.
+        let mut n2 = node::make(
+            10002,
+            Level::Hn2,
+            "Acme",
+            NodeId::root(),
+            &format!("{}|HN1#10001", NodeId::root()),
             json!({}),
             Some(company_schema()),
         );
-        n3.label = "area".to_string();
-        store.put_node(&n3);
+        n2.label = "company".to_string();
+        store.put_node(&n2);
+
+        // Leaf "area" node (hn4) with NO schema; its path points at the company.
+        let a4 = NodeId::make(Level::Hn4, 10044);
+        let mut n4 = node::make(
+            10044,
+            Level::Hn4,
+            "A",
+            NodeId::make(Level::Hn3, 10043),
+            &format!("{}|HN1#10001|HN2#10002|HN3#10043", NodeId::root()),
+            json!({}),
+            None,
+        );
+        n4.label = "area".to_string();
+        store.put_node(&n4);
 
         let (status, body) = handle_add_child_form(
-            &a3.to_string(),
+            &a4.to_string(),
             None,
             {
                 let s = store.clone();
@@ -1435,6 +1518,173 @@ mod tests {
             body.contains("This node type cannot have children according to its schema."),
             "expected no-children message; body: {}",
             body
+        );
+    }
+
+    /// Regression for the production bug: an hn3 `group` node has `schema=None`
+    /// (the schema lives on its company hn2).  The add-child form must walk up to
+    /// the company, see that `group` allows `building` children, and offer it —
+    /// NOT show the false "cannot have children" message.
+    #[tokio::test]
+    async fn add_child_form_walks_up_for_hn3_group() {
+        let store = Rc::new(Store::new());
+
+        // Company (hn2) carries the schema.
+        let c2 = NodeId::make(Level::Hn2, 10002);
+        let mut n2 = node::make(
+            10002,
+            Level::Hn2,
+            "Acme",
+            NodeId::root(),
+            &format!("{}|HN1#10001", NodeId::root()),
+            json!({}),
+            Some(company_schema()),
+        );
+        n2.label = "company".to_string();
+        store.put_node(&n2);
+
+        // hn3 `group` node with NO schema; path points at the company.
+        let g3 = NodeId::make(Level::Hn3, 29838);
+        let mut n3 = node::make(
+            29838,
+            Level::Hn3,
+            "Group",
+            c2.clone(),
+            &format!("{}|HN1#10001|HN2#10002", NodeId::root()),
+            json!({}),
+            None,
+        );
+        n3.label = "group".to_string();
+        store.put_node(&n3);
+
+        let (status, body) = handle_add_child_form(
+            &g3.to_string(),
+            None,
+            {
+                let s = store.clone();
+                move |nid| std::future::ready(Ok(s.get_node(&nid)))
+            },
+        )
+        .await;
+
+        assert_eq!(status, 200, "status 200");
+        assert!(
+            body.contains("option value=\"building\""),
+            "group should be able to add a building child; body: {}",
+            body
+        );
+        assert!(
+            !body.contains("This node type cannot have children according to its schema."),
+            "must NOT show the false no-children message; body: {}",
+            body
+        );
+    }
+
+    /// `handle_node` on an hn4 `building` (schema on the company allows
+    /// building→area + sensors on building) → sensor block present AND the
+    /// add-child button present.  On an hn4 `area` (leaf) the button is absent.
+    #[tokio::test]
+    async fn handle_node_building_shows_sensors_and_button_area_hides_button() {
+        let store = Rc::new(Store::new());
+
+        // Admin user.
+        let uid = seed_user(&store, "admin@ex", "Admin").await;
+        // Promote to Admin and grant administrates so capability is Admin.
+        let mut u = store.get_user(&uid).expect("user seeded");
+        u.cognito_group = CognitoGroup::Admin;
+        store.put_user(&u);
+
+        // Company (hn2) carries the schema.
+        let c2 = NodeId::make(Level::Hn2, 10002);
+        let mut n2 = node::make(
+            10002,
+            Level::Hn2,
+            "Acme",
+            NodeId::root(),
+            &format!("{}|HN1#10001", NodeId::root()),
+            json!({}),
+            Some(company_schema()),
+        );
+        n2.label = "company".to_string();
+        store.put_node(&n2);
+
+        // Grant administrates on the company so the user is Admin on descendants.
+        store.put_edge(RepoEdgeSpec {
+            from_: uid.to_string(),
+            to_: c2.to_string(),
+            kind: EdgeKind::Administrates,
+            name: String::new(),
+        });
+
+        // hn4 `building` node (schema None; path → company).
+        let b4 = NodeId::make(Level::Hn4, 10044);
+        let mut nb = node::make(
+            10044,
+            Level::Hn4,
+            "Building",
+            NodeId::make(Level::Hn3, 10043),
+            &format!("{}|HN1#10001|HN2#10002|HN3#10043", NodeId::root()),
+            json!({}),
+            None,
+        );
+        nb.label = "building".to_string();
+        store.put_node(&nb);
+
+        // hn4 `area` leaf node (schema None; path → company).
+        let a4 = NodeId::make(Level::Hn4, 10045);
+        let mut na = node::make(
+            10045,
+            Level::Hn4,
+            "Area",
+            NodeId::make(Level::Hn3, 10043),
+            &format!("{}|HN1#10001|HN2#10002|HN3#10043", NodeId::root()),
+            json!({}),
+            None,
+        );
+        na.label = "area".to_string();
+        store.put_node(&na);
+
+        // Building: sensor block + add-child button present.
+        let (status_b, html_b) = handle_node(
+            &b4.to_string(),
+            &uid.to_string(),
+            make_get_node(store.clone()),
+            {
+                let s = store.clone();
+                move |u| std::future::ready(Ok(s.get_user(&u)))
+            },
+            make_list_blocked_nodes_once(store.clone()),
+            make_list_access_edges_once(store.clone()),
+        )
+        .await;
+        assert_eq!(status_b, 200, "building status 200");
+        assert!(
+            html_b.contains("add-sensor-dialog"),
+            "building should show the sensor block; html: {}",
+            &html_b[..html_b.len().min(800)]
+        );
+        assert!(
+            html_b.contains("add-child-dialog"),
+            "building should show the add-child button"
+        );
+
+        // Area (leaf): add-child button absent.
+        let (status_a, html_a) = handle_node(
+            &a4.to_string(),
+            &uid.to_string(),
+            make_get_node(store.clone()),
+            {
+                let s = store.clone();
+                move |u| std::future::ready(Ok(s.get_user(&u)))
+            },
+            make_list_blocked_nodes_once(store.clone()),
+            make_list_access_edges_once(store.clone()),
+        )
+        .await;
+        assert_eq!(status_a, 200, "area status 200");
+        assert!(
+            !html_a.contains("add-child-dialog"),
+            "area (leaf) must NOT show the add-child button"
         );
     }
 
