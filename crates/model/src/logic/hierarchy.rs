@@ -103,7 +103,7 @@ pub async fn add_node<FGN, FGNFut, FLC, FLCFut, FAN, FANFut>(
     level: Option<Level>,
     label: Option<String>,
     name: String,
-    metadata: serde_json::Value,
+    mut metadata: serde_json::Value,
     schema: Option<Schema>,
     get_node_fn: FGN,
     list_children_fn: FLC,
@@ -199,7 +199,7 @@ where
                     "schema only allowed on hn2 nodes".to_string(),
                 ));
             }
-            let lbl = add_under_schema(
+            let (lbl, coerced_meta) = add_under_schema(
                 &parent,
                 &parent_node.label,
                 label.as_deref(),
@@ -208,6 +208,7 @@ where
                 list_children_fn,
             )
             .await?;
+            metadata = coerced_meta; // persist coerced values
             (lbl, None)
         }
     };
@@ -262,7 +263,7 @@ async fn add_under_schema<FGN, FGNFut, FLC, FLCFut>(
     metadata: &serde_json::Value,
     get_node_fn: &FGN,
     list_children_fn: FLC,
-) -> Result<String, RepositoryError>
+) -> Result<(String, serde_json::Value), RepositoryError>
 where
     FGN: Fn(NodeId) -> FGNFut,
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
@@ -297,9 +298,11 @@ where
         }
     };
 
-    // Validate metadata against the child type's specs.
+    // Validate metadata against the child type's specs (coercing form strings first).
     let specs = schema.metadata_for(&child_type);
-    validate(specs, metadata).map_err(RepositoryError::Validation)?;
+    let mut coerced = metadata.clone();
+    crate::domain::schema::coerce_metadata(specs, &mut coerced);
+    validate(specs, &coerced).map_err(RepositoryError::Validation)?;
 
     // Enforce cardinality max.
     if let Some(max) = spec.max {
@@ -315,7 +318,60 @@ where
         }
     }
 
-    Ok(child_type)
+    Ok((child_type, coerced))
+}
+
+// ---------------------------------------------------------------------------
+// update_node_metadata
+// ---------------------------------------------------------------------------
+
+/// Replace a node's metadata, validated against its type's schema, persisted
+/// via `put_node_fn`. Only schema-declared fields are kept.
+///
+/// - Node missing → `NotFound`.
+/// - hn0/hn1 (no schema-governed metadata) → `BadRequest`.
+/// - Metadata is coerced (form strings → declared types) then validated.
+pub async fn update_node_metadata<FGN, FGNFut, FPN, FPNFut>(
+    id: NodeId,
+    mut metadata: serde_json::Value,
+    get_node_fn: FGN,
+    put_node_fn: FPN,
+) -> Result<Node, RepositoryError>
+where
+    FGN: Fn(NodeId) -> FGNFut,
+    FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
+    FPN: FnOnce(Node) -> FPNFut,
+    FPNFut: Future<Output = Result<(), RepositoryError>>,
+{
+    let mut node = get_node_fn(id.clone())
+        .await?
+        .ok_or_else(|| RepositoryError::NotFound(id.clone()))?;
+
+    if node.level().depth() < 2 {
+        return Err(RepositoryError::BadRequest(
+            "node type has no editable metadata".to_string(),
+        ));
+    }
+
+    let (_host, schema) = schema_check::find_for(id.clone(), &get_node_fn).await?;
+    let specs = schema.metadata_for(&node.label);
+
+    crate::domain::schema::coerce_metadata(specs, &mut metadata);
+    validate(specs, &metadata).map_err(RepositoryError::Validation)?;
+
+    // Keep only declared fields.
+    let mut out = serde_json::Map::new();
+    if let Some(obj) = metadata.as_object() {
+        for (name, _spec) in specs {
+            if let Some(val) = obj.get(name) {
+                out.insert(name.clone(), val.clone());
+            }
+        }
+    }
+    node.metadata = serde_json::Value::Object(out);
+
+    put_node_fn(node.clone()).await?;
+    Ok(node)
 }
 
 // ---------------------------------------------------------------------------
@@ -949,5 +1005,126 @@ mod tests {
 
             assert_eq!(fetched.name, name, "name roundtrip differed for {:?}", name);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // update_node_metadata
+    // -----------------------------------------------------------------------
+
+    fn put_node_fn(
+        s: Rc<Store>,
+    ) -> impl FnOnce(node::Node) -> std::future::Ready<Result<(), RepositoryError>> {
+        move |n| {
+            s.put_node(&n);
+            std::future::ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn update_metadata_persists_and_coerces() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+        let b = add_node_helper(&store, c2, Some("building"), "B", serde_json::json!({"lat": 1.0}))
+            .await
+            .expect("add building");
+
+        // Update with a STRING lat (as a form would send) — coercion must make it validate.
+        let updated = update_node_metadata(
+            b.id.clone(),
+            serde_json::json!({ "lat": "55.5" }),
+            get_node_fn(store.clone()),
+            put_node_fn(store.clone()),
+        )
+        .await
+        .expect("update should succeed");
+        assert_eq!(updated.metadata["lat"], serde_json::json!(55.5));
+
+        let fetched = store.get_node(&b.id).unwrap();
+        assert_eq!(fetched.metadata["lat"], serde_json::json!(55.5));
+    }
+
+    #[tokio::test]
+    async fn update_metadata_rejects_invalid() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+        let b = add_node_helper(&store, c2, Some("building"), "B", serde_json::json!({"lat": 1.0}))
+            .await
+            .expect("add building");
+
+        let err = update_node_metadata(
+            b.id,
+            serde_json::json!({ "lat": "200" }),
+            get_node_fn(store.clone()),
+            put_node_fn(store.clone()),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, RepositoryError::Validation(_)));
+    }
+
+    #[tokio::test]
+    async fn update_metadata_keeps_only_declared_fields() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+        let b = add_node_helper(&store, c2, Some("building"), "B", serde_json::json!({"lat": 1.0}))
+            .await
+            .expect("add building");
+
+        let updated = update_node_metadata(
+            b.id,
+            serde_json::json!({ "lat": "10", "bogus": "x" }),
+            get_node_fn(store.clone()),
+            put_node_fn(store.clone()),
+        )
+        .await
+        .expect("update");
+        assert_eq!(updated.metadata["lat"], serde_json::json!(10.0));
+        assert!(updated.metadata.as_object().unwrap().get("bogus").is_none());
+    }
+
+    #[tokio::test]
+    async fn update_metadata_missing_node_is_not_found() {
+        let store = Rc::new(Store::new());
+        let ghost = NodeId::make(Level::Hn3, 99999);
+        let err = update_node_metadata(
+            ghost,
+            serde_json::json!({}),
+            get_node_fn(store.clone()),
+            put_node_fn(store.clone()),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, RepositoryError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn update_metadata_rejects_hn1() {
+        let store = Rc::new(Store::new());
+        store.put_node(&node::make_root());
+        let p = node::make(
+            10001, Level::Hn1, "P", NodeId::root(),
+            &NodeId::root().to_string(), serde_json::json!({}), None,
+        );
+        store.put_node(&p);
+        let err = update_node_metadata(
+            p.id,
+            serde_json::json!({}),
+            get_node_fn(store.clone()),
+            put_node_fn(store.clone()),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, RepositoryError::BadRequest(_)));
+    }
+
+    /// add-child via the form path sends string metadata; coercion must let it validate.
+    #[tokio::test]
+    async fn add_under_schema_coerces_string_metadata() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+        let b = add_node_helper(&store, c2, Some("building"), "B", serde_json::json!({"lat": "12.5"}))
+            .await
+            .expect("string lat should coerce + validate");
+        assert_eq!(b.metadata["lat"], serde_json::json!(12.5));
     }
 }
