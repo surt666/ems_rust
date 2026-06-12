@@ -508,7 +508,13 @@ where
                     .map(|s| !s.allowed_children(&n.label).is_empty())
                     .unwrap_or(false),
             };
-            html_ok(html_node::render_node(&n, show_sensors, allow_children, capability))
+            let metadata_fields: Vec<(String, model::domain::schema::FieldSpec)> = schema
+                .as_ref()
+                .map(|s| s.metadata_for(&n.label).to_vec())
+                .unwrap_or_default();
+            html_ok(html_node::render_node(
+                &n, show_sensors, allow_children, capability, &metadata_fields,
+            ))
         }
         Err(e) => html_repo_error(e),
     }

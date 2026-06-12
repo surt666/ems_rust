@@ -150,7 +150,7 @@ fn make_hn2_10003_node() -> Node {
 fn node_detail_matches_golden() {
     let node = make_hn2_10003_node();
     // Admin case: show_sensors=false; golden was captured from full-permissions output.
-    let rendered = render_node(&node, false, true, Some(CognitoGroup::Admin)).into_string();
+    let rendered = render_node(&node, false, true, Some(CognitoGroup::Admin), &[]).into_string();
     let expected = golden("node_detail.html");
     assert_golden(&rendered, &expected, "node_detail.html");
 }
@@ -190,7 +190,7 @@ fn permissions_matches_golden() {
 #[test]
 fn node_detail_hx_vals_quot_escaped() {
     let node = make_hn2_10003_node();
-    let html = render_node(&node, false, true, Some(CognitoGroup::Admin)).into_string();
+    let html = render_node(&node, false, true, Some(CognitoGroup::Admin), &[]).into_string();
     // data-hx-vals must NOT have a raw `{"` after the `=`
     assert!(
         !html.contains(r#"data-hx-vals="{""#),
@@ -206,7 +206,7 @@ fn node_detail_hx_vals_quot_escaped() {
 #[test]
 fn node_detail_hx_request_quot_escaped() {
     let node = make_hn2_10003_node();
-    let html = render_node(&node, false, true, Some(CognitoGroup::Admin)).into_string();
+    let html = render_node(&node, false, true, Some(CognitoGroup::Admin), &[]).into_string();
     assert!(
         !html.contains(r#"data-hx-request="{""#),
         "invalid HTML: unescaped double-quote in data-hx-request"
@@ -224,7 +224,7 @@ fn node_detail_hx_request_quot_escaped() {
 #[test]
 fn add_child_form_action_and_fields() {
     let node = make_hn2_10003_node();
-    let html = render_node(&node, false, true, Some(CognitoGroup::Admin)).into_string();
+    let html = render_node(&node, false, true, Some(CognitoGroup::Admin), &[]).into_string();
     assert!(html.contains("add-child-dialog"), "add-child-dialog id missing");
     assert!(html.contains("add-child-body"), "add-child-body id missing");
     assert!(html.contains("/hierarchy/query/add_child_form"), "form URL missing");
