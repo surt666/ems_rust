@@ -160,6 +160,8 @@
     "add_child": "Add child",
     "add_child_dialog_title": "ADD CHILD",
     "delete": "Delete",
+    "edit": "Edit",
+    "save": "Save",
     "sensors": "Sensors",
     "add_sensor": "Add sensor",
     "add_sensor_dialog_title": "ADD SENSOR",
