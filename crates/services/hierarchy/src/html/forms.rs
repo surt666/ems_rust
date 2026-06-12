@@ -1,5 +1,6 @@
 use maud::{html, Markup};
-use model::domain::values::{Currency, Language, Permission, Profile, Timezone};
+use model::domain::schema::FieldSpec;
+use model::domain::values::{Currency, FieldType, Language, Permission, Profile, Timezone};
 use strum::IntoEnumIterator;
 
 // ---------------------------------------------------------------------------
@@ -191,6 +192,111 @@ pub fn render_add_child_form(
             }
             // Schema-driven metadata fields
             (metadata_inputs)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// metadata_inputs — schema-typed metadata form inputs (shared)
+// ---------------------------------------------------------------------------
+
+/// Render schema-typed metadata form inputs.
+///
+/// - `prefill`: current values keyed by field name (for the edit form); `None`
+///   leaves inputs empty (add-child form).
+/// - `disabled`: when true, inputs/selects start disabled and carry the
+///   `md-input` class (used by the node-edit form's Edit toggle); add-child
+///   passes `false` for byte-identical output to the previous builder.
+pub fn metadata_inputs(
+    fields: &[(String, FieldSpec)],
+    prefill: Option<&serde_json::Map<String, serde_json::Value>>,
+    disabled: bool,
+) -> Markup {
+    // Scalar → display string.
+    fn sval(v: &serde_json::Value) -> String {
+        match v {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            _ => String::new(),
+        }
+    }
+    let cur = |name: &str| -> Option<String> { prefill.and_then(|m| m.get(name)).map(sval) };
+    // For <input type=date>, prefill wants YYYY-MM-DD.
+    let date_part = |s: &str| s.get(0..10).unwrap_or(s).to_string();
+
+    let input_class = if disabled { "form-input md-input" } else { "form-input" };
+    let select_class = if disabled { "form-select md-input" } else { "form-select" };
+
+    html! {
+        @for (fname, spec) in fields {
+            @let req_attr = spec.required;
+            @let value = cur(fname);
+            div class="form-row" {
+                label class="form-label" { (fname) }
+                @match &spec.typ {
+                    FieldType::String { .. } => {
+                        input type="text"
+                            name=(format!("data.metadata.{}", fname))
+                            class=(input_class)
+                            value=[value.clone()]
+                            disabled[disabled]
+                            required[req_attr];
+                    }
+                    FieldType::Number { .. } => {
+                        input type="number" step="any"
+                            name=(format!("data.metadata.{}", fname))
+                            class=(input_class)
+                            value=[value.clone()]
+                            disabled[disabled]
+                            required[req_attr];
+                    }
+                    FieldType::Integer { .. } => {
+                        input type="number" step="1"
+                            name=(format!("data.metadata.{}", fname))
+                            class=(input_class)
+                            value=[value.clone()]
+                            disabled[disabled]
+                            required[req_attr];
+                    }
+                    FieldType::Boolean => {
+                        @let v = value.clone().unwrap_or_default();
+                        select
+                            name=(format!("data.metadata.{}", fname))
+                            class=(select_class)
+                            disabled[disabled]
+                            required[req_attr]
+                        {
+                            option value="true" selected[v == "true"] { "true" }
+                            option value="false" selected[v == "false"] { "false" }
+                        }
+                    }
+                    FieldType::Timestamp => {
+                        input type="date"
+                            name=(format!("data.metadata.{}", fname))
+                            class=(input_class)
+                            value=[value.clone().map(|s| date_part(&s))]
+                            disabled[disabled]
+                            required[req_attr];
+                    }
+                    FieldType::Enum { one_of } => {
+                        @let v = value.clone().unwrap_or_default();
+                        select
+                            name=(format!("data.metadata.{}", fname))
+                            class=(select_class)
+                            disabled[disabled]
+                            required[req_attr]
+                        {
+                            @for opt in one_of {
+                                option value=(opt) selected[*opt == v] { (opt) }
+                            }
+                        }
+                    }
+                }
+                @if spec.required {
+                    span class="required" { "*" }
+                }
+            }
         }
     }
 }

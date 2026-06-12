@@ -716,8 +716,8 @@ where
     // the schema designer in the form for that case only.
     let needs_schema = allowed_types.iter().any(|t| t == "company");
 
-    // Build metadata inputs.
-    let metadata_inputs = build_metadata_inputs(&metadata_fields);
+    // Build metadata inputs (shared builder; no prefill, enabled).
+    let metadata_inputs = forms::metadata_inputs(&metadata_fields, None, false);
 
     html_ok(forms::render_add_child_form(
         parent_s,
@@ -728,73 +728,6 @@ where
         is_multi,
         needs_schema,
     ))
-}
-
-/// Build metadata form inputs from schema field specs.
-fn build_metadata_inputs(
-    fields: &[(String, model::domain::schema::FieldSpec)],
-) -> Markup {
-    use maud::html;
-    use model::domain::values::FieldType;
-
-    html! {
-        @for (fname, spec) in fields {
-            @let req_attr = spec.required;
-            div class="form-row" {
-                label class="form-label" { (fname) }
-                @match &spec.typ {
-                    FieldType::String { .. } => {
-                        input type="text"
-                            name=(format!("data.metadata.{}", fname))
-                            class="form-input"
-                            required[req_attr];
-                    }
-                    FieldType::Number { .. } => {
-                        input type="number" step="any"
-                            name=(format!("data.metadata.{}", fname))
-                            class="form-input"
-                            required[req_attr];
-                    }
-                    FieldType::Integer { .. } => {
-                        input type="number" step="1"
-                            name=(format!("data.metadata.{}", fname))
-                            class="form-input"
-                            required[req_attr];
-                    }
-                    FieldType::Boolean => {
-                        select
-                            name=(format!("data.metadata.{}", fname))
-                            class="form-select"
-                            required[req_attr]
-                        {
-                            option value="true" { "true" }
-                            option value="false" { "false" }
-                        }
-                    }
-                    FieldType::Timestamp => {
-                        input type="datetime-local"
-                            name=(format!("data.metadata.{}", fname))
-                            class="form-input"
-                            required[req_attr];
-                    }
-                    FieldType::Enum { one_of } => {
-                        select
-                            name=(format!("data.metadata.{}", fname))
-                            class="form-select"
-                            required[req_attr]
-                        {
-                            @for v in one_of {
-                                option value=(v) { (v) }
-                            }
-                        }
-                    }
-                }
-                @if spec.required {
-                    span class="required" { "*" }
-                }
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
