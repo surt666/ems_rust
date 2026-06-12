@@ -123,7 +123,7 @@
   /* override the global `dialog { max-width: 480px }`, which otherwise squishes the 3-column grid */
   .sd-dialog { width: min(1100px, 94vw); max-width: min(1100px, 94vw); border: none; border-radius: 12px; padding: 0; }
   .sd-root { padding: 1rem 1.25rem 1.25rem; }
-  .sd-grid { display: grid; grid-template-columns: 180px 1fr 300px; gap: 14px; align-items: start; margin-top: 1rem; }
+  .sd-grid { display: grid; grid-template-columns: 200px 1fr 300px; gap: 14px; align-items: start; margin-top: 1rem; }
   .sd-pane { border: 1px solid var(--border-medium, #d4d9e0); border-radius: 8px; background: #fff; color: #1d2330; margin-bottom: 14px; }
   .sd-pane h4 { margin: 0; padding: 8px 12px; border-bottom: 1px solid #e3e8ef; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #5b6675; background: #f3f6fa; border-radius: 8px 8px 0 0; }
   .sd-body { padding: 10px 12px; }
@@ -132,7 +132,8 @@
   .sd-typeitem.sel { background: #2563eb; color: #fff; }
   .sd-rm { opacity: .6; font-weight: bold; padding: 0 4px; cursor: pointer; }
   .sd-rm:hover { opacity: 1; color: #dc2626; }
-  .sd-addrow { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-top: 8px; }
+  .sd-addrow { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 14px 0 8px; }
+  .sd-addrow button { min-width: 38px; padding: 5px 10px; white-space: nowrap; }
   .sd-root input[type=text], .sd-root input[type=number], .sd-root select { border: 1px solid #d4d9e0; border-radius: 6px; padding: 5px 7px; font-size: 13px; color: #1d2330; background: #fff; }
   .sd-grp { margin-bottom: 16px; }
   .sd-lbl { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
