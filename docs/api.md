@@ -1,19 +1,26 @@
 # API Reference
 
-Base URL: `https://doztw28ic6.execute-api.eu-central-1.amazonaws.com`
+Base URL: `https://xbvb3nzp1h.execute-api.eu-central-1.amazonaws.com`
 
 Two endpoints:
 
-- `POST /command` — mutations. JSON body with an `action` field.
+- `POST /command` — mutations. JSON body with an `action` field. (Also accepts
+  `application/x-www-form-urlencoded`, which the HTMX frontend uses.)
 - `GET /query/<action>` — reads. Parameters go in the query string.
 
-All responses are JSON. Errors use:
+`/command` and `/query/<action>` are also reachable under a `/hierarchy/`
+prefix; `GET /hierarchy/query/<action>` additionally exposes HTML-fragment
+actions for the HTMX UI. The JSON actions below are identical on both paths.
+
+JSON responses; errors use:
 
 ```json
-{ "error": { "code": "bad_request", "message": "..." } }
+{ "error": { "code": "Bad_request", "message": "..." } }
 ```
 
-Status code is derived from the error (`400`, `404`, etc.).
+Status code is derived from the error (`400`, `404`, `409`, `500`). Codes:
+`Bad_request`, `Validation` (with a `details` array), `Schema_missing`,
+`Not_found`, `Conflict`, `Internal`.
 
 ## URL encoding
 
@@ -35,10 +42,10 @@ mutation response includes the new id, which is the input to the next
 call:
 
 ```sh
-# 1. create the user who will operate the tree
+# 1. create the user who will operate the tree (profile → Cognito group)
 curl -X POST "$BASE/command" -d '{
   "action": "create_user", "email": "alice@acme.test",
-  "name": "Alice", "cognito_group": "admin"
+  "name": "Alice", "profile": "SysAdm"
 }'
 # → { "id": "U#alice@acme.test", … }
 
@@ -49,11 +56,12 @@ curl -X POST "$BASE/command" -d '{
 }'
 # → { "id": "HN1#11", … }
 
-# 3. create the company (hn2) — schema lives here
+# 3. create the company (hn2) — the type-graph schema lives here
 curl -X POST "$BASE/command" -d '{
   "action": "add_node", "parent_id": "HN1#11",
   "name": "Acme Co",
-  "schema": { "version": 1, "edges": { … }, "sensors": ["hn6"] }
+  "schema": { "version": 2, "edges": { "company": { "building": {} } },
+              "metadata": {}, "sensors": ["building"] }
 }'
 # → { "id": "HN2#102", … }
 
@@ -101,19 +109,20 @@ Fields:
 |-------------|-----------------|------------------------------------------------------|
 | parent_id   | yes             | `HN<n>#<int>`                                        |
 | name        | yes             |                                                      |
-| label       | no              | if given, resolves the child level from the schema   |
-| level       | no              | `hn1` .. `hn9`; override the inferred level          |
-| metadata    | no, default `{}`| validated against the schema for the child level     |
+| label       | no              | the child **type** (must be allowed under the parent type) |
+| level       | no              | `hn1` .. `hn9`; if given **must equal** parent + 1    |
+| metadata    | no, default `{}`| validated against the schema for the child type      |
 | schema      | only for `hn2`  | see schema shape below                               |
 
-**Level resolution.** `level` is optional; if omitted it is inferred:
+**Level and type resolution.** The child's **level is always parent + 1**
+(derived); an explicit `level` that disagrees is rejected. The child's **type**
+is the `label`:
 
-- No `label` → defaults to parent+1. Error if that level has zero or multiple
-  schema candidates without a disambiguating label.
-- `label` given → the unique target level in the schema whose edge list
-  contains that label. Error if 0 or >1 target levels match.
-- Levels `hn0 → hn1` (partner) and `hn1 → hn2` (company) are fixed; no schema
-  lookup is involved.
+- `hn0 → hn1` is the reserved type `partner`; `hn1 → hn2` is `company`; neither
+  takes a schema lookup.
+- Below hn2 the type is resolved from the parent type's allowed children:
+  `label` must name an allowed child type, or it may be omitted only when the
+  parent type has exactly one allowed child type.
 
 Response — the newly created node:
 
@@ -121,29 +130,38 @@ Response — the newly created node:
 {
   "id": "HN4#10044",
   "name": "Building A",
-  "parent": "HN1#11",
+  "label": "building",
+  "parent": "HN3#10003",
   "created": "2026-04-18T10:22:14Z",
-  "metadata": { "floor_count": 5 }
+  "metadata": { "lat": 55.68, "lng": 12.57 }
 }
 ```
 
 `hn2` nodes additionally include `"schema": { ... }`.
 
-#### Schema shape (hn2 only)
+#### Schema shape (hn2 only) — type graph (v2)
+
+`edges` is keyed by **type name** (a DAG rooted at the reserved `"company"`),
+not by level. The child type *is* the label; `metadata` and `sensors` are keyed
+by type. See `docs/hierarchy-and-sensors.md` §2 for the validation rules
+(DAG, reachable from `company`, longest chain ≤ 7).
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "edges": {
-    "hn2": { "hn3": { "building": { "min": 1, "max": 50 } } },
-    "hn3": { "hn4": { "floor":    {}                      } }
+    "company":  { "group": {}, "property": {}, "building": { "max": 50 } },
+    "group":    { "building": { "min": 1 } },
+    "property": { "building": { "min": 1 } },
+    "building": { "area": {} }
   },
   "metadata": {
-    "hn3": {
-      "floor_count": { "required": true, "type": "integer", "min": 0 }
+    "building": {
+      "lat": { "required": true, "type": "number", "min": -90, "max": 90 },
+      "lng": { "required": true, "type": "number", "min": -180, "max": 180 }
     }
   },
-  "sensors": [ "hn6", "hn7" ]
+  "sensors": [ "building", "area" ]
 }
 ```
 
@@ -186,7 +204,7 @@ in the owning `hn2`'s `schema.sensors`.
 | resample_minutes | no    | resample interval in minutes, `> 0`; accepts an int or a numeric string |
 | formula          | no    | `{"kind":"identity"\|"zero"\|"expr", "expr": <text>, "refs": <object or JSON string>}`; default `identity`. For `expr`, `expr` is a text formula over `self`, numbers, `+ - * /`, `abs()`, and aliases; `refs` maps each alias to a sensor id (`"S#<n>"`). Every alias used in the expression must be bound; refs with unused aliases are rejected. Cross-sensor references are scoped to the owning HN2 company. |
 
-Response — the created sensor (mirrors `Api_json.sensor_to_json`). `path` is
+Response — the created sensor (mirrors `json::sensor_to_json`). `path` is
 the pipe-separated ancestry ending in the sensor id; `unit`/`resample_minutes` are
 `null` when unset. `formula` is always present: `{"kind":"identity"}` by
 default, or for `expr` formulas also includes `"expr"` (the text) and `"refs"`
@@ -228,33 +246,42 @@ Response — the new active sensor row (same `id`, new `created`, new `daq_id`).
 
 Enforcement lives upstream (frontend + API Gateway Cognito authorizer). This
 Lambda **stores and reports** — it never rejects a call based on the caller's
-group. See `docs/architecture.md` §8.
+group. See `docs/architecture.md` §9.
 
 ### create_user
 
-Create a user. Fails with `conflict` if a user with the same email already
-exists.
+Create a user. Fails with `Conflict` if a user with the same email already
+exists. The Lambda also provisions the Cognito user (creates it, adds it to the
+mapped group, sets a permanent password) and rolls the DDB row back if Cognito
+fails. Each `allowed` node gets an access edge whose kind matches the user's
+group (`Admin → administrates`, `Writer → writes`, `Reader → reads`); each
+`blocked` node gets a `Blocked` edge.
 
 ```json
 {
   "action": "create_user",
   "email": "alice@example.com",
   "name": "Alice",
-  "cognito_group": "writer",
+  "profile": "Developer",
   "language": "english",
-  "currency": "EUR"
+  "currency": "EUR",
+  "allowed": ["HN2#102"],
+  "blocked": ["HN3#1003"]
 }
 ```
 
-| field         | required | notes                                                  |
-|---------------|----------|--------------------------------------------------------|
-| email         | yes      | becomes `U#<email>`                                    |
-| name          | yes      |                                                        |
-| cognito_group | yes      | `reader` \| `writer` \| `admin`                        |
-| language      | no       | `danish` \| `swedish` \| `norwegian` \| `english` \| `german` (default `danish`) |
-| currency      | no       | `DKK` \| `SEK` \| `NOK` \| `USD` \| `EUR` (default `DKK`) |
+| field     | required | notes                                                  |
+|-----------|----------|--------------------------------------------------------|
+| email     | yes      | becomes `U#<email>`                                    |
+| name      | yes      |                                                        |
+| profile   | yes      | `SysAdm` (→ admin) \| `Developer`/`Standard` (→ writer) \| `Technician`/`Reader` (→ reader) |
+| language  | no       | `danish` \| `swedish` \| `norwegian` \| `english` \| `german` (default `danish`) |
+| currency  | no       | `DKK` \| `SEK` \| `NOK` \| `USD` \| `EUR` (default `DKK`) |
+| allowed   | no       | node ids granted an access edge for the user's group   |
+| blocked   | no       | node ids the user is blocked from                      |
 
-Response — the created user:
+Response — the created user (note the response carries the resolved
+`cognito_group`, not the input `profile`):
 
 ```json
 {
@@ -347,9 +374,9 @@ returns `{"ok": true}`.
 ### grant_administrates
 
 Attach an `Administrates` (grant) edge from the user to the node. The grant
-covers `node_id` and every descendant, and is what the HTML/UI layer uses to
-decide tree visibility (`Access.has_admin_access`). The seeded admin holds a
-grant on `HN0#root`.
+covers `node_id` and every descendant; `access::has_admin_access` reports it,
+and any access edge (incl. this one) makes the subtree browsable via
+`access::has_access`. The seeded admin holds a grant on `HN0#root`.
 
 ```json
 {
@@ -387,7 +414,7 @@ Response:
   "parent": "HN1#11",
   "created": "2026-04-18T09:00:00Z",
   "metadata": {},
-  "schema": { "version": 1, "edges": { ... }, "metadata": { ... }, "sensors": [ ... ] }
+  "schema": { "version": 2, "edges": { ... }, "metadata": { ... }, "sensors": [ ... ] }
 }
 ```
 
@@ -527,21 +554,23 @@ GET /query/list_blocked_users?node=HN4%2310044
 
 ### effective_permission
 
-Resolves `(user, node)` through the block chain. Returns the user's
-`cognito_group` when allowed, `null` when blocked by the node itself or any
-ancestor. Capability group is a ceiling — enforcement is upstream.
+Resolves `(user, node)` against the access edges and the block chain. Returns
+the capability of the **nearest access edge** up the chain
+(`administrates → admin`, `writes → writer`, `reads → reader`), or `null` when
+the node or any ancestor is blocked, or when the user has no access edge on the
+chain at all. Enforcement is upstream — this is what the authorizer consults.
 
 ```
 GET /query/effective_permission?user=U%23alice@example.com&node=HN4%2310044
 ```
 
-Allowed:
+Allowed (nearest access edge is a `writes` grant):
 
 ```json
 { "capability": "writer" }
 ```
 
-Blocked:
+Blocked (or no access edge on the chain):
 
 ```json
 { "capability": null, "reason": "blocked" }

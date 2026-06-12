@@ -1,5 +1,9 @@
 # Tabbed Node View Implementation Plan
 
+> **Superseded:** shipped as a dedicated `frontend/src/pages/node.astro` page
+> the tree links to, with the `masterdata` page/component retired. This plan
+> describes the original (masterdata-component) approach, not the as-built one.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move the masterdata page's tabs (Data / Energipriser / CO2e faktorer / Licens) onto the per-node view: select a node, see its metadata by default, flip between the other (stub) tabs for that same node in place.

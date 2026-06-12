@@ -1,5 +1,11 @@
 # Graphical Schema Designer Implementation Plan
 
+> **As-shipped note:** the designer landed in the server-rendered add-child
+> dialog and posts via a hidden `schema_json` field folded into the `add_node`
+> command — not the masterdata create dialog / `create_node` JSON fetch this
+> plan describes. The `schema-serialize.js` module + `SchemaDesigner.astro`
+> editor are as planned.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A graphical, two-panel schema designer that opens in its own dialog during company (HN2) creation, builds the v2 type-graph schema from a preset with live validation, and posts it with `create_node`.

@@ -1,7 +1,13 @@
 # Graphical Schema Designer (company creation) — Design Spec
 
 **Date:** 2026-06-11
-**Status:** Approved (design); implementation plan pending
+**Status:** Shipped, but integrated differently than written here. The designer
+landed in the **server-rendered add-child dialog** (`render_add_child_form`)
+shown when "company" is the chosen child type — not the masterdata create
+dialog. It serialises the type graph into a hidden `schema_json` form field
+that the backend folds into the `add_node` command (not a `create_node` JSON
+fetch). The pure `schema-serialize.js` module and `SchemaDesigner.astro` editor
+are as designed.
 **Account / surface:** Frontend (Astro + Alpine, account `339712745226` S3+CloudFront)
 **Depends on:** the v2 type-graph schema (`docs/superpowers/specs/2026-06-10-type-graph-schema-design.md`), now deployed.
 

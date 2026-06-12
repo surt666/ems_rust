@@ -1,10 +1,11 @@
 # Hierarchy and Sensors
 
-Living reference for the node model, the per-company schema, the sensor model,
-and the DynamoDB layout that backs all of them. Kept in sync with `lib/`.
+Living reference for the node model, the per-company **type-graph schema (v2)**,
+the sensor model, and the DynamoDB layout that backs them. Kept in sync with
+`crates/model`.
 
 See `docs/api.md` for the HTTP surface, `docs/architecture.md` for how these
-domain concepts are packaged into layers.
+domain concepts are layered.
 
 ---
 
@@ -12,89 +13,103 @@ domain concepts are packaged into layers.
 
 A tree of typed nodes rooted at a singleton.
 
-| Level | Role              | Notes                                                |
-|-------|-------------------|------------------------------------------------------|
-| hn0   | root              | singleton, id = literal `HN0#root` (`Node_id.root`)  |
-| hn1   | partner           | business tenant, e.g. "Acme Partner"                 |
-| hn2   | company           | **owns a schema** that shapes everything below it    |
-| hn3…9 | schema-defined    | meaning is whatever the owning hn2 schema declares   |
+| Level | Role           | Notes                                                |
+|-------|----------------|------------------------------------------------------|
+| hn0   | root           | singleton, id = literal `HN0#root` (`NodeId::root`)  |
+| hn1   | partner        | reserved type `"partner"`; outside the schema        |
+| hn2   | company        | reserved type `"company"`; **owns a schema**         |
+| hn3…9 | schema-defined | the node's **type** is declared by the owning schema |
 
 Every node carries:
 
-- `id` — `HN<n>#<int>` (integer allocated by a per-level counter; root is the literal `HN0#root`)
-- `level` — derived from `id` (not stored separately)
+- `id` — `HN<n>#<int>` (integer from a per-level counter; root is `HN0#root`)
+- `level` — **derived from `id`** (= the node's depth; not stored separately)
+- `label` — the node's **type name** (the schema edge that created it; e.g.
+  `"building"`). `"partner"` for hn1, `"company"` for hn2.
 - `name` — human label
 - `parent` — parent node id (root has `None`)
-- `created` — `Ptime.t`, serialized as RFC 3339
-- `metadata` — free-form JSON, validated against the schema for that level
+- `path` — pipe-separated ancestry incl. self (`HN0#root|HN1#…|HN2#…|…`)
+- `created` — RFC 3339
+- `metadata` — free-form JSON, validated against the schema for the node's type
 - `schema` — only present on hn2
 
-Depth must **strictly** increase from parent to child. Cross-level shortcuts
-(e.g. `hn2 → hn4` skipping `hn3`) are allowed **if** the schema declares that
-edge. The actual edge pair stored is `(parent_level, child_level)`, not a hop
-chain.
+**A node's level is exactly its depth.** A child is always created at
+`parent.level + 1` — there are **no cross-level skips**. What varies is the
+node's *type*, not its level: the same type (e.g. `building`) can legitimately
+appear at different depths in different branches (directly under `company` → hn3,
+or under a `group` → hn4). The hierarchy is a tree of levels; the *schema* is a
+separate DAG of types (§2).
 
 **Ids are unique per level, not globally.** Each level has its own monotonic
-counter (`count#HN<n>`, see §6.2), so the integer in `HN<n>#<int>` is only
-unique within that level — identity is the `(level, int)` pair, which is why
-the id always carries the `HN<n>#` prefix. The same integer routinely appears
-at several levels (each level's first node is `…#10001`), so a path like
-`HN0#root|HN1#10001|HN2#10003|HN3#10004|HN4#10001` is valid: `HN1#10001` and
-`HN4#10001` are different nodes. Nothing keys a node by the bare integer.
+counter (`count#HN<n>`, §6.2), so the integer in `HN<n>#<int>` is unique only
+within that level — identity is the `(level, int)` pair. The same integer
+appears at several levels; a path like
+`HN0#root|HN1#10001|HN2#10003|HN3#10004|HN4#10001` is valid.
 
 ---
 
-## 2. Per-company schema
+## 2. Per-company schema — a type graph (v2)
 
 The schema lives on the hn2 node and governs *that* company's subtree only.
-Sibling companies can have completely different shapes.
+Sibling companies can have completely different shapes. **Levels are not a
+schema concept** — the schema describes which *types* may contain which other
+types, as a directed acyclic graph rooted at the reserved type `"company"`.
 
-```ocaml
-(* lib/domain/schema.ml *)
-type edge_spec = { label : string; min : int option; max : int option }
-
-type t = {
-  version  : int;
-  edges    : (Level.t * (Level.t * edge_spec list) list) list;
-  metadata : (Level.t * (string * Metadata.field_spec) list) list;
-  sensors  : Level.t list;
+```rust
+// crates/model/src/domain/schema.rs
+pub struct EdgeSpec {            // cardinality of a parent-type → child-type edge
+    pub min: Option<i32>,
+    pub max: Option<i32>,
 }
+
+pub struct Schema {
+    pub version:  u32,
+    /// parent type → (child type → cardinality)
+    pub edges:    Vec<(String, Vec<(String, EdgeSpec)>)>,
+    /// type → (field name → field spec)
+    pub metadata: Vec<(String, Vec<(String, FieldSpec)>)>,
+    /// types at which sensors may attach
+    pub sensors:  Vec<String>,
+}
+
+pub const COMPANY_TYPE: &str = "company"; // root of the type graph (the hn2 node)
+pub const PARTNER_TYPE: &str = "partner"; // hn1, outside the schema (reserved)
 ```
 
 ### 2.1 Edges
 
-Each `(parent_level, [(child_level, specs)])` entry declares one or more
-labeled edges between two levels. `specs` is a **list** so the same
-`(parent_level, child_level)` pair can host multiple distinct relationships —
-e.g. `hn2 → hn3` as both `property` and `group`.
+Each `(parent_type, [(child_type, spec)])` entry declares which types may be
+created directly under a given type. **The child type IS the label** — v1's
+separate `label` string is gone. `company` may declare several children (e.g.
+`group`, `property`, `building`); each of those declares its own children. The
+same child type may appear under multiple parents (e.g. `building` under both
+`company` and `group`), which is exactly what lets a `building` live at variable
+depth.
 
 `min` / `max` express cardinality per parent. Only `max` is enforced at write
 time; `min` is informational.
 
-### 2.2 Level resolution at add_node
+### 2.2 Type resolution at `add_node`
 
-`Hierarchy.add_node` takes `?level`; the API accepts an optional `level` field.
-Resolution:
+The child **level** is always `parent.level + 1` (derived). The child **type**
+is resolved from the parent type's allowed children:
 
-- **`hn0 → hn1`** and **`hn1 → hn2`** are hard-coded (partner, company).
-- **Schema-gated levels (`hn2+`)**:
-  - No `label` → default to parent+1. Error if that level has zero or multiple
-    candidate edges.
-  - `label` given → the unique target level in the schema whose edge list
-    contains that label. Error if 0 or >1 target levels match.
-  - An explicit `level` overrides inference; the `(parent_level, level, label)`
-    triple must resolve to exactly one edge spec.
+- **hn0 → hn1** and **hn1 → hn2** are fixed: types `partner` then `company`.
+- **schema-gated** (hn2 and below): from `schema.allowed_children(parent_type)`,
+  - an explicit `label` must name an allowed child type;
+  - an omitted `label` is accepted only when the parent type has **exactly one**
+    allowed child type; otherwise the call errors ("specify label").
 
 ### 2.3 Metadata specs
 
-`metadata` maps each level to the required/optional JSON fields for nodes at
-that level. Supported `Metadata.field_type`:
+`metadata` maps each **type** to its required/optional JSON fields. Supported
+`FieldType` (`crates/model/src/domain/values.rs`):
 
 | type        | constraints honoured                         |
 |-------------|----------------------------------------------|
 | `string`    | `min_len`, `max_len`                         |
-| `number`    | `min`, `max` (float)                         |
-| `integer`   | `min`, `max` (int64)                         |
+| `number`    | `min`, `max` (float; accepts JSON ints too)  |
+| `integer`   | `min`, `max` (i64)                           |
 | `boolean`   | —                                            |
 | `timestamp` | must parse as RFC 3339                       |
 | `enum`      | `one_of` (non-empty list of allowed strings) |
@@ -103,100 +118,109 @@ Each field carries `required`. Unknown fields are ignored, not rejected.
 
 ### 2.4 Sensors list
 
-`sensors : Level.t list` names the levels that may host sensors.
+`sensors: Vec<String>` names the **types** that may host sensors.
 
-### 2.5 Schema resolution
+### 2.5 Schema self-validation (`Schema::validate`)
 
-`Schema_check.find_for id` walks up from `id` until it hits an hn2 with a
-schema. The hn2's schema is authoritative for the whole subtree. Missing hn2
-ancestor → `Schema_missing`.
+Run when an hn2 company is created. Enforces:
+
+1. names non-empty; `"partner"` appears nowhere; `"company"` is never a child;
+   no self-edges; no duplicate child under one parent; `min ≤ max`.
+2. the type graph is a **DAG** (3-colour DFS rejects cycles).
+3. every referenced type (edge parents, metadata, sensors) is **reachable from
+   `"company"`**.
+4. the **longest path from `"company"` is ≤ 7 edges** (so the deepest node fits
+   hn9).
+5. metadata field specs valid (e.g. non-empty `enum`); no duplicate `sensors`.
+
+### 2.6 Schema resolution for a subtree (`schema_check::find_for`)
+
+`find_for(id)` returns `(hn2_id, schema)`: an hn2 node returns its own schema; a
+deeper node parses the HN2 segment out of its `path` and returns that node's
+schema. Root or a node with no HN2 ancestor → `SchemaMissing`.
 
 ---
 
-## 3. Example: two companies, two shapes
+## 3. Example: one company, building at variable depth
 
 ```mermaid
 graph TD
   root["root (hn0)"] -->|partner| P["Acme Partner (hn1)"]
-  P -->|company| RE["RealEstateCo (hn2)<br/>schema: property/group → building → area"]
-  P -->|company| CP["ChargeCo (hn2)<br/>schema: parkinglot → chargingpool → charger → plug"]
+  P -->|company| C["Acme Co (hn2)"]
 
-  RE -->|property| HQ["HQ Property (hn3)"]
-  RE -->|property| WH["Warehouse Property (hn3)"]
-  RE -->|group| RG["Region Group (hn3)"]
-  HQ -->|building| HBA["HQ Building A (hn4)<br/>lat, lng"]
-  HQ -->|building| HBB["HQ Building B (hn4)"]
-  WH -->|building| WBA["Warehouse Building A (hn4)"]
-  WH -->|building| WBB["Warehouse Building B (hn4)"]
-  HBA -->|area| AREA["HQ Parking A (hn5)"]
+  C -->|building| B1["Building A (hn3)"]
+  C -->|group| G["Region Group (hn3)"]
+  C -->|property| PR["HQ Property (hn3)"]
+  G -->|building| B2["Building B (hn4)"]
+  PR -->|building| B3["HQ Building (hn4)"]
+  B1 -->|area| A1["Area (hn4)"]
+  B2 -->|area| A2["Area (hn5)"]
 
-  HBA -->|has_sensor| S1["S1<br/>Electricity<br/>abs(Self - S2')"]
-  AREA -->|has_sensor| S2["S2<br/>Electricity<br/>identity"]
-
-  CP -->|parkinglot| LOT["Parking Lot North (hn3)"]
-  LOT -->|chargingpool| POOL["Pool A (hn4)"]
-  POOL -->|charger| C1["CP-01 (hn5)<br/>power_kw=150, ccs"]
-  POOL -->|charger| C2["CP-02 (hn5)<br/>power_kw=50, type2"]
-  C1 -->|plug| P1A["Plug 01-A (hn6)"]
-  C1 -->|plug| P1B["Plug 01-B (hn6)"]
-  C2 -->|plug| P2A["Plug 02-A (hn6)"]
+  B1 -->|has_sensor| S1["S1 · Electricity"]
+  A1 -->|has_sensor| S2["S2 · Electricity"]
 ```
 
-Two invariants worth calling out — both asserted in `itest/test_dynamo.ml`:
+`Acme Co`'s schema:
 
-1. **RealEstateCo has no `charger` or `plug`.** Its schema does not declare
-   those labels, so `Hierarchy.add_node` rejects them with `Validation`.
-2. **ChargeCo has no `property`.** Same rule, opposite direction.
+```
+company → { group, property, building }
+group   → { building }
+property→ { building }
+building→ { area }
+```
+
+`building` is reachable under `company` (→ hn3) *and* under `group`/`property`
+(→ hn4); both buildings only allow `area` children, which therefore land at hn4
+or hn5 respectively. Behaviours that fall out of the rules (all unit-tested in
+`logic/hierarchy.rs`):
+
+1. A `charger`/`plug` type the schema doesn't declare is rejected with
+   `Validation`.
+2. `group` under a `building` is rejected (`building`'s only child is `area`).
+3. Omitting the label under `company` errors ("specify label", 3 child types);
+   omitting it under `building` resolves to `area` (its sole child type).
 
 ### 3.1 Users in the graph
 
-Users are not tree nodes, but they attach to the tree the same way
-everything else in this system does — via DynamoDB edges. A user row
-lives at `pk = sk = U#<email>`; permission edges point from that row
-into the hierarchy:
+Users are not tree nodes; they attach via DynamoDB edges. A user row lives at
+`pk = sk = U#<email>`; access and block edges point from that row into the
+hierarchy:
 
 ```mermaid
 graph TD
-  C["Acme Co (hn2)"] -->|property| HQ["HQ Property (hn3)"]
-  HQ -->|building| HBA["HQ Building A (hn4)"]
-  HQ -->|building| HBB["HQ Building B (hn4)<br/>top-secret research lab"]
+  C["Acme Co (hn2)"] -->|building| B1["Building A (hn3)"]
+  C -->|building| B2["Building B (hn3)"]
 
-  Alice["Alice<br/>(U#alice@acme.test)"] ==>|administrates| C
-  Alice -.->|blocked| HBB
+  Alice["Alice (U#alice@acme.test)"] ==>|writes| C
+  Alice -.->|blocked| B2
 ```
 
-Two edges, two jobs. The thick `administrates` edge **grants** Alice
-a role on Acme Co; the dashed `blocked` edge **revokes** that on HQ
-Building B and everything below it. Both follow the single-table
-edge shape — `pk = U#<email>`, node id on the sk side:
+The thick `writes` edge **grants** Alice a capability on Acme Co and its
+subtree; the dashed `blocked` edge **revokes** it on Building B and below. Both
+follow the single-table edge shape — `pk = U#<email>`, node id on the `sk` side:
 
-- grant:  `sk = administrates#HN2#102`
-- block:  `sk = blocked#HN4#10044`
+- grant: `sk = writes#HN2#102`
+- block: `sk = blocked#HN3#10044`
 
-Both `Administrates` (grant) and `Blocked` edges are **live**
-(`Edge_kind.t = Has_label | Has_sensor | Blocked | Administrates`).
-There is no `writes`/`reads` edge kind. Grants and blocks both
-propagate down the ancestor chain, but through **two separate**
-mechanisms: `Access.has_admin_access` (grant-driven) decides UI tree
-visibility, while `Access.effective_permission` (block-driven) returns
-the user's `cognito_group` unless a block on the chain nulls it. The
-`cognito_group` on the user record is an overarching ceiling above
-both. See `docs/architecture.md` §8 for the full row layout and the
-algorithms.
+`EdgeKind = HasLabel | HasSensor | Blocked | Administrates | Reads | Writes`.
+Access edges (`Administrates`/`Writes`/`Reads`, kind chosen from the user's
+group) confer Admin/Writer/Reader down the subtree; `effective_permission`
+returns the nearest one, nulled by any block on the chain. See
+`docs/architecture.md` §9 for the full algorithm and row layout.
 
 ---
 
 ## 4. Rules
 
-| Rule                                              | Enforced by                              |
-|---------------------------------------------------|------------------------------------------|
-| Parent depth < child depth                        | `Hierarchy.add_node`                     |
-| Edge label is declared by the hn2 schema          | `Schema.edges_between`                   |
-| Label unambiguous at the parent level             | `Hierarchy.resolve_child_level` + `add_under_schema` |
-| Metadata matches the level's field spec           | `Metadata.validate`                      |
-| `max` cardinality per parent                      | `Hierarchy.add_node`                     |
-| Schema self-consistency (depth, unique labels, …) | `Schema.validate`                        |
-| Sensors only on allowed levels                    | `Schema.allows_sensors` via `Sensors.attach` |
+| Rule                                              | Enforced by                            |
+|---------------------------------------------------|----------------------------------------|
+| Child level = parent level + 1 (no skips)         | `hierarchy::add_node`                  |
+| Child type is allowed under the parent type       | `Schema::allowed_children` / `edge_between` |
+| Type unambiguous when label omitted               | `add_under_schema`                     |
+| Metadata matches the type's field spec            | `schema::validate`                     |
+| `max` cardinality per parent                      | `add_under_schema`                     |
+| Schema self-consistency (DAG, reachable, depth ≤7)| `Schema::validate`                     |
+| Sensors only on allowed types                     | `Schema::allows_sensors` via `sensors::attach` |
 
 ---
 
@@ -204,154 +228,132 @@ algorithms.
 
 ### 5.1 Sensor record
 
-```ocaml
-(* lib/domain/sensor.ml *)
-type meter_type = Counter | Gauge
+```rust
+// crates/model/src/domain/sensor.rs
+pub enum MeterType { Counter, Gauge }
 
-type t = {
-  id         : Sensor_id.t;     (* logical identity, stable across replacements *)
-  created    : Ptime.t;         (* when the current device became active *)
-  daq_id     : string;          (* physical data-acquisition id *)
-  path       : string;          (* pipe-separated ancestry incl. self; stored as gsi1sk *)
-  purpose    : string;          (* "Electricity", "Heat", … *)
-  meter_type : meter_type;
-  unit       : string option;
-  formula    : Formula.t;
-  resample_minutes : int option;   (* resample interval in minutes (> 0); None = no resampling *)
+pub struct Sensor {
+    pub id:         SensorId,   // logical identity, stable across device swaps
+    pub created:    DateTime<Utc>, // when the current device became active
+    pub daq_id:     String,     // physical data-acquisition id
+    pub path:       String,     // pipe-separated ancestry incl. self (gsi1sk)
+    pub purpose:    String,     // "Electricity", "Heat", …
+    pub meter_type: MeterType,
+    pub unit:       Option<String>,
+    pub formula:    Formula,
+    pub resample_minutes: Option<i32>, // > 0; None = no resampling
 }
 ```
 
-`Sensor_id.t` is `S#<int>`. The sensor's logical identity is the integer id;
-physical devices change over time, tracked by promotion/demotion rows. The
-parent node is recovered from `path` (`Sensor.parent_id`), not a stored field.
+`SensorId` is `S#<int>`. The logical identity is the integer id; physical
+devices change over time, tracked by promotion/demotion rows. The parent node is
+recovered from `path`, not a stored field.
 
 ### 5.2 DynamoDB layout
 
-One partition per sensor (`pk = S#<int>`). Active row uses a prefixed sort
-key so it's distinguishable from history without a filter.
+One partition per sensor (`pk = S#<int>`). The active row uses a prefixed `sk`
+so it is distinguishable from history without a filter.
 
-| Attribute     | Active row                      | History row           |
-|---------------|---------------------------------|-----------------------|
-| `pk`          | `S#<int>`                       | `S#<int>`             |
-| `sk`          | `active#<ISO8601 created>`      | `<ISO8601 created>`   |
-| `gsi1pk`      | `S`                             | `S`                   |
-| `gsi1sk`      | sensor `path`                   | sensor `path`         |
-| `daq_id`      | current device                  | frozen historical     |
-| `purpose`, `meter_type`, `unit`, `formula`, `resample_minutes` | current | snapshot at demotion time |
+| Attribute     | Active row                 | History row         |
+|---------------|----------------------------|---------------------|
+| `pk`          | `S#<int>`                  | `S#<int>`           |
+| `sk`          | `active#<RFC3339 created>` | `<RFC3339 created>` |
+| `gsi1pk`      | `S`                        | `S`                 |
+| `gsi1sk`      | sensor `path`              | sensor `path`       |
+| `daq_id`      | current device             | frozen historical   |
+| `purpose`, `meter_type`, `unit`, `formula`, `resample_minutes` | current | snapshot at demotion |
 
-`resample_minutes` (and `unit`) are only written when set. The sensor edge row (in the
-parent node's partition) is written once at attach time and survives device
-replacements:
+`resample_minutes` and `unit` are only written when set. The `has_sensor` edge
+row lives in the parent node's partition, written once at attach and surviving
+device swaps:
 
-| Attribute | Value                   |
-|-----------|-------------------------|
-| `pk`      | `<parent_pk>`           |
-| `sk`      | `has_sensor#S#<int>`    |
-| `gsi1pk`  | `S`                     |
-| `gsi1sk`  | sensor `path`           |
-| `name`    | `""` (edge only — sensor name lives on the sensor row if/when added) |
+| Attribute | Value                |
+|-----------|----------------------|
+| `pk`      | `<parent_pk>`        |
+| `sk`      | `has_sensor#S#<int>` |
+| `gsi1pk`  | `S`                  |
+| `gsi1sk`  | sensor `path`        |
 
 Listing sensors for a node is `Query pk=<parent>, sk begins_with has_sensor#`,
-then one `Query pk=S#<int>, sk begins_with active#` per sensor (see
-`Sensors.list_active` / `dynamo.query_sensor_ids`).
+then one `Query pk=S#<int>, sk begins_with active#` per sensor.
 
 ### 5.3 Attach — atomic
 
-`Sensors.attach` → `Effects.Add_sensor`, a single `TransactWriteItems` that
-allocates the sensor's int id from the `count#S` counter and writes three rows:
+`sensors::attach` allocates the sensor's int id from the `count#S` counter and
+writes three rows in a single `TransactWriteItems`: the active sensor row, the
+`has_sensor` edge row, and the counter bump (conditional → concurrent attaches
+retry). A formula may be supplied (default `Identity`).
 
-1. active sensor row (`pk=S#<int>, sk=active#<now>`)
-2. sensor edge row (`pk=<parent>, sk=has_sensor#S#<int>`)
-3. the `count#S` counter bump (conditional → concurrent attaches retry)
-
-`Add_sensor` writes them atomically. Before this became transactional, orphan
-sensor/edge pairs appeared under load — see commit `665c959 feat(repo/dynamo):
-sensor ops with TransactWriteItems-backed replace`.
-
-A formula may be supplied at attach time (default `Identity` when omitted). The
-three supported variants are `Identity` (`S' = Self`), `Zero` (`S' = 0`), and
-`Expr` — a text expression over `self`, numeric literals, `+ - * /`, `abs()`,
+`Identity` (`S' = Self`), `Zero` (`S' = 0`), and `Expr` are the three variants.
+`Expr` is a text expression over `self`, numeric literals, `+ - * /`, `abs()`,
 parentheses, and named aliases; each alias is bound to another sensor id via a
-`refs` map and resolves to that sensor's computed value `S'`. Alias bindings are
-scoped to the owning HN2 company: references to sensors outside that company are
-rejected. The backend also rejects formulas that introduce a cycle in the
-reference graph.
+`refs` map and resolves to that sensor's computed value `S'`. Aliases are scoped
+to the owning HN2 company; cross-company references and formulas that introduce
+a cycle in the reference graph are rejected.
 
 ### 5.4 Replace device — atomic
 
-A sensor's `sk` includes its `created` timestamp, so updating in place is not
-possible. `Sensors.replace_device` issues a three-op transaction:
+A sensor's `sk` includes its `created` timestamp, so in-place updates are
+impossible. `sensors::replace_device` issues a three-op transaction:
 
 1. **Delete** `{pk: S#<int>, sk: active#<old-created>}`
-2. **Put** `{pk: S#<int>, sk: <old-created>, …}` — demotes the old device to
-   history (plain timestamp, no `active#` prefix)
+2. **Put** `{pk: S#<int>, sk: <old-created>, …}` — demote old device to history
 3. **Put** `{pk: S#<int>, sk: active#<now>, daq_id: <new>, …}` — new active row
 
-History rows therefore form a timeline: each plain-timestamp row records when
-that device *was* active from, up until the next replacement.
+History rows form a timeline; each plain-timestamp row records when that device
+*was* active from, up to the next replacement.
 
 ### 5.5 Delete
 
-`Effects.Delete_sensor` removes the whole sensor partition and the parent's
-sensor edge. No soft-delete.
+`delete_sensor` removes the whole sensor partition and the parent's
+`has_sensor` edge. No soft-delete.
 
 ### 5.6 Formulas
 
-Every sensor produces a computed value (`S'`) that is always non-negative.
-Default formula is `Identity` (`S' = Self`). Composite formulas reference other
-sensors' computed values by sensor id.
+Every sensor produces a computed value `S'` that is always non-negative.
 
-```ocaml
-(* lib/domain/formula.ml *)
-type formula =
-  | Identity                               (* S' = Self  (default) *)
-  | Zero                                   (* S' = 0     (exclude from aggregations) *)
-  | Expr of {
-      ast  : expr;
-      refs : (string * Sensor_id.t) list;  (* alias -> sensor id *)
-    }
+```rust
+// crates/model/src/domain/formula.rs
+pub enum Formula {
+    Identity,                 // S' = Self (default)
+    Zero,                     // S' = 0   (exclude from aggregations)
+    Expr { refs: Vec<(String, SensorId)>, expr: Expr }, // alias -> sensor id
+}
 
-and expr =
-  | Num  of float
-  | Self                                   (* raw meter reading *)
-  | Ref  of string                         (* computed value of a referenced sensor *)
-  | Abs  of expr
-  | Add  of expr * expr
-  | Sub  of expr * expr
-  | Mul  of expr * expr
-  | Div  of expr * expr
+pub enum Expr {
+    Num(f64),
+    SelfRef,                  // raw meter reading (named SelfRef; `Self` is reserved)
+    Ref(String),             // computed value S' of a referenced sensor
+    Abs(Box<Expr>),
+    Add(Box<Expr>, Box<Expr>), Sub(Box<Expr>, Box<Expr>),
+    Mul(Box<Expr>, Box<Expr>), Div(Box<Expr>, Box<Expr>),
+}
 ```
 
 - **`Identity`** — `S' = Self`, the common case.
-- **`Zero`** — `S' = 0`. Keeps the sensor row and its edges intact but makes it
-  contribute nothing to aggregations. Use it when a physical sensor is present
-  but its readings shouldn't count — duplicate coverage, a meter that has
-  drifted, billing-separated consumption, etc. `Sensors.evaluate` short-circuits
-  before `Get_sensor_reading`, so a `Zero` formula evaluates correctly even
-  when no reading is available.
-- **`Expr`** — composite. `Self` is the raw reading of *this* meter;
-  `Ref alias` resolves — via `refs` — to the *computed* value `S'` of another
-  sensor. Evaluation is topological; leaves are evaluated before the sensors
-  that reference them.
+- **`Zero`** — `S' = 0`. Keeps the row and edges but contributes nothing to
+  aggregations (duplicate coverage, drifted meter, billing-separated
+  consumption, …). Evaluation short-circuits before reading, so it is correct
+  even with no reading available.
+- **`Expr`** — composite. `Self` is *this* meter's raw reading; `Ref alias`
+  resolves (via `refs`) to the *computed* value `S'` of another sensor.
+  Evaluation is topological — leaves before the sensors that reference them.
 
-Composite formulas typically subtract out sub-metered contributions so that
-summing every sensor's `S'` in a subtree gives total consumption with no
+Composite formulas typically subtract sub-metered contributions so that summing
+every sensor's `S'` in a subtree gives total consumption with no
 double-counting.
 
 #### Worked example — nested sub-metering
-
-A building with two areas, where area 2 has its own sub-meters:
 
 ```mermaid
 graph TD
   B["Building"] --> A1["Area 1"]
   B --> A2["Area 2"]
-
-  B -->|has_sensor| S1["S1<br/>abs(Self - S2' - S3')"]
-  A1 -->|has_sensor| S2["S2<br/>identity"]
-  A2 -->|has_sensor| S3["S3<br/>abs(Self - S4' - S5')"]
-  A2 -->|has_sensor| S4["S4<br/>identity"]
-  A2 -->|has_sensor| S5["S5<br/>identity"]
+  B -->|has_sensor| S1["S1 · abs(self - a2' - a3')"]
+  A1 -->|has_sensor| S2["S2 · identity"]
+  A2 -->|has_sensor| S3["S3 · abs(self - a4' - a5')"]
+  A2 -->|has_sensor| S4["S4 · identity"]
+  A2 -->|has_sensor| S5["S5 · identity"]
 
   S1 -.-> S2
   S1 -.-> S3
@@ -359,77 +361,22 @@ graph TD
   S3 -.-> S5
 ```
 
-Solid edges are hierarchy. Dashed edges are formula references — `Ref`
-resolves to the referenced sensor's *computed* value `S'`, not its raw
-reading.
+Solid edges are hierarchy; dashed edges are formula references — `Ref` resolves
+to the referenced sensor's *computed* `S'`, not its raw reading.
 
-Formulas and what they express:
-
-- `S2' = Self` — area 1 is fully captured by its own meter.
-- `S4' = Self`, `S5' = Self` — raw sub-meter readings in area 2.
+- `S2' = Self`; `S4' = Self`, `S5' = Self` — raw sub-meter readings.
 - `S3' = abs(Self - S4' - S5')` — area 2 *remainder* after its sub-meters.
-  Zero when `S4 + S5` accounts for everything; positive when there is
-  unmetered consumption inside area 2.
 - `S1' = abs(Self - S2' - S3')` — building remainder after the two areas.
 
-AST for S3:
-
-```ocaml
-Expr { ast  = Abs (Sub (Sub (Self, Ref "S4"), Ref "S5"));
-       refs = [("S4", Sensor_id.make 4); ("S5", Sensor_id.make 5)] }
-```
-
 Total building consumption = `S1' + S2' + S3' + S4' + S5'`. Each sensor
-contributes its net share; nothing is counted twice.
+contributes its net share; nothing is counted twice. The non-obvious part:
+`Ref` to a non-identity sensor resolves to *its* output, so coverage meters can
+stack without per-level knowledge of the referenced sensor's own formula.
 
-#### Worked example — a meter that covers its siblings
-
-The one-meter-per-subtree assumption breaks when a shared feed is metered
-higher up than the scope it actually reads. Classic case: **Building 1's**
-electricity meter is physically wired to the feed that powers Building 1
-*and* Building 2, while Building 2 has a sub-meter of its own (with its
-own sub-meter below it).
-
-```mermaid
-graph TD
-  P["Property"] --> B1["Building 1"]
-  P --> B2["Building 2"]
-  B2 --> R["Roof Array"]
-
-  B1 -->|has_sensor| SB1["SB1<br/>abs(Self - SB2')"]
-  B2 -->|has_sensor| SB2["SB2<br/>abs(Self - SR')"]
-  R  -->|has_sensor| SR["SR<br/>identity"]
-
-  SB1 -.-> SB2
-  SB2 -.-> SR
-```
-
-Formulas:
-
-- `SR' = Self` — raw reading at the roof array.
-- `SB2' = abs(Self - SR')` — Building 2 net, after subtracting the roof.
-- `SB1' = abs(Self - SB2')` — Building 1 net, after subtracting
-  Building 2's *computed* value.
-
-The non-obvious part: `Ref "SB2"` in SB1's formula resolves to `SB2'` —
-the output of SB2's own non-identity formula — **not** SB2's raw Self.
-Evaluation runs topologically (`SR' → SB2' → SB1'`, leaves first). If
-SB1 subtracted SB2's raw Self, the roof array would get subtracted out
-of SB1 a second time, because SB2 has already carved it out of its own
-net.
-
-This is what keeps `Ref` compositional: every sensor's `S'` is a black
-box from the perspective of any referring formula, so coverage meters
-can stack without per-level knowledge of what the referenced sensor's
-own formula is doing.
-
-Cycles are rejected at attach time and on `set_formula` (`Sensors.has_cycle`).
-`Zero` carries no refs, so it is trivially cycle-free.
-
-Evaluation (`Sensors.evaluate`) walks the formula DAG, performing
-`Get_active_sensor` + `Get_sensor_reading` per node. The reading effect is a
-stub in the current repo (returns `None` in both memory and dynamo handlers);
-wiring up the actual time-series source is future work.
+Cycles are rejected at attach time and on `set_formula`. Evaluation
+(`sensors::evaluate`) walks the formula DAG, reading each leaf; the reading hook
+is a stub today (returns `None`), so wiring a real time-series source is future
+work.
 
 ---
 
@@ -437,134 +384,105 @@ wiring up the actual time-series source is future work.
 
 Table name in `$ITEST_DYNAMO_TABLE` (prod: `hierarchy_new`).
 
-### 6.1 Hierarchy
+### 6.1 Hierarchy & edges
 
-| Attribute | Node row           | User-side edge row (Blocked / Administrates) |
-|-----------|--------------------|----------------------------------------------|
-| `pk`      | `HN<n>#<int>` (= `sk`) | `<from_pk>`                              |
-| `sk`      | `HN<n>#<int>` (= `pk`) | `<Edge_kind.sk_verb kind>#<to_pk>`       |
-| `type`    | `node`             | `edge`                                       |
-| `kind`    | —                  | `Edge_kind.to_string kind`                   |
-| `name`    | human label        | **stored on edge** (enables id+name listing without GetItem) |
-| `created` | RFC 3339           | RFC 3339                                     |
-| `metadata`| JSON map           | —                                            |
-| `schema`  | hn2 only           | —                                            |
-| `gsi1pk`  | `HN<n>` (level anchor) | `<to_pk>`                                |
-| `gsi1sk`  | node `path`        | `<Edge_kind.gsi_verb kind>#<from_pk>`        |
+| Attribute | Node row              | User-side edge row (access / block)           |
+|-----------|-----------------------|-----------------------------------------------|
+| `pk`      | `HN<n>#<int>` (= `sk`)| `<from_pk>` (`U#<email>` for user edges)      |
+| `sk`      | `HN<n>#<int>` (= `pk`)| `<sk_verb>#<to_pk>`                            |
+| `type`    | `node`                | `edge`                                         |
+| `kind`    | —                     | `EdgeKind::kind_string` (e.g. `writes`, `has_label:building`) |
+| `name`    | human label           | **stored on edge** (id+name listing, no GetItem) |
+| `created` | RFC 3339              | RFC 3339                                       |
+| `metadata`| JSON map              | —                                             |
+| `schema`  | hn2 only              | —                                             |
+| `gsi1pk`  | `HN<n>` (level anchor)| `<to_pk>`                                      |
+| `gsi1sk`  | node `path`           | `<gsi_verb>#<from_pk>`                         |
 
-`kind` is one of `Has_label <label> | Has_sensor | Blocked | Administrates` —
-source of truth is `lib/domain/edge_kind.ml`. The forward `sk` prefix comes
-from `Edge_kind.sk_verb`. **HN-side** edges (`Has_label`, `Has_sensor`) have
-**no** gsi verb — their `gsi1pk` is the child's level anchor / `S` and `gsi1sk`
-is the child/sensor `path` (direction is carried structurally by the path).
-Only **user-side** edges (`Blocked` → `blocks`, `Administrates` →
-`administrators`) put a `gsi_verb` in `gsi1sk`. For a `Has_label "building"`
-edge the sk is the familiar `has_building#<child_pk>`.
+`sk_verb` per kind: `has_<label>`, `has_sensor`, `blocked`, `administrates`,
+`reads`, `writes`. **HN-side** edges (`HasLabel`, `HasSensor`) have **no**
+`gsi_verb` — their `gsi1pk` is the child's level anchor / `S` and `gsi1sk` is the
+child/sensor `path` (direction carried structurally). **User-side** edges carry
+a reverse verb on `gsi1sk`: `blocks`, `administrators`, `readers`, `writers`.
 
-#### Worked example — a block edge
+#### Worked example — a writes edge
 
-`block_user { user_id = "U#alice@acme.test"; node_id = "HN4#10044" }`
-writes one edge row with `kind = Blocked`:
+`grant_access { user_id="U#alice@acme.test", node_id="HN3#10044", kind=Writes }`:
 
-| Attribute | Value                                        | Where it comes from             |
-|-----------|----------------------------------------------|---------------------------------|
-| `pk`      | `U#alice@acme.test`                          | `from_` side of the edge        |
-| `sk`      | `blocked#HN4#10044`                          | `sk_verb Blocked = "blocked"`   |
-| `type`    | `edge`                                       | constant                        |
-| `kind`    | `blocked`                                    | `Edge_kind.to_string Blocked`   |
-| `gsi1pk`  | `HN4#10044`                                  | `to_` side of the edge          |
-| `gsi1sk`  | `blocks#U#alice@acme.test`                   | `gsi_verb Blocked = "blocks"`   |
+| Attribute | Value                       | Source                       |
+|-----------|-----------------------------|------------------------------|
+| `pk`      | `U#alice@acme.test`         | `from_`                      |
+| `sk`      | `writes#HN3#10044`          | `sk_verb(Writes)`            |
+| `type`    | `edge`                      | constant                     |
+| `kind`    | `writes`                    | `kind_string(Writes)`        |
+| `gsi1pk`  | `HN3#10044`                 | `to_`                        |
+| `gsi1sk`  | `writers#U#alice@acme.test` | `gsi_verb(Writes)`           |
 
-"Nodes Alice is blocked on" is `Query pk=U#alice@acme.test,
-sk begins_with blocked#`. "Users blocked on HN4#10044" is the
-mirror image on GSI1: `Query gsi1pk=HN4#10044, gsi1sk begins_with
-blocks#`. An `Administrates` grant uses the same shape with the
-`administrates`/`administrators` verbs. HN-side hierarchy/sensor edges
-invert differently — `gsi1pk` is the level anchor and `gsi1sk` is the
-child path, not a verb-prefixed reverse pointer.
+"Nodes Alice can write" is `Query pk=U#alice@acme.test, sk begins_with writes#`.
+"Users who can write HN3#10044" is the mirror on GSI1:
+`Query gsi1pk=HN3#10044, gsi1sk begins_with writers#`.
 
 ### 6.2 Counters
 
 One counter row per level (and one for sensors) backs the monotonic id
-allocator. `Add_node` / `Add_sensor` read-and-bump the matching row inside the
-same `TransactWriteItems` that writes the vertex, with a `ConditionExpression`
-so concurrent adds retry instead of colliding.
+allocator. `add_node` / `attach_sensor` read-and-bump the matching row inside
+the same `TransactWriteItems` that writes the vertex, with a
+`ConditionExpression` so concurrent adds retry rather than collide.
 
-| Attribute | Value                                                         |
-|-----------|---------------------------------------------------------------|
-| `pk`      | `count#HN<n>` (one per level) or `count#S` (sensors)          |
-| `sk`      | `count`                                                       |
-| `type`    | `counter`                                                     |
-| `n`       | next-id allocator — last value handed out (monotonic)        |
-| `live`    | current cardinality at that level (bumped down on delete)    |
-
-Because the allocator is per level, the integer in `HN<n>#<int>` is unique only
-within a level — see §1.
+| Attribute | Value                                              |
+|-----------|----------------------------------------------------|
+| `pk`      | `count#HN<n>` (per level) or `count#S` (sensors)   |
+| `sk`      | `count`                                            |
+| `type`    | `counter`                                          |
+| `n`       | next-id allocator (monotonic)                      |
+| `live`    | current cardinality (decremented on delete)        |
 
 ### 6.3 Sensors — see §5.2.
 
 ### 6.4 Query patterns
 
-Prefixes below are built from `Edge_kind.sk_verb` on the pk side — not
-free-form strings. `has_<label>#`, `has_sensor#`, `blocked#`, and
-`administrates#` are the concrete `sk_verb` renderings for each `Edge_kind.t`
-case. Only user-side edges have a `gsi_verb`: `blocks#` (Blocked) and
-`administrators#` (Administrates). HN-side edges instead index by level anchor
-(`gsi1pk`) + child `path` (`gsi1sk`).
-
-| Use case                                  | Query                                                                     |
-|-------------------------------------------|---------------------------------------------------------------------------|
+| Use case                                  | Query                                                                    |
+|-------------------------------------------|--------------------------------------------------------------------------|
 | Exact node by id                          | `GetItem pk=id, sk=id`                                                    |
-| Direct child refs (id+name only)          | `Query pk=parent, sk begins_with has_` — no extra GetItem                 |
-| Direct children (full nodes)              | `Query pk=parent, sk begins_with has_`, then `GetItem` per child          |
-| Children of a specific label              | `Query pk=parent, sk begins_with has_<label>#`                            |
-| Reverse lookup — who points at Y          | `Query gsi1pk=Y`                                                          |
-| Active sensors on a node                  | `Query pk=parent, sk begins_with has_sensor#` → ids, then one Query each  |
-| Full history for a sensor                 | `Query pk=S#<int>` — returns active + all history rows, sorted by `sk`    |
-| Nodes a user is blocked from              | `Query pk=U#<email>, sk begins_with blocked#`                             |
-| Users blocked from a node                 | `Query gsi1pk=<node_id>, gsi1sk begins_with blocks#` (index `gsi1`)       |
+| Direct child refs (id+name only)          | `Query pk=parent, sk begins_with has_` — no extra GetItem                |
+| Direct children (full nodes)              | `Query pk=parent, sk begins_with has_`, then `GetItem` per child         |
+| Children of a specific type               | `Query pk=parent, sk begins_with has_<type>#`                            |
+| Reverse lookup — who points at Y          | `Query gsi1pk=Y`                                                         |
+| Active sensors on a node                  | `Query pk=parent, sk begins_with has_sensor#` → ids, then one Query each |
+| Full history for a sensor                 | `Query pk=S#<int>` — active + history, sorted by `sk`                    |
+| Nodes a user is blocked from              | `Query pk=U#<email>, sk begins_with blocked#`                            |
+| Users blocked from a node                 | `Query gsi1pk=<node_id>, gsi1sk begins_with blocks#` (GSI1)              |
+| Nodes a user can write                    | `Query pk=U#<email>, sk begins_with writes#`                            |
 
-`list_children`'s default (edge-row) mode exists to avoid the N+1 fan-out for
-dense subtrees. `?full=true` opts into it when the caller actually needs node
-metadata.
+`list_children`'s default (edge-row) mode avoids the N+1 fan-out for dense
+subtrees; `?full=true` opts in when node metadata is needed.
 
 ### 6.5 Cascade delete
 
-`delete_node` cascades: walks the subtree via edge rows and removes every node
-and every edge. Sensor partitions under deleted nodes are also wiped (via
-`Delete_sensor`). Deleting a user or node also removes the associated
-`Blocked` edges (logic-layer, non-transactional) — see `docs/architecture.md`
-§8.
+`delete_node` walks the subtree via edge rows and removes every node and edge;
+sensor partitions under deleted nodes are wiped too. Deleting a user or node
+also removes the associated access/block edges (logic-layer, non-transactional)
+— see `docs/architecture.md` §9.
 
 ---
 
 ## 7. File map
 
-| File                          | Role                                                  |
-|-------------------------------|-------------------------------------------------------|
-| `lib/domain/level.ml`         | hn0..hn9 enum + depth                                 |
-| `lib/domain/node_id.ml`       | `HN<n>#<int>` parser/printer (root = `HN0#root`)      |
-| `lib/domain/node.ml`          | node record                                           |
-| `lib/domain/schema.ml`        | schema type + `validate` + `edges_between`            |
-| `lib/domain/metadata.ml`      | field spec + validation                               |
-| `lib/domain/sensor_id.ml`     | `S#<int>` parser/printer                              |
-| `lib/domain/sensor_sk.ml`     | `active#<ts>` / plain-ts sort-key codec               |
-| `lib/domain/sensor.ml`        | sensor record + meter type                            |
-| `lib/domain/formula.ml`       | formula AST + eval                                    |
-| `lib/domain/edge_kind.ml`     | `Has_label | Has_sensor | Blocked | Administrates` + `sk_verb` / `gsi_verb` |
-| `lib/domain/user_id.ml`       | `U#<email>` parser/printer                            |
-| `lib/domain/user.ml`          | user record                                           |
-| `lib/domain/cognito_group.ml` | `Reader | Writer | Admin` capability ceiling          |
-| `lib/domain/language.ml`      | language enum + default                               |
-| `lib/domain/currency.ml`      | currency enum + default                               |
-| `lib/domain/errors.ml`        | error sum type                                        |
-| `lib/effects.ml`              | flat effect declarations + perform wrappers           |
-| `lib/logic/hierarchy.ml`      | `add_node`, `list_children`, `delete_node`, level resolution |
-| `lib/logic/schema_check.ml`   | `find_for` — walk up to the hn2 schema                |
-| `lib/logic/sensors.ml`        | `attach`, `list_active`, `get_active`, `replace_device`, `set_formula`, `evaluate` |
-| `lib/logic/users.ml`          | `create`, `get`, `update`, `delete`, `list`           |
-| `lib/logic/access.ml`         | `block`, `unblock`, `effective_permission`, `grant_administrates`, `has_admin_access`, blocked/administrated-list queries |
-| `lib/repo/codec.ml`           | node/edge/sensor/user ↔ DynamoDB attribute map        |
-| `lib/repo/dynamo.ml`          | Eio-based effect handler over smaws                   |
-| `lib/repo/memory.ml`          | in-memory handler for unit tests                      |
-| `itest/test_dynamo.ml`        | real-table integration test                           |
+| File                                | Role                                                  |
+|-------------------------------------|-------------------------------------------------------|
+| `domain/ids.rs`                     | `Level` (hn0..hn9 + depth), `NodeId`, `SensorId`, `UserId` |
+| `domain/node.rs`                    | node record + `make` / path helpers                   |
+| `domain/schema.rs`                  | type-graph `Schema` (v2) + `validate` + metadata validation |
+| `domain/values.rs`                  | `EdgeKind`, `CognitoGroup`, `Profile`, `FieldType`, `MeterType`, … |
+| `domain/sensor.rs`, `sensor_sk.rs`  | sensor record + `active#`/plain-ts sort-key codec     |
+| `domain/formula.rs`                 | formula AST + eval                                    |
+| `domain/user.rs`                    | user record                                           |
+| `errors.rs`                         | `RepositoryError`                                     |
+| `logic/hierarchy.rs`                | `add_node`, `list_children`, `list_child_refs`, `get_node` |
+| `logic/schema_check.rs`             | `find_for` — walk up to the HN2 schema                |
+| `logic/sensors.rs`                  | `attach`, `list_active`, `replace_device`, `set_formula`, `evaluate` |
+| `logic/users.rs`                    | `create`, `get`, `update`, `delete`, `list`           |
+| `logic/access.rs`                   | block/unblock, grant_access/administrates, effective_permission, has_access, start_nodes |
+| `repository/dynamodb/*`             | node/edge/sensor/user closures + codec (AWS SDK)      |
+| `repository/cognito/*`              | Cognito user provisioning / deletion                  |
+| `repository/memory.rs`              | in-memory `Store` for unit tests                      |

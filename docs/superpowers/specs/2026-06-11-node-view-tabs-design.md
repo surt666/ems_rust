@@ -1,7 +1,12 @@
 # Tabbed Node View — Design Spec
 
 **Date:** 2026-06-11
-**Status:** Approved (design); implementation plan pending
+**Status:** Superseded by what shipped. The tabbed view landed as a dedicated,
+unlinked Astro page (`frontend/src/pages/node.astro`) that the hierarchy tree
+links to (HTML over the wire, no JSON); the `masterdata` page/component was
+**retired** rather than repurposed. The Data tab is still the backend
+`render_node` HTMX fragment, as designed. Treat this doc as the original design
+intent, not the as-built layout.
 **Surface:** Frontend (Astro + Alpine + HTMX, account `339712745226` S3+CloudFront)
 **Backend:** unchanged (`render_node` in the hierarchy lambda is reused as the Data tab content)
 
