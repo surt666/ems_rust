@@ -72,9 +72,16 @@ fn json_scalar_str(v: &serde_json::Value) -> String {
 // metadata_edit_form — Admin/Writer editable metadata
 // ---------------------------------------------------------------------------
 
-/// On Save success, reload the node card (read-only, persisted values); on
+/// On Save success, flash a small auto-dismissing "saved" toast and reload the
+/// node card (read-only, persisted values — returns to the non-edit view); on
 /// error show the response text in the inline error div.
 const METADATA_AFTER_REQUEST_JS: &str = "if(event.detail.successful){ \
+    var t=document.createElement('div'); t.textContent='Data gemt'; \
+    t.setAttribute('style','position:fixed;bottom:1.5rem;right:1.5rem;\
+background:#16a34a;color:#fff;padding:0.6rem 1rem;border-radius:8px;\
+box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:9999;font-size:0.9rem;'); \
+    document.body.appendChild(t); \
+    setTimeout(function(){ t.remove(); }, 2500); \
     htmx.trigger('#node-data-panel','load'); } else { \
     var ed=document.getElementById('metadata-error'); \
     ed.textContent=event.detail.xhr.responseText; ed.style.display='block'; }";
@@ -756,6 +763,7 @@ mod tests {
         assert!(html.contains("data-i18n=\"node.edit\""), "Edit button missing");
         assert!(html.contains("data-i18n=\"node.save\""), "Save button missing");
         assert!(html.contains("value=\"55\""), "lat prefill missing");
+        assert!(html.contains("Data gemt"), "save-success toast text missing");
     }
 
     #[test]
