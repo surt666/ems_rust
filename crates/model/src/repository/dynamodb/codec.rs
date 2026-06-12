@@ -531,6 +531,10 @@ pub fn schema_of_av(v: &AttributeValue) -> Result<Schema, RepositoryError> {
         )));
     }
 
+    // DynamoDB `M` maps are unordered and Rust's `HashMap` iteration order is
+    // randomized per instance, so decode every level and sort by key. This keeps
+    // the schema's field/child order stable across decodes (no per-reload
+    // shuffling) and matches the deterministic order `schema_of_json` produces.
     let edges_kvs = as_m(field_map(kvs, "edges")?)?;
     let mut edges: Vec<(String, Vec<(String, EdgeSpec)>)> = Vec::new();
     for (parent, inner_v) in edges_kvs {
@@ -539,8 +543,10 @@ pub fn schema_of_av(v: &AttributeValue) -> Result<Schema, RepositoryError> {
         for (child, body) in inner_kvs {
             children.push((child.clone(), decode_edge_spec(body)?));
         }
+        children.sort_by(|a, b| a.0.cmp(&b.0));
         edges.push((parent.clone(), children));
     }
+    edges.sort_by(|a, b| a.0.cmp(&b.0));
 
     let metadata = match kvs.get("metadata") {
         None => vec![],
@@ -553,8 +559,10 @@ pub fn schema_of_av(v: &AttributeValue) -> Result<Schema, RepositoryError> {
                 for (fname, spec_v) in inner_kvs {
                     fields.push((fname.clone(), decode_field_spec(spec_v)?));
                 }
+                fields.sort_by(|a, b| a.0.cmp(&b.0));
                 result.push((typ.clone(), fields));
             }
+            result.sort_by(|a, b| a.0.cmp(&b.0));
             result
         }
     };
@@ -1192,6 +1200,40 @@ mod tests {
             s1.sensors.iter().collect::<std::collections::HashSet<_>>(),
             s0.sensors.iter().collect::<std::collections::HashSet<_>>()
         );
+    }
+
+    /// Decoding sorts metadata fields and edge children by name, so the order is
+    /// stable across decodes (DynamoDB `M` + HashMap iteration is otherwise
+    /// randomized) regardless of the order they were encoded in.
+    #[test]
+    fn schema_decode_orders_fields_and_children_deterministically() {
+        let num = || FieldSpec {
+            typ: FieldType::Number { min: None, max: None },
+            required: false,
+        };
+        let s0 = Schema {
+            version: 2,
+            edges: vec![("company".to_string(), vec![
+                ("zulu".to_string(), EdgeSpec::builder().build()),
+                ("alpha".to_string(), EdgeSpec::builder().build()),
+                ("mike".to_string(), EdgeSpec::builder().build()),
+            ])],
+            // fields deliberately NOT in alphabetical order
+            metadata: vec![("company".to_string(), vec![
+                ("lng".to_string(), num()),
+                ("lat".to_string(), num()),
+                ("alt".to_string(), num()),
+            ])],
+            sensors: vec![],
+        };
+        let dec = schema_of_av(&schema_to_av(&s0)).unwrap();
+
+        let fields: Vec<&str> = dec.metadata[0].1.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(fields, vec!["alt", "lat", "lng"], "fields must be name-sorted");
+
+        let children: Vec<&str> =
+            dec.edges.iter().find(|(p, _)| p == "company").unwrap().1.iter().map(|(c, _)| c.as_str()).collect();
+        assert_eq!(children, vec!["alpha", "mike", "zulu"], "children must be name-sorted");
     }
 
     // -----------------------------------------------------------------------
