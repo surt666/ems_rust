@@ -177,6 +177,27 @@ Response:
 { "deleted": "HN4#10044" }
 ```
 
+### update_node
+
+Replace a node's metadata. Validated against the node type's schema (form
+strings are coerced to their declared types first); only schema-declared fields
+are kept. hn0/hn1 nodes have no editable metadata.
+
+```json
+{
+  "action": "update_node",
+  "id": "HN4#10044",
+  "metadata": { "lat": 55.68, "lng": 12.57 }
+}
+```
+
+| field    | required | notes                                              |
+|----------|----------|----------------------------------------------------|
+| id       | yes      | `HN<n>#<int>` (hn2 and below)                       |
+| metadata | no       | default `{}`; validated against the type's schema  |
+
+Response — the updated node (same shape as `get_node`).
+
 ### attach_sensor
 
 Create a new sensor under a parent node. The parent's level must be listed

@@ -233,7 +233,7 @@ HTMX — **no JSON travels to the browser for the hierarchy UI** (see
 ### Commands (`Command` ADT, serde-tagged on `action`, snake_case)
 
 ```
-add_node · delete_node · attach_sensor · replace_sensor_device
+add_node · update_node · delete_node · attach_sensor · replace_sensor_device
 create_user · update_user · delete_user · block_user · unblock_user · grant_administrates
 ```
 
