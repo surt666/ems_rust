@@ -79,9 +79,10 @@ const METADATA_AFTER_REQUEST_JS: &str = "if(event.detail.successful){ \
     var ed=document.getElementById('metadata-error'); \
     ed.textContent=event.detail.xhr.responseText; ed.style.display='block'; }";
 
-/// Editable metadata form: schema-typed inputs (disabled until Edit) + Edit/Save
-/// + inline error. Edit (hyperscript) makes the `.md-input` controls writable and
-/// swaps Edit→Save; Save posts `update_node` and reloads `#node-data-panel`.
+/// Editable metadata form: schema-typed inputs (disabled until Edit), an
+/// Edit/Save button pair, and an inline error div. Edit (hyperscript) makes the
+/// `.md-input` controls writable and swaps Edit→Save; Save posts `update_node`
+/// and reloads `#node-data-panel`.
 fn metadata_edit_form(
     nid_str: &str,
     fields: &[(String, FieldSpec)],
