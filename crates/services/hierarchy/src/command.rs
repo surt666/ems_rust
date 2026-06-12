@@ -35,6 +35,13 @@ pub enum Command {
         id: String,
     },
 
+    /// `update_node` — replace a node's metadata.
+    UpdateNode {
+        id: String,
+        #[serde(default)]
+        metadata: Option<Value>,
+    },
+
     /// `attach_sensor` — attach a DAQ sensor to a node.
     AttachSensor {
         parent_id: String,
@@ -495,6 +502,32 @@ mod tests {
         let json = json!({ "action": "delete_node", "id": "HN3#42" });
         let cmd: Command = serde_json::from_value(json).unwrap();
         assert!(matches!(&cmd, Command::DeleteNode { id } if id == "HN3#42"));
+    }
+
+    /// `update_node` parses id + metadata (JSON).
+    #[test]
+    fn parse_update_node_json() {
+        let json = json!({
+            "action": "update_node",
+            "id": "HN4#10044",
+            "metadata": { "lat": "55.5" }
+        });
+        let cmd: Command = serde_json::from_value(json).unwrap();
+        assert!(matches!(&cmd, Command::UpdateNode { id, metadata: Some(_) } if id == "HN4#10044"));
+    }
+
+    /// `update_node` from a form body nests data.metadata.* into a metadata object.
+    #[test]
+    fn parse_update_node_form() {
+        let body = "action=update_node&data.id=HN4%2310044&data.metadata.lat=55.5";
+        let cmd = parse_command(Some("application/x-www-form-urlencoded"), body).unwrap();
+        match cmd {
+            Command::UpdateNode { id, metadata } => {
+                assert_eq!(id, "HN4#10044");
+                assert_eq!(metadata.unwrap()["lat"], json!("55.5"));
+            }
+            other => panic!("wrong variant: {:?}", other),
+        }
     }
 
     /// `attach_sensor` with integer `resample_minutes`.

@@ -217,6 +217,33 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// update_node handler
+// ---------------------------------------------------------------------------
+
+pub async fn handle_update_node<FGN, FGNFut, FPN, FPNFut>(
+    id: String,
+    metadata: Option<Value>,
+    get_node: FGN,
+    put_node: FPN,
+) -> Value
+where
+    FGN: Fn(NodeId) -> FGNFut,
+    FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
+    FPN: FnOnce(Node) -> FPNFut,
+    FPNFut: Future<Output = Result<(), RepositoryError>>,
+{
+    let nid = match NodeId::parse(&id) {
+        Ok(i) => i,
+        Err(e) => return bad_request(&format!("bad id: {}", e)),
+    };
+    let meta = metadata.unwrap_or_else(|| json!({}));
+    match hierarchy::update_node_metadata(nid, meta, get_node, put_node).await {
+        Ok(n) => ok(node_to_json(&n)),
+        Err(e) => repo_error_response(e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // create_user handler
 // ---------------------------------------------------------------------------
 
@@ -820,6 +847,28 @@ pub async fn run(cmd: Command) -> Value {
             .await
         }
 
+        Command::UpdateNode { id, metadata } => {
+            handle_update_node(
+                id,
+                metadata,
+                {
+                    let t = table.clone();
+                    move |nid| {
+                        let t = t.clone();
+                        async move { ddb_node::get_node(ddb, &t, &nid).await }
+                    }
+                },
+                {
+                    let t = table.clone();
+                    move |node| {
+                        let t = t.clone();
+                        async move { ddb_node::put_node(ddb, &t, &node).await }
+                    }
+                },
+            )
+            .await
+        }
+
         Command::AttachSensor {
             parent_id,
             daq_id,
@@ -1310,6 +1359,15 @@ mod tests {
         }
     }
 
+    fn make_put_node(
+        s: Rc<Store>,
+    ) -> impl FnOnce(node::Node) -> std::future::Ready<Result<(), RepositoryError>> {
+        move |n| {
+            s.put_node(&n);
+            std::future::ready(Ok(()))
+        }
+    }
+
     fn make_list_children(
         s: Rc<Store>,
     ) -> impl FnOnce(
@@ -1353,7 +1411,16 @@ mod tests {
                     ("area".to_string(), SchemaEdgeSpec::builder().build()),
                 ]),
             ],
-            metadata: vec![],
+            metadata: vec![(
+                "building".to_string(),
+                vec![(
+                    "lat".to_string(),
+                    model::domain::schema::FieldSpec {
+                        typ: model::domain::values::FieldType::Number { min: Some(-90.0), max: Some(90.0) },
+                        required: true,
+                    },
+                )],
+            )],
             sensors: vec!["building".to_string(), "area".to_string()],
         }
     }
@@ -1578,6 +1645,52 @@ mod tests {
             "delete_node should return 200; got {del_resp:?}"
         );
         assert!(store.get_node(&NodeId::parse(&id_s).unwrap()).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: update_node happy + validation
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn update_node_happy() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+        let add = handle_add_node(
+            c2.to_string(), "B".to_string(), Some("hn3".to_string()),
+            Some("building".to_string()), Some(json!({"lat": 1.0})), None,
+            make_get_node(store.clone()), make_list_children(store.clone()), make_add_node(store.clone()),
+        ).await;
+        assert_eq!(status(&add), 200, "add building: {add:?}");
+        let id_s = body(&add)["id"].as_str().unwrap().to_string();
+
+        let resp = handle_update_node(
+            id_s.clone(),
+            Some(json!({ "lat": "42.0" })),
+            make_get_node(store.clone()),
+            make_put_node(store.clone()),
+        ).await;
+        assert_eq!(status(&resp), 200, "update: {resp:?}");
+        assert_eq!(body(&resp)["metadata"]["lat"].as_f64(), Some(42.0));
+    }
+
+    #[tokio::test]
+    async fn update_node_validation_400() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+        let add = handle_add_node(
+            c2.to_string(), "B".to_string(), Some("hn3".to_string()),
+            Some("building".to_string()), Some(json!({"lat": 1.0})), None,
+            make_get_node(store.clone()), make_list_children(store.clone()), make_add_node(store.clone()),
+        ).await;
+        let id_s = body(&add)["id"].as_str().unwrap().to_string();
+
+        let resp = handle_update_node(
+            id_s,
+            Some(json!({ "lat": "200" })),
+            make_get_node(store.clone()),
+            make_put_node(store.clone()),
+        ).await;
+        assert_eq!(status(&resp), 400, "expected validation 400: {resp:?}");
     }
 
     // -----------------------------------------------------------------------
