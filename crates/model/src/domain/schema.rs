@@ -415,6 +415,75 @@ pub fn validate(
 }
 
 // ---------------------------------------------------------------------------
+// Metadata coercion (form strings -> declared schema types)
+// ---------------------------------------------------------------------------
+
+/// Normalize a timestamp string to RFC3339, or return `None` if it is neither
+/// RFC3339 nor a bare `YYYY-MM-DD` date.
+fn normalize_timestamp(s: &str) -> Option<String> {
+    let t = s.trim();
+    if chrono::DateTime::parse_from_rfc3339(t).is_ok() {
+        return Some(t.to_string());
+    }
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d") {
+        return Some(format!("{}T00:00:00Z", d.format("%Y-%m-%d")));
+    }
+    None
+}
+
+/// Coerce string-encoded form values to their declared schema types, in place.
+///
+/// Form bodies encode every value as a string; `validate` expects JSON of the
+/// declared type. For each declared field present in the object:
+/// - empty/whitespace string → the key is removed (blank optional field);
+/// - `number`/`integer` string that parses → JSON number;
+/// - `boolean` `"true"`/`"false"` → JSON bool;
+/// - `timestamp` date-only (`YYYY-MM-DD`) → RFC3339 midnight UTC; RFC3339 kept;
+/// - `string`/`enum` and already-typed values are left unchanged.
+///
+/// Keys are never added; undeclared keys are left untouched.
+pub fn coerce_metadata(specs: &[(String, FieldSpec)], v: &mut serde_json::Value) {
+    use serde_json::Value;
+    let obj = match v.as_object_mut() {
+        Some(o) => o,
+        None => return,
+    };
+    for (name, spec) in specs {
+        let cur = match obj.get(name) {
+            Some(x) => x.clone(),
+            None => continue,
+        };
+        if let Value::String(s) = &cur {
+            if s.trim().is_empty() {
+                obj.remove(name);
+                continue;
+            }
+        }
+        let coerced: Option<Value> = match (&spec.typ, &cur) {
+            (FieldType::Number { .. }, Value::String(s)) => s
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .and_then(serde_json::Number::from_f64)
+                .map(Value::Number),
+            (FieldType::Integer { .. }, Value::String(s)) => {
+                s.trim().parse::<i64>().ok().map(|i| Value::Number(i.into()))
+            }
+            (FieldType::Boolean, Value::String(s)) => match s.trim() {
+                "true" => Some(Value::Bool(true)),
+                "false" => Some(Value::Bool(false)),
+                _ => None,
+            },
+            (FieldType::Timestamp, Value::String(s)) => normalize_timestamp(s).map(Value::String),
+            _ => None,
+        };
+        if let Some(c) = coerced {
+            obj.insert(name.clone(), c);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -423,6 +492,66 @@ mod tests {
     use super::*;
     use crate::domain::values::FieldType;
     use serde_json::json;
+
+    // ---- coerce_metadata ---------------------------------------------------
+
+    #[test]
+    fn coerce_number_and_integer_from_string() {
+        let specs: Vec<(String, FieldSpec)> = vec![
+            ("lat".into(), FieldSpec { typ: FieldType::Number { min: None, max: None }, required: true }),
+            ("n".into(),   FieldSpec { typ: FieldType::Integer { min: None, max: None }, required: false }),
+        ];
+        let mut v = json!({ "lat": "55.5", "n": "7" });
+        coerce_metadata(&specs, &mut v);
+        assert_eq!(v["lat"], json!(55.5));
+        assert_eq!(v["n"], json!(7));
+    }
+
+    #[test]
+    fn coerce_boolean_from_string() {
+        let specs: Vec<(String, FieldSpec)> = vec![
+            ("b".into(), FieldSpec { typ: FieldType::Boolean, required: false }),
+        ];
+        let mut v = json!({ "b": "true" });
+        coerce_metadata(&specs, &mut v);
+        assert_eq!(v["b"], json!(true));
+    }
+
+    #[test]
+    fn coerce_date_to_rfc3339() {
+        let specs: Vec<(String, FieldSpec)> = vec![
+            ("ts".into(), FieldSpec { typ: FieldType::Timestamp, required: false }),
+        ];
+        let mut v = json!({ "ts": "2026-06-12" });
+        coerce_metadata(&specs, &mut v);
+        assert_eq!(v["ts"], json!("2026-06-12T00:00:00Z"));
+        // a value already in RFC3339 is left intact
+        let mut v2 = json!({ "ts": "2026-06-12T08:30:00Z" });
+        coerce_metadata(&specs, &mut v2);
+        assert_eq!(v2["ts"], json!("2026-06-12T08:30:00Z"));
+    }
+
+    #[test]
+    fn coerce_empty_string_removes_key() {
+        let specs: Vec<(String, FieldSpec)> = vec![
+            ("lat".into(), FieldSpec { typ: FieldType::Number { min: None, max: None }, required: false }),
+        ];
+        let mut v = json!({ "lat": "  " });
+        coerce_metadata(&specs, &mut v);
+        assert!(v.as_object().unwrap().get("lat").is_none());
+    }
+
+    #[test]
+    fn coerce_leaves_typed_and_undeclared_values() {
+        let specs: Vec<(String, FieldSpec)> = vec![
+            ("lat".into(), FieldSpec { typ: FieldType::Number { min: None, max: None }, required: false }),
+        ];
+        // already a number → untouched; undeclared key → untouched
+        let mut v = json!({ "lat": 1.0, "other": "x" });
+        coerce_metadata(&specs, &mut v);
+        assert_eq!(v["lat"], json!(1.0));
+        assert_eq!(v["other"], json!("x"));
+    }
 
     // ---- helpers -----------------------------------------------------------
 
