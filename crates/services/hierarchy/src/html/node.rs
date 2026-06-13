@@ -87,6 +87,7 @@ box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:9999;font-size:0.9rem;'); \
     var f=document.getElementById('metadata-form'); \
     f.querySelectorAll('.md-input').forEach(function(el){ el.setAttribute('disabled',''); }); \
     document.getElementById('metadata-save-btn').setAttribute('hidden',''); \
+    document.getElementById('metadata-cancel-btn').setAttribute('hidden',''); \
     document.getElementById('metadata-edit-btn').removeAttribute('hidden'); \
     document.getElementById('metadata-error').style.display='none'; } else { \
     var ed=document.getElementById('metadata-error'); \
@@ -116,9 +117,13 @@ fn metadata_edit_form(
             div id="metadata-error" class="login-error" style="display:none; margin-top: 0.5rem;" {}
             div style="display: grid; grid-auto-flow: column; justify-content: end; gap: 0.5rem; margin-top: 1rem;" {
                 button type="button" id="metadata-edit-btn" class="btn-secondary"
-                    _="on click remove @disabled from <#metadata-form .md-input/> then add @hidden to me then remove @hidden from #metadata-save-btn"
+                    _="on click remove @disabled from <#metadata-form .md-input/> then add @hidden to me then remove @hidden from #metadata-save-btn then remove @hidden from #metadata-cancel-btn"
                     data-i18n="node.edit"
                 { "Edit" }
+                button type="button" id="metadata-cancel-btn" class="btn-secondary" hidden
+                    _="on click call #metadata-form.reset() then add @disabled to <#metadata-form .md-input/> then add @hidden to me then add @hidden to #metadata-save-btn then remove @hidden from #metadata-edit-btn then hide #metadata-error"
+                    data-i18n="common.cancel"
+                { "Cancel" }
                 button type="submit" id="metadata-save-btn" class="btn-warning" hidden
                     data-i18n="node.save"
                 { "Save" }
@@ -768,6 +773,7 @@ mod tests {
         assert!(html.contains("update_node"), "update_node action missing");
         assert!(html.contains("data-i18n=\"node.edit\""), "Edit button missing");
         assert!(html.contains("data-i18n=\"node.save\""), "Save button missing");
+        assert!(html.contains("metadata-cancel-btn"), "Cancel button missing");
         assert!(html.contains("value=\"55\""), "lat prefill missing");
         assert!(html.contains("Data gemt"), "save-success toast text missing");
     }
