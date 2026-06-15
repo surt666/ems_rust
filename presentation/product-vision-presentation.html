@@ -188,12 +188,12 @@
 <div class="slide">
   <span class="tag vision">Who We Serve</span>
   <h2>Customer Segments</h2>
-  <p class="subtitle">Seven distinct roles — one unified platform</p>
+  <p class="subtitle">Seven distinct data products — one unified platform</p>
   <div class="two-col wide-right" style="flex:1;align-items:stretch">
     <div class="col" style="gap:10px">
       <div class="card" style="border-left:3px solid var(--accent)">
-        <h3>EMS — Licensed Operators</h3>
-        <p>Energy managers running the platform day-to-day</p>
+        <h3>EMS</h3>
+        <p>Data and services to efficiently support the EMS system</p>
       </div>
       <div class="card" style="border-left:3px solid var(--purple)">
         <h3>Intelligence — ML &amp; BI</h3>
@@ -205,7 +205,7 @@
       </div>
       <div class="card" style="border-left:3px solid var(--green)">
         <h3>Energy Advisors</h3>
-        <p>Deep BI reports &amp; consumption analysis beyond EMS defaults</p>
+        <p>Power BI reports &amp; consumption analysis beyond EMS defaults</p>
       </div>
     </div>
     <div class="col" style="gap:10px">
@@ -494,7 +494,7 @@
         <p style="font-size:16px;color:var(--muted)"><strong style="color:var(--text)">Inheritance:</strong> permissions flow top-down from the entry-point node unless explicitly overridden on a specific node.</p>
       </div>
       <div class="outcome-box ok-box" style="margin-top:4px">
-        <p style="font-size:16px;color:var(--muted)"><strong style="color:var(--text)">Field-level access</strong> (CEDAR rules) is available but generally not needed — graph-level permissions are sufficient for most cases.</p>
+        <p style="font-size:16px;color:var(--muted)"><strong style="color:var(--text)">Field-level access</strong> (CEDAR rules) is possible but seems overkill at this point — graph-level permissions are sufficient for most cases.</p>
       </div>
     </div>
     <div class="diagram" style="align-self:stretch">
@@ -645,15 +645,15 @@
         <rect x="30" y="40" width="100" height="30" rx="5" fill="rgba(45,212,191,0.15)" stroke="var(--teal)" stroke-width="1.5"/>
         <text x="80" y="59" text-anchor="middle" fill="var(--teal)" font-size="11" font-weight="600">hn2 — Co A</text>
 
-        <line x1="50" y1="70" x2="50" y2="108" stroke="var(--yellow)" stroke-width="1.5" marker-end="url(#s-arr-y)"/>
-        <line x1="80" y1="70" x2="80" y2="108" stroke="var(--yellow)" stroke-width="1.5" marker-end="url(#s-arr-y)"/>
-        <text x="100" y="92" fill="var(--yellow)" font-size="8">property</text>
-        <text x="30"  y="92" fill="var(--muted)"  font-size="8">group</text>
+        <line x1="50"  y1="70" x2="50"  y2="108" stroke="var(--yellow)" stroke-width="1.5" marker-end="url(#s-arr-y)"/>
+        <line x1="107" y1="70" x2="107" y2="108" stroke="var(--yellow)" stroke-width="1.5" marker-end="url(#s-arr-y)"/>
+        <text x="44"  y="90" text-anchor="end" fill="var(--yellow)" font-size="8">property</text>
+        <text x="113" y="90" fill="var(--muted)" font-size="8">group</text>
 
-        <rect x="20" y="112" width="60" height="26" rx="4" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.2"/>
+        <rect x="24" y="112" width="52" height="26" rx="4" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.2"/>
         <text x="50" y="129" text-anchor="middle" fill="var(--yellow)" font-size="10">hn3</text>
-        <rect x="55" y="112" width="50" height="26" rx="4" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.2"/>
-        <text x="80" y="129" text-anchor="middle" fill="var(--yellow)" font-size="10">hn3</text>
+        <rect x="82" y="112" width="50" height="26" rx="4" fill="rgba(250,204,21,0.1)" stroke="var(--yellow)" stroke-width="1.2"/>
+        <text x="107" y="129" text-anchor="middle" fill="var(--yellow)" font-size="10">hn3</text>
 
         <line x1="50" y1="138" x2="50" y2="168" stroke="var(--orange)" stroke-width="1.5" marker-end="url(#s-arr-o)"/>
         <text x="60" y="158" fill="var(--orange)" font-size="8">building</text>
@@ -720,7 +720,7 @@
 <div class="slide">
   <span class="tag pipeline">Data Pipeline</span>
   <h2>The Measurement Pipeline</h2>
-  <p class="subtitle">All data through one unified hose — source-specific logic isolated in parsers</p>
+  <p class="subtitle">Many sources → one unified stream → many data products</p>
   <div style="flex:1;display:flex;flex-direction:column;gap:20px">
     <div class="diagram" style="flex:1">
       <svg viewBox="0 0 860 300" width="100%" height="100%">
@@ -737,30 +737,41 @@
           <marker id="pip-arr-y" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
             <path d="M0,0 L8,3 L0,6" fill="var(--yellow)"/>
           </marker>
+          <marker id="pip-arr-c" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <path d="M0,0 L8,3 L0,6" fill="var(--cyan)"/>
+          </marker>
         </defs>
 
         <!-- Sources -->
-        <rect x="10"  y="30" width="90" height="26" rx="4" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.2"/>
-        <text x="55"  y="47" text-anchor="middle" fill="var(--green)" font-size="10">IoT Devices</text>
-        <rect x="10"  y="70" width="90" height="26" rx="4" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.2"/>
-        <text x="55"  y="87" text-anchor="middle" fill="var(--green)" font-size="10">Physical Meter</text>
-        <rect x="10" y="110" width="90" height="26" rx="4" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.2"/>
-        <text x="55" y="127" text-anchor="middle" fill="var(--green)" font-size="10">File Upload</text>
-        <rect x="10" y="150" width="90" height="26" rx="4" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.2"/>
-        <text x="55" y="167" text-anchor="middle" fill="var(--green)" font-size="10">External API</text>
+        <rect x="2"  y="38" width="76" height="34" rx="5" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.2"/>
+        <text x="40" y="59" text-anchor="middle" fill="var(--green)" font-size="10" font-weight="600">IoT Devices</text>
 
-        <line x1="100"  y1="43" x2="135"  y2="97" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#pip-arr)"/>
-        <line x1="100"  y1="83" x2="135"  y2="98" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#pip-arr)"/>
-        <line x1="100" y1="123" x2="135"  y2="99" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#pip-arr)"/>
-        <line x1="100" y1="163" x2="135" y2="100" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#pip-arr)"/>
+        <rect x="2"  y="126" width="76" height="34" rx="5" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.2"/>
+        <text x="40" y="147" text-anchor="middle" fill="var(--green)" font-size="10" font-weight="600">External APIs</text>
 
-        <!-- Parsers -->
-        <rect x="135" y="70" width="80" height="60" rx="6" fill="rgba(167,139,250,0.12)" stroke="var(--purple)" stroke-width="1.5"/>
-        <text x="175" y="96"  text-anchor="middle" fill="var(--purple)" font-size="11" font-weight="600">Parsers</text>
-        <text x="175" y="112" text-anchor="middle" fill="var(--muted)"  font-size="9">(per source)</text>
-        <text x="175" y="124" text-anchor="middle" fill="var(--muted)"  font-size="9">→ SensorRecord</text>
+        <rect x="2"  y="182" width="76" height="34" rx="5" fill="rgba(74,222,128,0.1)" stroke="var(--green)" stroke-width="1.2"/>
+        <text x="40" y="203" text-anchor="middle" fill="var(--green)" font-size="10" font-weight="600">CSV Files</text>
 
-        <line x1="215" y1="100" x2="255" y2="100" stroke="var(--purple)" stroke-width="1.5" marker-end="url(#pip-arr)"/>
+        <!-- Ingestion adapters -->
+        <rect x="96" y="40" width="68" height="32" rx="5" fill="rgba(34,211,238,0.12)" stroke="var(--cyan)" stroke-width="1.5"/>
+        <text x="130" y="60" text-anchor="middle" fill="var(--cyan)" font-size="10" font-weight="600">IoT Core</text>
+
+        <rect x="96" y="152" width="68" height="34" rx="5" fill="rgba(34,211,238,0.12)" stroke="var(--cyan)" stroke-width="1.5"/>
+        <text x="130" y="173" text-anchor="middle" fill="var(--cyan)" font-size="10" font-weight="600">EventBridge</text>
+
+        <!-- Lambda (EventBridge → Kinesis) -->
+        <rect x="180" y="152" width="56" height="34" rx="5" fill="rgba(167,139,250,0.12)" stroke="var(--purple)" stroke-width="1.5"/>
+        <text x="208" y="173" text-anchor="middle" fill="var(--purple)" font-size="10" font-weight="600">Lambda</text>
+
+        <!-- source -> adapter -->
+        <line x1="78" y1="55"  x2="94" y2="56"  stroke="var(--green)" stroke-width="1.2" marker-end="url(#pip-arr-g)"/>
+        <line x1="78" y1="143" x2="94" y2="161" stroke="var(--green)" stroke-width="1.2" marker-end="url(#pip-arr-g)"/>
+        <line x1="78" y1="199" x2="94" y2="180" stroke="var(--green)" stroke-width="1.2" marker-end="url(#pip-arr-g)"/>
+
+        <!-- IoT Core → Kinesis ; EventBridge → Lambda → Kinesis -->
+        <line x1="164" y1="56"  x2="253" y2="88"  stroke="var(--cyan)" stroke-width="1.4" marker-end="url(#pip-arr-c)"/>
+        <line x1="164" y1="169" x2="178" y2="169" stroke="var(--cyan)" stroke-width="1.4" marker-end="url(#pip-arr-c)"/>
+        <line x1="236" y1="166" x2="253" y2="114" stroke="var(--cyan)" stroke-width="1.4" marker-end="url(#pip-arr-c)"/>
 
         <!-- Kinesis -->
         <rect x="255" y="74" width="90" height="52" rx="6" fill="rgba(108,140,255,0.12)" stroke="var(--accent)" stroke-width="1.5"/>
@@ -802,14 +813,30 @@
         <text x="620" y="238" text-anchor="middle" fill="var(--orange)" font-size="11" font-weight="600">measurements_aggregate</text>
         <text x="620" y="253" text-anchor="middle" fill="var(--muted)" font-size="9">DynamoDB — fast queries</text>
 
-        <!-- EMS arrow -->
-        <line x1="695" y1="240" x2="740" y2="220" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#pip-arr)"/>
-        <line x1="695" y1="55"  x2="740" y2="90"  stroke="var(--muted)" stroke-width="1.2" marker-end="url(#pip-arr)"/>
-        <rect x="740" y="80" width="100" height="80" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-width="1.5"/>
-        <text x="790" y="110" text-anchor="middle" fill="var(--text)"  font-size="11" font-weight="600">EMS</text>
-        <text x="790" y="126" text-anchor="middle" fill="var(--muted)" font-size="9">Dashboards</text>
-        <text x="790" y="140" text-anchor="middle" fill="var(--muted)" font-size="9">Alarms</text>
-        <text x="790" y="154" text-anchor="middle" fill="var(--muted)" font-size="9">Reports</text>
+        <!-- Data products (ordered to align with their source store) -->
+        <text x="796" y="14" text-anchor="middle" fill="var(--accent)" font-size="11" font-weight="700">Data Products</text>
+
+        <rect x="740" y="22" width="112" height="40" rx="6" fill="rgba(167,139,250,0.12)" stroke="var(--purple)" stroke-width="1.5"/>
+        <text x="796" y="40" text-anchor="middle" fill="var(--purple)" font-size="11" font-weight="600">ML Training</text>
+        <text x="796" y="54" text-anchor="middle" fill="var(--muted)" font-size="8">models · full data</text>
+
+        <rect x="740" y="82" width="112" height="40" rx="6" fill="rgba(251,146,60,0.12)" stroke="var(--orange)" stroke-width="1.5"/>
+        <text x="796" y="100" text-anchor="middle" fill="var(--orange)" font-size="11" font-weight="600">Billing</text>
+        <text x="796" y="114" text-anchor="middle" fill="var(--muted)" font-size="8">own reduced dataset</text>
+
+        <rect x="740" y="142" width="112" height="40" rx="6" fill="rgba(250,204,21,0.12)" stroke="var(--yellow)" stroke-width="1.5"/>
+        <text x="796" y="160" text-anchor="middle" fill="var(--yellow)" font-size="11" font-weight="600">Marketing</text>
+        <text x="796" y="174" text-anchor="middle" fill="var(--muted)" font-size="8">own reduced dataset</text>
+
+        <rect x="740" y="202" width="112" height="40" rx="6" fill="rgba(108,140,255,0.12)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="796" y="220" text-anchor="middle" fill="var(--accent)" font-size="11" font-weight="600">EMS</text>
+        <text x="796" y="234" text-anchor="middle" fill="var(--muted)" font-size="8">aggregated view</text>
+
+        <!-- stores -> products -->
+        <line x1="675" y1="55"  x2="738" y2="42"  stroke="var(--muted)" stroke-width="1.1" marker-end="url(#pip-arr)"/>
+        <line x1="685" y1="140" x2="738" y2="102" stroke="var(--muted)" stroke-width="1.1" marker-end="url(#pip-arr)"/>
+        <line x1="685" y1="152" x2="738" y2="162" stroke="var(--muted)" stroke-width="1.1" marker-end="url(#pip-arr)"/>
+        <line x1="695" y1="240" x2="738" y2="222" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#pip-arr-a)"/>
 
         <!-- meter-identity -->
         <rect x="385" y="195" width="110" height="40" rx="5" fill="rgba(45,212,191,0.08)" stroke="var(--teal)" stroke-width="1" stroke-dasharray="4 3"/>
