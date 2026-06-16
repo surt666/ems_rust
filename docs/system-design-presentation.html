@@ -450,71 +450,63 @@
   </div>
 </div>
 
-<!-- ==================== NEW: METER HIERARCHY ==================== -->
+<!-- ==================== NEW: FORMULA-BASED SENSORS ==================== -->
 <div class="slide">
   <span class="tag design">Domain Model</span>
-  <h2>Meter Hierarchy &amp; Summation</h2>
-  <p class="subtitle">Separate forest overlaid on the node tree &mdash; sub-meters, summation rules, special types</p>
+  <h2>Formula-Based Sensors</h2>
+  <p class="subtitle">Every sensor carries a formula &mdash; sub-metering is formula composition, not +/&minus; summation flags</p>
   <div class="two-col">
     <div class="col">
       <div class="diagram" style="flex:1">
         <svg viewBox="0 0 420 320" width="100%" height="100%">
-          <rect x="10" y="10" width="190" height="200" rx="8" fill="rgba(74,222,128,0.03)" stroke="var(--green)" stroke-width="1" stroke-dasharray="4"/>
-          <text x="105" y="30" text-anchor="middle" fill="var(--green)" font-size="10">Node N1</text>
-          <rect x="220" y="10" width="190" height="200" rx="8" fill="rgba(108,140,255,0.03)" stroke="var(--accent)" stroke-width="1" stroke-dasharray="4"/>
-          <text x="315" y="30" text-anchor="middle" fill="var(--accent)" font-size="10">Node N2</text>
-          <circle cx="105" cy="70" r="20" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="2"/>
-          <text x="105" y="67" text-anchor="middle" fill="var(--green)" font-size="10" font-weight="700">M1</text>
-          <text x="105" y="80" text-anchor="middle" fill="var(--muted)" font-size="7">main +</text>
-          <circle cx="55" cy="150" r="16" fill="rgba(251,146,60,0.15)" stroke="var(--orange)" stroke-width="1.5"/>
-          <text x="55" y="147" text-anchor="middle" fill="var(--orange)" font-size="9" font-weight="700">M2</text>
-          <text x="55" y="158" text-anchor="middle" fill="var(--muted)" font-size="7">sub -</text>
-          <line x1="92" y1="86" x2="65" y2="137" stroke="var(--muted)" stroke-width="1"/>
-          <text x="60" y="110" fill="var(--muted)" font-size="7">sub of</text>
-          <circle cx="155" cy="150" r="16" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
-          <text x="155" y="147" text-anchor="middle" fill="var(--green)" font-size="9" font-weight="700">M3</text>
-          <text x="155" y="158" text-anchor="middle" fill="var(--muted)" font-size="7">sub +</text>
-          <line x1="118" y1="86" x2="145" y2="137" stroke="var(--muted)" stroke-width="1"/>
-          <text x="145" y="110" fill="var(--muted)" font-size="7">sub of</text>
-          <circle cx="265" cy="70" r="20" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="2"/>
-          <text x="265" y="67" text-anchor="middle" fill="var(--green)" font-size="10" font-weight="700">M4</text>
-          <text x="265" y="80" text-anchor="middle" fill="var(--muted)" font-size="7">main +</text>
-          <circle cx="265" cy="150" r="16" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="1.5"/>
-          <text x="265" y="147" text-anchor="middle" fill="var(--green)" font-size="9" font-weight="700">M5</text>
-          <text x="265" y="158" text-anchor="middle" fill="var(--muted)" font-size="7">sub +</text>
-          <line x1="265" y1="90" x2="265" y2="134" stroke="var(--muted)" stroke-width="1"/>
-          <text x="280" y="115" fill="var(--muted)" font-size="7">sub of</text>
-          <circle cx="365" cy="70" r="20" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="2"/>
-          <text x="365" y="67" text-anchor="middle" fill="var(--green)" font-size="10" font-weight="700">M7</text>
-          <text x="365" y="80" text-anchor="middle" fill="var(--muted)" font-size="7">main +</text>
-          <rect x="20" y="220" width="390" height="85" rx="6" fill="var(--surface)" stroke="var(--border)"/>
-          <text x="215" y="240" text-anchor="middle" fill="var(--accent)" font-size="11" font-weight="600">Summation: &Sigma; delta(m) for m &isin; SummationMeters(S)</text>
-          <text x="215" y="260" text-anchor="middle" fill="var(--muted)" font-size="10">N1: {M1} &mdash; M3 excluded (ancestor M1 is +)</text>
-          <text x="215" y="275" text-anchor="middle" fill="var(--muted)" font-size="10">N2: {M4, M7}</text>
-          <text x="215" y="290" text-anchor="middle" fill="var(--muted)" font-size="10">N1+N2: {M1, M4, M7}</text>
+          <!-- building sensor S1 with a composite formula -->
+          <circle cx="210" cy="52" r="26" fill="rgba(74,222,128,0.15)" stroke="var(--green)" stroke-width="2"/>
+          <text x="210" y="49" text-anchor="middle" fill="var(--green)" font-size="11" font-weight="700">S1</text>
+          <text x="210" y="62" text-anchor="middle" fill="var(--muted)" font-size="7">building</text>
+          <text x="210" y="95" text-anchor="middle" fill="var(--green)" font-size="10" font-family="monospace">S1' = abs(self &minus; S2' &minus; S3')</text>
+
+          <!-- sub-meters S2, S3 (identity) -->
+          <circle cx="110" cy="185" r="22" fill="rgba(108,140,255,0.15)" stroke="var(--accent)" stroke-width="1.5"/>
+          <text x="110" y="182" text-anchor="middle" fill="var(--accent)" font-size="10" font-weight="700">S2</text>
+          <text x="110" y="195" text-anchor="middle" fill="var(--muted)" font-size="7">identity</text>
+          <text x="110" y="222" text-anchor="middle" fill="var(--accent)" font-size="9" font-family="monospace">S2' = self</text>
+
+          <circle cx="310" cy="185" r="22" fill="rgba(167,139,250,0.15)" stroke="var(--purple)" stroke-width="1.5"/>
+          <text x="310" y="182" text-anchor="middle" fill="var(--purple)" font-size="10" font-weight="700">S3</text>
+          <text x="310" y="195" text-anchor="middle" fill="var(--muted)" font-size="7">identity</text>
+          <text x="310" y="222" text-anchor="middle" fill="var(--purple)" font-size="9" font-family="monospace">S3' = self</text>
+
+          <!-- formula reference edges (dashed = refs computed value) -->
+          <line x1="188" y1="70" x2="128" y2="168" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4"/>
+          <line x1="232" y1="70" x2="292" y2="168" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4"/>
+          <text x="132" y="128" fill="var(--muted)" font-size="7">refs S2'</text>
+          <text x="258" y="128" fill="var(--muted)" font-size="7">refs S3'</text>
+
+          <!-- summation box -->
+          <rect x="20" y="250" width="380" height="58" rx="6" fill="var(--surface)" stroke="var(--border)"/>
+          <text x="210" y="270" text-anchor="middle" fill="var(--accent)" font-size="11" font-weight="600">Subtree total = &Sigma; S' (each sensor's computed value)</text>
+          <text x="210" y="288" text-anchor="middle" fill="var(--muted)" font-size="10">S1' + S2' + S3' &mdash; S1 already carves out its sub-meters</text>
+          <text x="210" y="301" text-anchor="middle" fill="var(--muted)" font-size="10">no +/&minus; flags, no double-counting; every S' &ge; 0</text>
         </svg>
       </div>
     </div>
     <div class="col">
-      <h3>Counters per Meter</h3>
+      <h3>Every sensor has a formula</h3>
       <table class="matrix" style="font-size:12px">
-        <tr><th>Counter</th><th>Purpose</th><th>Type</th></tr>
-        <tr><td>1</td><td>Primary consumption</td><td style="color:var(--accent)">counter</td></tr>
-        <tr><td>2</td><td>Secondary (water)</td><td style="color:var(--accent)">counter</td></tr>
-        <tr><td>3</td><td>Tertiary (rare)</td><td style="color:var(--accent)">counter</td></tr>
-        <tr><td>10</td><td>Forward temp</td><td style="color:var(--purple)">gauge</td></tr>
-        <tr><td>11</td><td>Return temp</td><td style="color:var(--purple)">gauge</td></tr>
+        <tr><th>Variant</th><th>Computed value S'</th><th>Use</th></tr>
+        <tr><td style="color:var(--green)">Identity</td><td><span class="code-inline">S' = self</span></td><td>default &mdash; raw reading</td></tr>
+        <tr><td style="color:var(--orange)">Zero</td><td><span class="code-inline">S' = 0</span></td><td>keep, exclude from sums</td></tr>
+        <tr><td style="color:var(--accent)">Expr</td><td><span class="code-inline">abs(&hellip;)</span></td><td>composite / calculated</td></tr>
       </table>
-      <h3 style="margin-top:12px">Special Meter Types</h3>
-      <div class="card" style="margin-bottom:8px">
-        <h3 style="color:var(--orange)">Manual Meter</h3>
-        <p>No sensor. Only manual corrections via CSV/HTTPS through the standard pipeline.</p>
+      <div class="card" style="margin-top:10px">
+        <h3 style="color:var(--accent)">Composite (Expr)</h3>
+        <p>Text over <span class="code-inline">self</span>, numbers, <span class="code-inline">+ &minus; &times; &divide;</span>, <span class="code-inline">abs()</span> and aliases. Each alias resolves to another sensor's <strong>computed</strong> value S' (not its raw reading). Evaluated topologically &mdash; leaves first.</p>
       </div>
       <div class="card">
-        <h3 style="color:var(--yellow)">Calculation Meter</h3>
-        <p>Virtual. Value derived from formula over other meters (sum, diff, ratio). No daqId.</p>
+        <h3 style="color:var(--teal)">No special meter types</h3>
+        <p>&ldquo;Calculation&rdquo; meters are just <span class="code-inline">Expr</span> formulas; a parent subtracts its sub-meters by referencing their S'. Refs are scoped to the owning company; cycles rejected at attach time.</p>
       </div>
-      <div class="outcome-box design-box" style="margin-top:12px">
+      <div class="outcome-box design-box" style="margin-top:10px">
         <h3 style="color:var(--teal)">Counter Reset Handling</h3>
         <p style="font-size:12px; color:var(--muted)">Negative delta &rarr; ANOMALY + new baseline. One point lost, absorbed by interpolation at aggregation boundaries.</p>
       </div>
