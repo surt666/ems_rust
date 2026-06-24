@@ -23,7 +23,7 @@
           </template>
           <div class="sd-addrow">
             <input type="text" x-model="newType" placeholder="new type" @keydown.enter.prevent="addType()" />
-            <button type="button" class="btn-primary" @click="addType()">＋</button>
+            <button type="button" class="btn-primary" @click="addType()">＋ add type</button>
           </div>
           <p class="sd-hint">"company" is the fixed root.</p>
         </div>
@@ -132,8 +132,12 @@
   .sd-typeitem.sel { background: #2563eb; color: #fff; }
   .sd-rm { opacity: .6; font-weight: bold; padding: 0 4px; cursor: pointer; }
   .sd-rm:hover { opacity: 1; color: #dc2626; }
-  .sd-addrow { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 14px 0 8px; }
-  .sd-addrow button { min-width: 38px; padding: 5px 10px; white-space: nowrap; }
+  /* Stack the add-type input + button in their own grid, separated from the
+     type list by a divider, so the button is full-width and never gets
+     crowded/obscured inside the narrow Types pane. */
+  .sd-addrow { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid #e3e8ef; }
+  .sd-addrow button { width: 100%; padding: 8px 10px; white-space: nowrap; }
+  .sd-addrow + .sd-hint { margin-top: 10px; }
   .sd-root input[type=text], .sd-root input[type=number], .sd-root select { border: 1px solid #d4d9e0; border-radius: 6px; padding: 5px 7px; font-size: 13px; color: #1d2330; background: #fff; }
   .sd-grp { margin-bottom: 16px; }
   .sd-lbl { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
