@@ -1,77 +1,182 @@
 ---
-// Per-hierarchy-node dashboard (consumption overview). Rendered inside the node
-// view's "Dashboard" tab. Static/representative today; the result region carries
-// the future HTMX contract (data-endpoint="/query/node/dashboard?id=…"). When
-// backend-integrated this becomes the node view's default tab. Eventually the
-// dashboard shown will vary by hierarchy level, driven by the company schema
-// definition — see docs/superpowers/specs/2026-06-24-node-dashboard-schema-driven.md.
+// Per-hierarchy-node dashboard — mirrors the EMS company/node dashboard:
+// a 2-column layout. LEFT: Bygningsbenchmark (gauges + savings), Call to action,
+// Alarmer. RIGHT: Forbrugsoverblik (combined cost card + one card per energy
+// type). Static/representative today; data-endpoint carries the future HTMX
+// contract. Becomes the node view's default tab once backend-integrated; will
+// eventually vary by hierarchy level via the company schema (see spec
+// 2026-06-24-node-dashboard-schema-driven.md).
 import EChartsChartWrapper from "./EChartsChartWrapper.tsx";
 
 const months = ["Jan", "Feb", "Mar", "Apr", "Maj", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dec"];
 const cur = (a: number) => months.map((_, i) => Math.round(a - a * 0.7 * Math.cos((i / 11) * Math.PI * 2) + i));
-const prev = (a: number) => months.map((_, i) => Math.round(a * 0.95 - a * 0.66 * Math.cos((i / 11) * Math.PI * 2) + i));
+const prv = (a: number) => months.map((_, i) => Math.round(a * 0.95 - a * 0.66 * Math.cos((i / 11) * Math.PI * 2) + i));
+
+// Semicircle gauge needle endpoint for a value p in 0..1 (left=0 → right=1).
+const needle = (p: number) => {
+  const a = Math.PI * (1 - p);
+  return `${(80 + 56 * Math.cos(a)).toFixed(1)},${(80 - 56 * Math.sin(a)).toFixed(1)}`;
+};
+const gauges = [
+  { label: "Performance (omk. vs. gnm.)", val: "−14,8 %", p: 0.72 },
+  { label: "Performance (CO₂e vs. gnm.)", val: "−8,0 t", p: 0.63 },
+];
+
+const combinedCost = months.map((_, i) => Math.round(430000 - 300000 * Math.cos((i / 11) * Math.PI * 2)));
 const energyCards = [
-  { name: "Varme", energy: "varme", color: "#f97316", unit: "MWh", total: "1.949 MWh", cur: cur(180), prev: prev(180) },
-  { name: "Vand", energy: "vand", color: "#38bdf8", unit: "m³", total: "522 m³", cur: cur(48), prev: prev(48) },
-  { name: "EL", energy: "el", color: "#facc15", unit: "MWh", total: "5.917 MWh", cur: cur(520), prev: prev(520) },
+  { name: "Varme", energy: "varme", color: "#f97316", unit: "MWh", cur: "1.949 MWh", prev: "2.235 MWh", dev: "−2,2 %", neg: false, c: cur(180), p: prv(180) },
+  { name: "Vand", energy: "vand", color: "#38bdf8", unit: "m³", cur: "522 m³", prev: "498 m³", dev: "+4,8 %", neg: true, c: cur(48), p: prv(48) },
+  { name: "EL", energy: "el", color: "#facc15", unit: "MWh", cur: "5.917 MWh", prev: "6.041 MWh", dev: "−2,1 %", neg: false, c: cur(520), p: prv(520) },
+];
+
+const ctaRows = [
+  ["Administrationsbygning A", "EL — natforbrug", "42.300 kr"],
+  ["Kalmar", "Ventilation standby", "28.900 kr"],
+  ["Kristianstad", "Fjernvarme afkøling", "19.400 kr"],
 ];
 ---
 <div class="node-dashboard" data-endpoint="/query/node/dashboard">
-  <!-- KPI row -->
-  <div class="kpi-grid">
-    <div class="kpi-card heating">
-      <div class="kpi-label">Samlet omkostning (i år)</div>
-      <div class="kpi-value">5.147.411 <span class="kpi-unit">kr.</span></div>
-      <div class="kpi-change negative">+4,2 % vs. sidste år</div>
+  <!-- LEFT COLUMN -->
+  <div class="nd-col">
+    <!-- Bygningsbenchmark -->
+    <div class="card">
+      <div class="section-header">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>
+        <h2 class="section-title" style="margin-bottom:0">Bygningsbenchmark</h2>
+      </div>
+      <div class="nd-gauges">
+        {gauges.map((g) => (
+          <div class="nd-gauge">
+            <svg viewBox="0 0 160 92">
+              <path d="M16,80 A64,64 0 0 1 144,80" fill="none" stroke="#22c55e" stroke-width="12" stroke-dasharray="67 201" stroke-dashoffset="0" />
+              <path d="M16,80 A64,64 0 0 1 144,80" fill="none" stroke="#f97316" stroke-width="12" stroke-dasharray="67 201" stroke-dashoffset="-67" />
+              <path d="M16,80 A64,64 0 0 1 144,80" fill="none" stroke="#ef4444" stroke-width="12" stroke-dasharray="67 201" stroke-dashoffset="-134" />
+              <line x1="80" y1="80" x2={needle(g.p)} stroke="var(--text-primary)" stroke-width="2.5" />
+              <circle cx="80" cy="80" r="4" fill="var(--text-primary)" />
+            </svg>
+            <div class="nd-gauge__val">{g.val}</div>
+            <div class="nd-gauge__label">{g.label}</div>
+          </div>
+        ))}
+      </div>
+      <div class="nd-metrics">
+        <div><span>Afvigelse (alle)</span><strong>+7,2 %</strong></div>
+        <div><span>Potentielle besparelser</span><strong>742.000 kr</strong></div>
+        <div><span>Opnåede besparelser</span><strong class="nd-pos">256.000 kr</strong></div>
+      </div>
     </div>
-    <div class="kpi-card electricity">
-      <div class="kpi-label">Samlet forbrug</div>
-      <div class="kpi-value">8.388 <span class="kpi-unit">MWh</span></div>
-      <div class="kpi-change positive">−2,1 % vs. budget</div>
+
+    <!-- Call to action -->
+    <div class="card">
+      <div class="section-header">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        <h2 class="section-title" style="margin-bottom:0">Call to action</h2>
+        <span class="muted" style="margin-left:auto">5 største energispild</span>
+      </div>
+      <table class="data-table">
+        <tbody>
+          {ctaRows.map((r) => (
+            <tr><td>{r[0]}</td><td class="muted">{r[1]}</td><td style="text-align:right" class="nd-neg">{r[2]}/år</td></tr>
+          ))}
+        </tbody>
+      </table>
     </div>
-    <div class="kpi-card water">
-      <div class="kpi-label">CO₂e</div>
-      <div class="kpi-value">978,7 <span class="kpi-unit">t CO₂e</span></div>
-      <div class="kpi-change positive">−8,0 t vs. sidste år</div>
+
+    <!-- Alarmer -->
+    <div class="card">
+      <div class="section-header">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <h2 class="section-title" style="margin-bottom:0">Alarmer</h2>
+        <a href="/alarms" class="btn-secondary" style="margin-left:auto">Gå til alarmoversigt</a>
+      </div>
+      <div class="nd-alarmcounts">
+        <div class="nd-alarmcount"><span class="nd-alarmcount__n">0</span><span class="muted">Alarmopsætninger</span></div>
+        <div class="nd-alarmcount"><span class="nd-alarmcount__n">0</span><span class="muted">Ukvit. alarmer</span></div>
+      </div>
+      <p class="muted" style="margin:8px 0 0">5 seneste alarmer — ingen udløste alarmer for denne node.</p>
     </div>
   </div>
 
-  <!-- Forbrugsoverblik: one chart card per energy type -->
-  <h3 class="section-title" style="margin-top:1rem">Forbrugsoverblik</h3>
-  <div class="node-dashboard__charts">
+  <!-- RIGHT COLUMN: Forbrugsoverblik -->
+  <div class="nd-col">
+    <h3 class="section-title">Forbrugsoverblik</h3>
+
+    <!-- Combined cost card -->
+    <div class="card nd-energy">
+      <div class="section-header">
+        <h2 class="section-title" style="margin-bottom:0">Samlet omkostning</h2>
+        <span class="chart-kpi__val" style="margin-left:auto">5.147.411 kr.</span>
+      </div>
+      <div class="nd-energy__totals">
+        <div><span>I år</span><strong>5.147.411 kr.</strong></div>
+        <div><span>Sidste år</span><strong>4.940.118 kr.</strong></div>
+        <div><span>Afvigelse</span><strong class="nd-neg">+4,2 %</strong></div>
+      </div>
+      <EChartsChartWrapper client:only="react" height={200} unit="kr." categories={months}
+        series={[{ name: "Omkostning", data: combinedCost, color: "#38bdf8", type: "bar" }]} />
+    </div>
+
     {energyCards.map((c) => (
-      <div class="chart-card">
-        <div class="chart-card__head">
-          <span class="chart-card__title">{c.name} <span class={`badge energy-${c.energy}`}>{c.name}</span></span>
-          <span class="chart-kpi__val">{c.total}</span>
+      <div class="card nd-energy">
+        <div class="section-header">
+          <h2 class="section-title" style="margin-bottom:0">{c.name} <span class={`badge energy-${c.energy}`}>{c.name}</span></h2>
+          <span class="chart-kpi__val" style="margin-left:auto">{c.cur}</span>
         </div>
-        <div class="chart-card__body">
-          <EChartsChartWrapper client:only="react" height={240} unit={c.unit} categories={months}
-            series={[
-              { name: "I år", data: c.cur, color: c.color, type: "bar" },
-              { name: "Sidste år", data: c.prev, color: "#8b97b0", type: "line" },
-            ]} />
+        <div class="nd-energy__totals">
+          <div><span>I år</span><strong>{c.cur}</strong></div>
+          <div><span>Sidste år</span><strong>{c.prev}</strong></div>
+          <div><span>Afvigelse</span><strong class={c.neg ? "nd-neg" : "nd-pos"}>{c.dev}</strong></div>
         </div>
+        <EChartsChartWrapper client:only="react" height={200} unit={c.unit} categories={months}
+          series={[
+            { name: "I år", data: c.c, color: c.color, type: "bar" },
+            { name: "Sidste år", data: c.p, color: "#8b97b0", type: "line" },
+          ]} />
       </div>
     ))}
-  </div>
-
-  <!-- Alarms summary -->
-  <div class="card node-dashboard__alarms">
-    <div class="section-header">
-      <svg width="16" height="16" viewBox="0 0 512 512"><path fill="currentColor" d="M256 32c14.2 0 27.3 7.5 34.5 19.8l216 368c7.3 12.4 7.3 27.7 .2 40.1S486.3 480 472 480H40c-14.3 0-27.6-7.7-34.7-20.1s-7-27.8 .2-40.1l216-368C228.7 39.5 241.8 32 256 32zm0 128c-13.3 0-24 10.7-24 24V296c0 13.3 10.7 24 24 24s24-10.7 24-24V184c0-13.3-10.7-24-24-24zm32 224a32 32 0 1 0 -64 0 32 32 0 1 0 64 0z"/></svg>
-      <h2 class="section-title" style="margin-bottom:0">Alarmer</h2>
-      <a href="/alarms" class="btn-secondary" style="margin-left:auto">Gå til alarmoversigt</a>
-    </div>
-    <p class="muted">0 ukvitterede alarmer for denne node.</p>
   </div>
 </div>
 
 <style>
-  .node-dashboard__charts {
+  .node-dashboard {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    grid-template-columns: 1fr 1fr;
     gap: 1rem;
+    align-items: start;
   }
-  .node-dashboard__alarms { margin-top: 1rem; }
+  .nd-col { display: grid; gap: 1rem; align-content: start; }
+
+  .nd-gauges { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+  .nd-gauge { display: grid; justify-items: center; gap: 2px; }
+  .nd-gauge svg { width: 100%; max-width: 170px; height: auto; }
+  .nd-gauge__val { font-size: var(--text-lg); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .nd-gauge__label { font-size: var(--text-xs); color: var(--text-muted); text-align: center; }
+
+  .nd-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .nd-metrics > div { display: grid; gap: 2px; }
+  .nd-metrics span { font-size: var(--text-xs); color: var(--text-muted); }
+  .nd-metrics strong { font-variant-numeric: tabular-nums; }
+
+  .nd-alarmcounts { display: grid; grid-auto-flow: column; justify-content: start; gap: 28px; }
+  .nd-alarmcount { display: grid; gap: 2px; }
+  .nd-alarmcount__n { font-size: var(--text-2xl); font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+  .nd-energy__totals {
+    display: grid;
+    grid-auto-flow: column;
+    justify-content: start;
+    gap: 22px;
+    margin: 4px 0 8px;
+  }
+  .nd-energy__totals > div { display: grid; gap: 2px; }
+  .nd-energy__totals span { font-size: var(--text-xs); color: var(--text-muted); }
+  .nd-energy__totals strong { font-variant-numeric: tabular-nums; }
+
+  .nd-pos { color: var(--success); }
+  .nd-neg { color: var(--danger); }
+
+  @media (max-width: 1100px) {
+    .node-dashboard { grid-template-columns: 1fr; }
+    .nd-gauges { grid-template-columns: 1fr 1fr; }
+  }
 </style>
