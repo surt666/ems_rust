@@ -8,6 +8,7 @@
 // .empty-state variant, toggled in-page via Alpine (no JS file).
 import Layout from "../layouts/Layout.astro";
 import FilterBar from "../components/FilterBar.astro";
+import FilterOverlay from "../components/FilterOverlay.astro";
 import EChartsChartWrapper from "../components/EChartsChartWrapper.tsx";
 
 const months = ["Jan", "Feb", "Mar", "Apr", "Maj", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dec"];
@@ -31,6 +32,35 @@ const varmeSeries = [
         <p class="page-description">Forbrugsanalyse pr. måler med budget- og periodesammenligning.</p>
       </div>
       <div class="view-actions">
+        <FilterOverlay triggerLabel="Filtre" title="Filtre og visning">
+          <div class="filter-overlay__group">
+            <span class="filter-overlay__group-title">Målere</span>
+            <div class="form-field">
+              <label class="form-label">Målere</label>
+              <select class="form-select">
+                <option>69 målere valgt</option>
+                <option>Alle hovedmålere</option>
+                <option>Vælg gruppe…</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label class="form-label">Tags</label>
+              <select class="form-select"><option>Vælg tags</option></select>
+            </div>
+          </div>
+          <div class="filter-overlay__group">
+            <span class="filter-overlay__group-title">Visning</span>
+            <div class="form-field">
+              <label class="form-label">Summering (energiform)</label>
+              <select class="form-select">
+                <option>Sum pr. energiform</option>
+                <option>Sum pr. m²</option>
+              </select>
+            </div>
+            <label class="check-inline"><input type="checkbox" /> Grad- og dato-korrigeret budget</label>
+            <label class="check-inline"><input type="checkbox" /> Akkumuleret</label>
+          </div>
+        </FilterOverlay>
         <button type="button" class="btn-secondary">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span>Eksporter alle grafer</span>
@@ -39,32 +69,9 @@ const varmeSeries = [
       </div>
     </div>
 
-    <!-- Inline analysis bar (shared component) + page-specific filter groups -->
-    <FilterBar period="Januar 2026 - December 2026" measures={["Energi", "Nøgletal"]}>
-      <div class="filter-bar__group">
-        <span class="filter-bar__label">Målere</span>
-        <select class="form-select">
-          <option>69 målere valgt</option>
-          <option>Alle hovedmålere</option>
-          <option>Vælg gruppe…</option>
-        </select>
-      </div>
-
-      <div class="filter-bar__group">
-        <span class="filter-bar__label">Tags</span>
-        <select class="form-select">
-          <option>Vælg tags</option>
-        </select>
-      </div>
-
-      <div class="filter-bar__group">
-        <span class="filter-bar__label">Summering (energiform)</span>
-        <select class="form-select">
-          <option>Sum pr. energiform</option>
-          <option>Sum pr. m²</option>
-        </select>
-      </div>
-
+    <!-- Compact inline analysis bar (shared component); secondary filters live
+         in the Filtre overlay above (matches the EMS layout). -->
+    <FilterBar period="Januar 2026 - December 2026" measures={["Energi", "Nøgletal"]} showExport={false}>
       <div class="filter-bar__group">
         <span class="filter-bar__label">Sammenligningsgrundlag</span>
         <div class="toggle-group">
@@ -74,14 +81,6 @@ const varmeSeries = [
             _="on click remove .active from .basis-btn in the closest .toggle-group then add .active to me">Budget</button>
           <button type="button" class="toggle-btn basis-btn"
             _="on click remove .active from .basis-btn in the closest .toggle-group then add .active to me">Samme periode sidste år</button>
-        </div>
-      </div>
-
-      <div class="filter-bar__group">
-        <span class="filter-bar__label">&nbsp;</span>
-        <div class="consumption-checks">
-          <label class="check-inline"><input type="checkbox" /> Grad- og dato-korrigeret budget</label>
-          <label class="check-inline"><input type="checkbox" /> Akkumuleret</label>
         </div>
       </div>
     </FilterBar>
