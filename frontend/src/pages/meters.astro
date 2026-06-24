@@ -1,216 +1,106 @@
 ---
-import Layout from '../layouts/Layout.astro';
+// Målere — meter registry (NEW). The MQTT/LoRaWAN gateway/meter *creation*
+// flow now lives at /gateways (linked from this page + the Målere menu).
+// Data is static today; DataGrid carries the future endpoint contract
+// (data-endpoint="/query/meters") for drop-in HTMX wiring later.
+import Layout from "../layouts/Layout.astro";
+import DataGrid from "../components/DataGrid.astro";
+import FilterOverlay from "../components/FilterOverlay.astro";
 
-const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
+// Representative rows (mirror the EMS registry columns; replaced by the
+// /query/meters fragment when the backend is ready).
+const meters = [
+  { building: "Administrationsbygning A", type: "Fjernvarme", energy: "fjernvarme", hierarchy: "Hovedmåler", label: "District heating billing", uid: "HO593448", tags: "Afregning" },
+  { building: "Administrationsbygning A", type: "EL", energy: "el", hierarchy: "Hovedmåler", label: "Elmåler hovedtavle", uid: "EL120014", tags: "" },
+  { building: "Bygning B", type: "Vand", energy: "vand", hierarchy: "Bimåler", label: "Vandmåler kælder", uid: "VA771203", tags: "Lækage" },
+  { building: "Kalmar", type: "Fjernvarme", energy: "fjernvarme", hierarchy: "Hovedmåler", label: "District Meter Billing", uid: "HO593459", tags: "" },
+  { building: "Kalmar", type: "EL", energy: "el", hierarchy: "Bimåler", label: "EL ventilation", uid: "EL120087", tags: "Ventilation" },
+  { building: "Kristianstad", type: "Varme", energy: "varme", hierarchy: "Hovedmåler", label: "Heating main meter", uid: "HO593470", tags: "" },
+  { building: "Sölvesborg", type: "Køling", energy: "vand", hierarchy: "Hovedmåler", label: "Test meter 4", uid: "HO593484", tags: "Køling" },
+  { building: "Karlshamn 1", type: "Naturgas", energy: "gas", hierarchy: "Hovedmåler", label: "Gas main meter", uid: "GA200431", tags: "" },
+];
 ---
-
 <Layout title="Målere">
-	<div class="page-container">
-		<h1 class="page-title">Målere</h1>
-		<p class="page-description">Administrér og overvåg energimålere.</p>
+  <div class="page-container">
+    <div class="view-header">
+      <div>
+        <h1 class="page-title"><span data-i18n="nav.meters">Målere</span> <span class="muted">— Bolag AB Janus</span></h1>
+        <p class="page-description">Registret over alle målere i den valgte kontekst.</p>
+      </div>
+      <div class="view-actions">
+        <a href="/gateways" class="btn-secondary">+ <span data-i18n="nav.gateways">Opret måler / gateway</span></a>
+        <button type="button" class="btn-secondary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span data-i18n="common.export">Eksport</span>
+        </button>
+      </div>
+    </div>
 
+    <DataGrid
+      count={`<strong>${meters.length}</strong> målere (heraf 0 valgt)`}
+      searchPlaceholder="Søg efter unikt id, målerbetegnelse…"
+      endpoint="/query/meters"
+    >
+      <FilterOverlay slot="actions">
+        <div class="filter-overlay__group">
+          <span class="filter-overlay__group-title">Bygningsfiltre</span>
+          <div class="form-field">
+            <label class="form-label">Bygningsanvendelse</label>
+            <select class="form-select"><option>Alle (4)</option></select>
+          </div>
+          <div class="form-field">
+            <label class="form-label">Bygninger</label>
+            <select class="form-select"><option>Alle (12)</option></select>
+          </div>
+        </div>
+        <div class="filter-overlay__group">
+          <span class="filter-overlay__group-title">Måler-filtre</span>
+          <div class="form-field">
+            <label class="form-label">Målertyper <span class="combinator" _="on click if my textContent is 'og' set my textContent to 'eller' else set my textContent to 'og'">og</span></label>
+            <select class="form-select"><option>Alle (11)</option></select>
+          </div>
+          <div class="form-field">
+            <label class="form-label">Tags</label>
+            <select class="form-select"><option>Vælg tags (3)</option></select>
+          </div>
+          <div class="form-field">
+            <label class="form-label">Adfærd</label>
+            <select class="form-select"><option>Alle (3)</option></select>
+          </div>
+        </div>
+      </FilterOverlay>
 
-		<div class="page-content">
-			<div class="protocol-tabs">
-			<!-- Protocol Selection -->
-			<div class="card">
-				<label class="form-label">Protokol:</label>
-				<div role="tablist" aria-label="Protocol Selection" class="grid-2-col">
-					<button
-						type="button"
-						role="tab"
-						class="btn-tab"
-						command="--show"
-						commandfor="mqtt-section"
-						aria-expanded="true"
-						data-controls="mqtt-section"
-					>
-						MQTT
-					</button>
-					<button
-						type="button"
-						role="tab"
-						class="btn-tab"
-						command="--show"
-						commandfor="lorawan-section"
-						aria-expanded="false"
-						data-controls="lorawan-section"
-					>
-						LoRaWAN
-					</button>
-				</div>
-			</div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th><input type="checkbox" aria-label="Vælg alle"
+              _="on change set checked to my checked then for c in <tbody input[type=checkbox]/> in the closest .data-grid set c.checked to checked" /></th>
+            <th data-i18n="common.building">Bygning</th>
+            <th>Målertype</th>
+            <th>Hierarki</th>
+            <th>Målerbetegnelse</th>
+            <th>Unikt Id</th>
+            <th>Tags</th>
+          </tr>
+        </thead>
+        <tbody>
+          {meters.map((m) => (
+            <tr>
+              <td><input type="checkbox" aria-label={`Vælg ${m.label}`} /></td>
+              <td>{m.building}</td>
+              <td><span class={`badge energy-${m.energy}`}>{m.type}</span></td>
+              <td>{m.hierarchy}</td>
+              <td>{m.label}</td>
+              <td>{m.uid}</td>
+              <td>{m.tags ? <span class="badge">{m.tags}</span> : <span class="muted">—</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
-			<div style="padding-top: 1rem;">
-			<!-- MQTT Section -->
-			<div id="mqtt-section" role="tabpanel">
-				<div class="card">
-					<h2 class="section-title">Tilføj Gateway</h2>
-
-					<form id="gatewayForm"
-						method="POST"
-						action={`${API_BASE_URL}/api/provision`}
-						command-on="submit.prevent"
-						command="--fetch:post">
-						<div class="form">
-						<div class="form-field">
-							<label for="gateway-mqtt-name" class="form-label">Gateway Navn (Device CN):</label>
-							<input type="text" id="gateway-mqtt-name" name="device_cn" class="form-input" required />
-						</div>
-
-						<div class="form-field">
-							<label for="thing-group" class="form-label">Thing Group / Organisation:</label>
-							<input type="text" id="thing-group" name="thing_group" class="form-input" required />
-						</div>
-
-						<div class="form-field">
-							<label for="country" class="form-label">Land:</label>
-							<select id="country" name="country" class="form-select">
-								<option value="DK" selected>Danmark (DK)</option>
-								<option value="DE">Tyskland (DE)</option>
-								<option value="S">Sverige (S)</option>
-								<option value="N">Norge (N)</option>
-								<option value="US">USA (US)</option>
-								<option value="CA">Canada (CA)</option>
-							</select>
-						</div>
-
-						<div class="checkbox-group">
-							<input type="checkbox" id="add-extensions" name="add_extensions" class="form-checkbox" command="--toggle" commandfor="san-field" />
-							<label for="add-extensions" class="checkbox-label">Tilføj X509v3 extensions (Extended Key Usage, SAN)</label>
-						</div>
-
-						<div id="san-field" hidden>
-							<label for="san-dns" class="form-label">Subject Alternative Name (DNS):</label>
-							<input type="text" id="san-dns" name="san_dns" class="form-input" placeholder="device.example.com" required />
-						</div>
-
-							<div class="form-actions">
-								<button type="submit" class="btn-primary">
-									Tilføj Gateway
-								</button>
-							</div>
-						</div>
-					</form>
-				</div>
-			</div>
-
-			<!-- LoRaWAN Section -->
-			<div id="lorawan-section" role="tabpanel" hidden>
-				<div class="card">
-					<h2 class="section-title">Tilføj Gateway</h2>
-
-					<form id="gatewayForm"
-						method="POST"
-						action={`${API_BASE_URL}/api/gateways`}
-						command-on="submit.prevent"
-						command="--fetch:post">
-						<div class="form">
-						<div class="form-field">
-							<label for="gateway-lorawan-name" class="form-label">Gateway Navn:</label>
-							<input type="text" id="gateway-lorawan-name" name="name" class="form-input" />
-						</div>
-
-							<div class="form-field">
-								<label for="gateway-eui" class="form-label">Gateway EUI:</label>
-								<input type="text" id="gateway-eui" name="gatewayEui" class="form-input" placeholder="0000000000000000" />
-							</div>
-
-							<div class="form-actions">
-								<button type="submit" class="btn-primary">
-									Tilføj Gateway
-								</button>
-							</div>
-						</div>
-					</form>
-				</div>
-
-				<!-- Meter Section -->
-				<div class="card">
-				<h2 class="section-title">Tilføj Måler</h2>
-
-				<form class="form" id="meterForm"
-					method="POST"
-					action={`${API_BASE_URL}/api/meters`}
-					command-on="submit.prevent"
-					command="--fetch:post">
-						<div class="form-field">
-							<label for="meter-lorawan-name" class="form-label">Måler Navn:</label>
-							<input type="text" id="meter-lorawan-name" name="name" class="form-input" />
-						</div>
-
-						<div class="form-field">
-							<label for="dev-eui" class="form-label">DevEUI:</label>
-							<input type="text" id="dev-eui" name="devEui" class="form-input" placeholder="0000000000000000" />
-						</div>
-
-						<div class="otaa-version-tabs">
-						<div class="form-field">
-							<label class="form-label">OTAA Version:</label>
-							<div role="tablist" aria-label="OTAA Version" class="grid-3-col">
-								<button type="button" role="tab" class="btn-tab" command="--show" commandfor="otaa-v103-fields" aria-expanded="true" data-controls="otaa-v103-fields">1.0.3</button>
-								<button type="button" role="tab" class="btn-tab" command="--show" commandfor="otaa-v104-fields" aria-expanded="false" data-controls="otaa-v104-fields">1.0.4</button>
-								<button type="button" role="tab" class="btn-tab" command="--show" commandfor="otaa-v11-fields" aria-expanded="false" data-controls="otaa-v11-fields">1.1</button>
-							</div>
-						</div>
-
-						<div>
-						<!-- OTAA 1.0.3 Fields -->
-						<div id="otaa-v103-fields" role="tabpanel" class="bordered-section">
-							<div class="form-field">
-								<label for="app-key-v103" class="form-label">AppKey:</label>
-								<input type="text" id="app-key-v103" name="appKey" class="form-input" placeholder="00000000000000000000000000000000" />
-							</div>
-
-							<div class="form-field">
-								<label for="join-eui-v103" class="form-label">AppEUI:</label>
-								<input type="text" id="app-eui-v103" name="appEui" class="form-input" placeholder="0000000000000000" />
-							</div>
-						</div>
-
-						<!-- OTAA 1.0.4 Fields -->
-						<div id="otaa-v104-fields" role="tabpanel" class="bordered-section" hidden>
-							<div class="form-field">
-								<label for="app-key-v104" class="form-label">AppKey:</label>
-								<input type="text" id="app-key-v104" name="appKey" class="form-input" placeholder="00000000000000000000000000000000" />
-							</div>
-
-							<div class="form-field">
-								<label for="join-eui-v104" class="form-label">JoinEUI:</label>
-								<input type="text" id="join-eui-v104" name="joinEui" class="form-input" placeholder="0000000000000000" />
-							</div>
-						</div>
-
-						<!-- OTAA 1.1 Fields -->
-						<div id="otaa-v11-fields" role="tabpanel" class="bordered-section" hidden>
-							<div class="form-field">
-								<label for="app-key-v11" class="form-label">AppKey:</label>
-								<input type="text" id="app-key-v11" name="appKey" class="form-input" placeholder="00000000000000000000000000000000" />
-							</div>
-
-							<div class="form-field">
-								<label for="nwk-key" class="form-label">NwkKey:</label>
-								<input type="text" id="nwk-key" name="nwkKey" class="form-input" placeholder="00000000000000000000000000000000" />
-							</div>
-
-							<div class="form-field">
-								<label for="join-eui-v11" class="form-label">JoinEUI:</label>
-								<input type="text" id="join-eui-v11" name="joinEui" class="form-input" placeholder="0000000000000000" />
-							</div>
-						</div>
-						</div>
-						</div>
-
-						<div class="form-actions">
-							<button type="submit" class="btn-primary">
-								Tilføj Måler
-							</button>
-						</div>
-					</form>
-				</div>
-			</div>
-			</div>
-			</div>
-		</div>
-	</div>
+      <Fragment slot="pagination">
+        <span>Side 1 af 1</span>
+      </Fragment>
+    </DataGrid>
+  </div>
 </Layout>

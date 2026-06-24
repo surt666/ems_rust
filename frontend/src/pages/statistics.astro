@@ -1,0 +1,169 @@
+---
+// Statistik — overview count/breakdown cards (NEW). Per 01-oversigt.md §1.2.
+// Pure server-rendered count + breakdown tables, no charts. Read-only and
+// scoped to the selected context (company Bolag AB Janus here). Static today;
+// data-endpoint="/query/statistics" carries the future HTMX contract.
+import Layout from "../layouts/Layout.astro";
+---
+<Layout title="Statistik">
+  <div class="page-container">
+    <div class="view-header">
+      <div>
+        <h1 class="page-title"><span data-i18n="nav.statistics">Statistik</span> <span class="muted">— Bolag AB Janus</span></h1>
+        <p class="page-description">Optælling og fordeling for den valgte kontekst.</p>
+      </div>
+    </div>
+
+    <div class="stat-grid" data-endpoint="/query/statistics">
+
+      <!-- Bygningselementer -->
+      <div class="stat-card">
+        <div class="stat-card__head">
+          <span class="stat-card__count">16</span>
+          <span class="stat-card__title">Bygningselementer</span>
+        </div>
+        <table class="data-table">
+          <tbody>
+            <tr><td>Bygning</td><td class="stat-num">12</td></tr>
+            <tr><td>Ejendom</td><td class="stat-num">1</td></tr>
+            <tr><td>Gruppéring</td><td class="stat-num">3</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Brugere -->
+      <div class="stat-card">
+        <div class="stat-card__head">
+          <span class="stat-card__count">1</span>
+          <span class="stat-card__title">Brugere</span>
+        </div>
+        <table class="data-table">
+          <tbody>
+            <tr><td>Firmaansvarlig</td><td class="stat-num">1</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Alarmer -->
+      <div class="stat-card">
+        <div class="stat-card__head">
+          <span class="stat-card__count">0</span>
+          <span class="stat-card__title">Alarmer</span>
+        </div>
+        <table class="data-table">
+          <tbody>
+            <tr><td>Forbrugsalarm (daglig)</td><td class="stat-num">0</td></tr>
+            <tr><td>Forbrugsalarm (time)</td><td class="stat-num">0</td></tr>
+            <tr><td>Forbrugsalarm (akk. time)</td><td class="stat-num">0</td></tr>
+            <tr><td>Forbrugsalarm (ugentlig)</td><td class="stat-num">0</td></tr>
+            <tr><td>Budgetalarm (månedlig)</td><td class="stat-num">0</td></tr>
+            <tr><td>Afkølingsalarm (månedlig)</td><td class="stat-num">0</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Målere (wide card with several sub-tables) -->
+      <div class="stat-card stat-card--wide">
+        <div class="stat-card__head">
+          <span class="stat-card__count">69</span>
+          <span class="stat-card__title">Målere <span class="muted">(heraf mangler 0 målere opsætning)</span></span>
+        </div>
+
+        <div class="stat-subgrid">
+          <!-- Aflæsningstype -->
+          <div class="stat-subtable">
+            <h4 class="section-title">Aflæsningstype</h4>
+            <table class="data-table">
+              <tbody>
+                <tr><td>Manuelt aflæst</td><td class="stat-num">11</td></tr>
+                <tr><td>Fjernaflæst</td><td class="stat-num">57</td></tr>
+                <tr><td>Beregningsmålere</td><td class="stat-num">1</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Energi- og ressourcemåler -->
+          <div class="stat-subtable">
+            <h4 class="section-title">Energi- og ressourcemåler</h4>
+            <table class="data-table">
+              <tbody>
+                <tr class="stat-group-row"><td>Hovedmåler</td><td class="stat-num">42</td></tr>
+                <tr><td class="stat-indent"><span class="badge energy-el">EL</span></td><td class="stat-num">15</td></tr>
+                <tr><td class="stat-indent"><span class="badge energy-varme">Varme</span></td><td class="stat-num">12</td></tr>
+                <tr><td class="stat-indent"><span class="badge energy-vand">Vand</span></td><td class="stat-num">10</td></tr>
+                <tr><td class="stat-indent"><span class="badge energy-vand">Køling</span></td><td class="stat-num">3</td></tr>
+                <tr><td class="stat-indent"><span class="badge energy-gas">Bygas</span></td><td class="stat-num">2</td></tr>
+                <tr class="stat-group-row"><td>Bimåler</td><td class="stat-num">15</td></tr>
+                <tr><td class="stat-indent"><span class="badge energy-el">EL</span></td><td class="stat-num">9</td></tr>
+                <tr><td class="stat-indent"><span class="badge energy-varme">Varme</span></td><td class="stat-num">4</td></tr>
+                <tr><td class="stat-indent"><span class="badge energy-vand">Vand</span></td><td class="stat-num">2</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Andre målertyper -->
+          <div class="stat-subtable">
+            <h4 class="section-title">Andre målertyper</h4>
+            <table class="data-table">
+              <tbody>
+                <tr><td>Hovedmåler</td><td class="stat-num">5</td></tr>
+                <tr><td>Transport afstand</td><td class="stat-num">2</td></tr>
+                <tr><td>Transport brændstof</td><td class="stat-num">2</td></tr>
+                <tr><td>Ressourcer</td><td class="stat-num">1</td></tr>
+                <tr><td>Bimåler</td><td class="stat-num">2</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Fjernaflæst datatilegnelse -->
+          <div class="stat-subtable">
+            <h4 class="section-title">Fjernaflæst datatilegnelse <span class="muted">(57)</span></h4>
+            <table class="data-table">
+              <tbody>
+                <tr class="stat-group-row"><td>Datalogger</td><td class="stat-num">54</td></tr>
+                <tr><td class="stat-indent">Electrocom <span class="muted">(Antal loggere: 28)</span></td><td class="stat-num">50</td></tr>
+                <tr><td class="stat-indent">Fa7 <span class="muted">(2)</span></td><td class="stat-num">2</td></tr>
+                <tr><td class="stat-indent">Kamstrup <span class="muted">(1)</span></td><td class="stat-num">2</td></tr>
+                <tr class="stat-group-row"><td>API</td><td class="stat-num">2</td></tr>
+                <tr><td class="stat-indent">Nordpool</td><td class="stat-num">2</td></tr>
+                <tr class="stat-group-row"><td>Filer</td><td class="stat-num">1</td></tr>
+                <tr><td class="stat-indent">csvfile</td><td class="stat-num">1</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <style>
+    /* Page-specific layout for Statistik. Reuses global tokens + .stat-grid /
+       .stat-card / .data-table; only adds local refinements (no global edits). */
+    .stat-card__head {
+      grid-template-columns: auto 1fr;
+      align-items: baseline;
+    }
+    .stat-num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-primary);
+      width: 1%;
+      white-space: nowrap;
+    }
+    .stat-card .data-table td { padding-top: 5px; padding-bottom: 5px; }
+
+    /* The Målere card spans the full grid width and lays its four sub-tables
+       out in a responsive sub-grid. */
+    .stat-card--wide { grid-column: 1 / -1; }
+    .stat-subgrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1rem 1.5rem;
+      align-items: start;
+    }
+    .stat-subtable .section-title { margin-bottom: 6px; }
+    .stat-group-row td { font-weight: 600; color: var(--text-secondary); }
+    .stat-indent { padding-left: 1.25rem !important; }
+  </style>
+</Layout>

@@ -25,7 +25,13 @@
     "name": "Name",
     "label": "Label",
     "loading": "Loading…",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "period": "Period",
+    "resolution": "Resolution",
+    "measure": "View",
+    "export": "Export",
+    "reset_filters": "Reset filters",
+    "apply": "Show"
   },
   "energy": {
     "electricity": "Electricity",
@@ -74,7 +80,15 @@
     "setup": "Setup",
     "master_data": "Master data",
     "user_list": "User list",
-    "areas": "Areas"
+    "areas": "Areas",
+    "dashboard": "Dashboard",
+    "statistics": "Statistics",
+    "consumption": "Consumption",
+    "cooling": "Cooling",
+    "district_cooling": "District cooling",
+    "gateways": "Gateways",
+    "csrd": "CSRD report",
+    "emission_factors": "Emission factors"
   },
   "alarms": {
     "title": "Alarms",

@@ -2718,3 +2718,211 @@ dialog::backdrop {
 .kpi-value,
 .alarm-cost,
 .alarm-deviation          { font-variant-numeric: tabular-nums; }
+
+/* ===================================================================
+   EMS view parity — shared primitives (FilterBar, FilterOverlay,
+   DataGrid, ChartCard, stat/count cards). Page-specific styling lives
+   in each page's scoped <style>. All colours via existing tokens.
+   =================================================================== */
+
+/* --- View header (title row + right-aligned actions) --- */
+.view-header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 1rem;
+}
+.view-actions {
+  display: grid;
+  grid-auto-flow: column;
+  gap: 8px;
+  align-items: center;
+}
+
+/* --- FilterBar: inline analysis controls --- */
+.filter-bar {
+  display: grid;
+  grid-auto-flow: column;
+  justify-content: start;
+  align-items: end;
+  gap: 14px;
+  background: var(--bg-panel);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin-bottom: 1rem;
+  overflow-x: auto;
+}
+.filter-bar__group {
+  display: grid;
+  gap: 4px;
+}
+.filter-bar__label {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.daterange {
+  display: grid;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-dark);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* --- FilterOverlay: "Filtre og visning" slide-over --- */
+.filter-overlay[hidden] { display: none; }
+.filter-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  grid-template-columns: 1fr auto;
+}
+.filter-overlay__backdrop {
+  background: rgba(2, 6, 23, 0.55);
+}
+.filter-overlay__panel {
+  width: 380px;
+  max-width: 90vw;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border-medium);
+  padding: 1.25rem;
+  overflow-y: auto;
+  display: grid;
+  grid-auto-rows: max-content;
+  gap: 1rem;
+  align-content: start;
+}
+.filter-overlay__head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+.filter-overlay__group {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.filter-overlay__group-title {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.filter-overlay__actions {
+  display: grid;
+  grid-auto-flow: column;
+  justify-content: end;
+  gap: 8px;
+}
+
+/* --- DataGrid: toolbar + pagination around .data-table --- */
+.grid-toolbar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.grid-count {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+.grid-count strong { color: var(--text-primary); }
+.grid-search {
+  background: var(--bg-dark);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  min-width: 220px;
+  justify-self: start;
+}
+.grid-pagination {
+  display: grid;
+  grid-auto-flow: column;
+  justify-content: end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* --- ChartCard: wraps a chart island/region --- */
+.chart-card {
+  background: var(--bg-panel);
+  border-radius: var(--radius-md);
+  padding: 18px;
+  margin-bottom: 1rem;
+}
+.chart-card__head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.chart-card__title {
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.chart-card__body { min-height: 280px; }
+.chart-card__kpis {
+  display: grid;
+  grid-auto-flow: column;
+  justify-content: start;
+  gap: 22px;
+  margin-bottom: 10px;
+}
+.chart-kpi { display: grid; gap: 2px; }
+.chart-kpi__key { font-size: var(--text-xs); color: var(--text-muted); }
+.chart-kpi__val { font-size: var(--text-lg); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* --- Stat/count cards (Statistik) --- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+.stat-card { background: var(--bg-panel); border-radius: var(--radius-md); padding: 1.25rem; }
+.stat-card__head {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.stat-card__title { font-size: var(--text-base); color: var(--text-secondary); }
+.stat-card__count { font-size: var(--text-2xl); font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+/* --- Misc shared bits --- */
+.muted { color: var(--text-muted); }
+.empty-state {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.combinator {
+  font-size: var(--text-xs);
+  color: var(--accent);
+  cursor: pointer;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+}
+.row-hidden { display: none !important; }
+[x-cloak] { display: none !important; }

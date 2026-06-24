@@ -25,7 +25,13 @@
     "name": "Navn",
     "label": "Etiket",
     "loading": "Indlæser…",
-    "cancel": "Annullér"
+    "cancel": "Annullér",
+    "period": "Periode",
+    "resolution": "Opløsning",
+    "measure": "Visning",
+    "export": "Eksport",
+    "reset_filters": "Nulstil filtre",
+    "apply": "Vis"
   },
   "energy": {
     "electricity": "El",
@@ -74,7 +80,15 @@
     "setup": "Opsætning",
     "master_data": "Stamdata",
     "user_list": "Brugerliste",
-    "areas": "Områder"
+    "areas": "Områder",
+    "dashboard": "Dashboard",
+    "statistics": "Statistik",
+    "consumption": "Forbrug",
+    "cooling": "Afkøling",
+    "district_cooling": "Fjernkøling",
+    "gateways": "Gateways",
+    "csrd": "CSRD-rapport",
+    "emission_factors": "Emissionsfaktorer"
   },
   "alarms": {
     "title": "Alarmer",

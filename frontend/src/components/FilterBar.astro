@@ -1,0 +1,63 @@
+---
+// Inline analysis filter bar: date-range display + resolution toggle + measure
+// toggle + (slotted extra filters) + Eksport. Toggle reactivity via hyperscript
+// (matches the standby pattern); no JS. Extra page-specific filters go in the
+// default slot as .filter-bar__group blocks.
+interface Props {
+  period?: string;
+  resolutions?: string[];
+  resolution?: string;
+  measures?: string[];
+  measure?: string;
+  showExport?: boolean;
+}
+const {
+  period = "01.01.2026 - 31.12.2026",
+  resolutions = ["År", "Måned", "Uge", "Dag", "Time", "30 min", "15 min"],
+  resolution = "Måned",
+  measures = ["Energi", "Nøgletal"],
+  measure = "Energi",
+  showExport = true,
+} = Astro.props;
+---
+<div class="filter-bar">
+  <div class="filter-bar__group">
+    <span class="filter-bar__label" data-i18n="common.period">Periode</span>
+    <div class="daterange">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      <span>{period}</span>
+    </div>
+  </div>
+
+  <div class="filter-bar__group">
+    <span class="filter-bar__label" data-i18n="common.resolution">Opløsning</span>
+    <div class="toggle-group">
+      {resolutions.map((r) => (
+        <button type="button" class={`toggle-btn resolution-btn ${r === resolution ? "active" : ""}`}
+          _="on click remove .active from .resolution-btn in the closest .toggle-group then add .active to me">{r}</button>
+      ))}
+    </div>
+  </div>
+
+  <div class="filter-bar__group">
+    <span class="filter-bar__label" data-i18n="common.measure">Visning</span>
+    <div class="toggle-group">
+      {measures.map((m) => (
+        <button type="button" class={`toggle-btn measure-btn ${m === measure ? "active" : ""}`}
+          _="on click remove .active from .measure-btn in the closest .toggle-group then add .active to me">{m}</button>
+      ))}
+    </div>
+  </div>
+
+  <slot />
+
+  {showExport && (
+    <div class="filter-bar__group">
+      <span class="filter-bar__label">&nbsp;</span>
+      <button type="button" class="btn-secondary">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span data-i18n="common.export">Eksport</span>
+      </button>
+    </div>
+  )}
+</div>

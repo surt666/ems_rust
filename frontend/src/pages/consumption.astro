@@ -1,0 +1,202 @@
+---
+// Forbrug — flagship consumption analysis (NEW). Per 03-analyse.md §3.2.
+// Composes the shared FilterBar (with page-specific .filter-bar__group slot
+// children) over per-meter ECharts dataZoom time-series ChartCards. Charts are
+// the showcase: zoomable mock series via EChartsChartWrapper. Static today;
+// data-endpoint="/query/consumption" carries the future HTMX contract. The
+// heavy "Henter data – kan tage flere minutter" state is shown as an
+// .empty-state variant, toggled in-page via Alpine (no JS file).
+import Layout from "../layouts/Layout.astro";
+import FilterBar from "../components/FilterBar.astro";
+import EChartsChartWrapper from "../components/EChartsChartWrapper.tsx";
+
+const months = ["Jan", "Feb", "Mar", "Apr", "Maj", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dec"];
+
+// Representative per-meter monthly consumption (chosen vs budget). Replaced by
+// the /query/consumption fragment when the backend is ready.
+const elSeries = [
+  { name: "Valgte periode", data: [142, 138, 120, 96, 78, 64, 58, 61, 79, 104, 128, 150], color: "#facc15", type: "bar" as const },
+  { name: "Budget", data: [135, 130, 118, 100, 82, 70, 66, 68, 84, 100, 122, 140], color: "#8b97b0", type: "line" as const },
+];
+const varmeSeries = [
+  { name: "Valgte periode", data: [320, 298, 256, 180, 110, 62, 40, 48, 96, 178, 268, 330], color: "#f97316", type: "bar" as const },
+  { name: "Samme periode sidste år", data: [305, 288, 248, 190, 122, 70, 46, 52, 102, 184, 260, 318], color: "#8b97b0", type: "line" as const },
+];
+---
+<Layout title="Forbrug">
+  <div class="page-container" x-data="{ loading: false }">
+    <div class="view-header">
+      <div>
+        <h1 class="page-title"><span data-i18n="nav.consumption">Forbrug</span> <span class="muted">— Bolag AB Janus</span></h1>
+        <p class="page-description">Forbrugsanalyse pr. måler med budget- og periodesammenligning.</p>
+      </div>
+      <div class="view-actions">
+        <button type="button" class="btn-secondary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>Eksporter alle grafer</span>
+        </button>
+        <button type="button" class="btn-secondary" data-i18n="common.reset_filters">Nulstil filtre</button>
+      </div>
+    </div>
+
+    <!-- Inline analysis bar (shared component) + page-specific filter groups -->
+    <FilterBar period="Januar 2026 - December 2026" measures={["Energi", "Nøgletal"]}>
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Målere</span>
+        <select class="form-select">
+          <option>69 målere valgt</option>
+          <option>Alle hovedmålere</option>
+          <option>Vælg gruppe…</option>
+        </select>
+      </div>
+
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Tags</span>
+        <select class="form-select">
+          <option>Vælg tags</option>
+        </select>
+      </div>
+
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Summering (energiform)</span>
+        <select class="form-select">
+          <option>Sum pr. energiform</option>
+          <option>Sum pr. m²</option>
+        </select>
+      </div>
+
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Sammenligningsgrundlag</span>
+        <div class="toggle-group">
+          <button type="button" class="toggle-btn basis-btn active"
+            _="on click remove .active from .basis-btn in the closest .toggle-group then add .active to me">Valgte periode</button>
+          <button type="button" class="toggle-btn basis-btn"
+            _="on click remove .active from .basis-btn in the closest .toggle-group then add .active to me">Budget</button>
+          <button type="button" class="toggle-btn basis-btn"
+            _="on click remove .active from .basis-btn in the closest .toggle-group then add .active to me">Samme periode sidste år</button>
+        </div>
+      </div>
+
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">&nbsp;</span>
+        <div class="consumption-checks">
+          <label class="check-inline"><input type="checkbox" /> Grad- og dato-korrigeret budget</label>
+          <label class="check-inline"><input type="checkbox" /> Akkumuleret</label>
+        </div>
+      </div>
+    </FilterBar>
+
+    <!-- Meter list / Målerliste summary line -->
+    <div class="consumption-meterlist">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      <span><strong>Målerliste:</strong> 69 målere valgt</span>
+      <button type="button" class="consumption-loadtoggle"
+        @click="loading = !loading"
+        x-text="loading ? 'Annullér' : 'Hent data'">Hent data</button>
+    </div>
+
+    <!-- Result region: charts (default) or heavy loading state (Alpine toggle) -->
+    <div class="consumption-results" data-endpoint="/query/consumption">
+
+      <!-- Heavy fetch state (per the doc note) -->
+      <div class="card empty-state" x-show="loading" x-cloak>
+        <svg class="consumption-spinner" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        <div>Henter data – kan tage flere minutter</div>
+      </div>
+
+      <div x-show="!loading">
+        <!-- EL meter -->
+        <div class="chart-card">
+          <div class="chart-card__head">
+            <span class="chart-card__title">Elmåler hovedtavle <span class="badge energy-el">EL</span> <span class="muted">— Administrationsbygning A</span></span>
+            <div class="toggle-group">
+              <button type="button" class="toggle-btn charttype-btn active"
+                _="on click remove .active from .charttype-btn in the closest .toggle-group then add .active to me">Søjler</button>
+              <button type="button" class="toggle-btn charttype-btn"
+                _="on click remove .active from .charttype-btn in the closest .toggle-group then add .active to me">Linje</button>
+            </div>
+          </div>
+          <div class="chart-card__kpis">
+            <div class="chart-kpi"><span class="chart-kpi__key">Forbrug (valgt)</span><span class="chart-kpi__val">1.318 MWh</span></div>
+            <div class="chart-kpi"><span class="chart-kpi__key">Budget</span><span class="chart-kpi__val">1.355 MWh</span></div>
+            <div class="chart-kpi"><span class="chart-kpi__key">Afvigelse</span><span class="chart-kpi__val">-2,7 %</span></div>
+          </div>
+          <div class="chart-card__body">
+            <EChartsChartWrapper client:only="react" height={300} categories={months} series={elSeries} unit="MWh" />
+          </div>
+        </div>
+
+        <!-- Varme meter -->
+        <div class="chart-card">
+          <div class="chart-card__head">
+            <span class="chart-card__title">Heating main meter <span class="badge energy-varme">Varme</span> <span class="muted">— Kristianstad</span></span>
+            <div class="toggle-group">
+              <button type="button" class="toggle-btn charttype-btn active"
+                _="on click remove .active from .charttype-btn in the closest .toggle-group then add .active to me">Søjler</button>
+              <button type="button" class="toggle-btn charttype-btn"
+                _="on click remove .active from .charttype-btn in the closest .toggle-group then add .active to me">Linje</button>
+            </div>
+          </div>
+          <div class="chart-card__kpis">
+            <div class="chart-kpi"><span class="chart-kpi__key">Forbrug (valgt)</span><span class="chart-kpi__val">2.186 MWh</span></div>
+            <div class="chart-kpi"><span class="chart-kpi__key">Sidste år</span><span class="chart-kpi__val">2.235 MWh</span></div>
+            <div class="chart-kpi"><span class="chart-kpi__key">Afvigelse</span><span class="chart-kpi__val">-2,2 %</span></div>
+          </div>
+          <div class="chart-card__body">
+            <EChartsChartWrapper client:only="react" height={300} categories={months} series={varmeSeries} unit="MWh" />
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <style>
+    /* Page-specific bits for Forbrug. Reuses .filter-bar / .chart-card / .toggle-group /
+       .empty-state from global.css; only adds local helpers (no global edits). */
+    .consumption-checks {
+      display: grid;
+      gap: 4px;
+    }
+    .check-inline {
+      display: grid;
+      grid-auto-flow: column;
+      justify-content: start;
+      align-items: center;
+      gap: 6px;
+      font-size: var(--text-sm);
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .consumption-meterlist {
+      display: grid;
+      grid-auto-flow: column;
+      justify-content: start;
+      align-items: center;
+      gap: 10px;
+      margin: 1rem 0;
+      padding: 8px 12px;
+      background: var(--bg-panel);
+      border-radius: var(--radius-sm);
+      font-size: var(--text-sm);
+      color: var(--text-secondary);
+    }
+    .consumption-loadtoggle {
+      justify-self: start;
+      background: transparent;
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-sm);
+      color: var(--accent);
+      padding: 4px 10px;
+      font-size: var(--text-sm);
+      cursor: pointer;
+    }
+    .empty-state {
+      display: grid;
+      justify-items: center;
+      gap: 10px;
+    }
+    .consumption-spinner { color: var(--accent); animation: consumption-spin 1s linear infinite; }
+    @keyframes consumption-spin { to { transform: rotate(360deg); } }
+  </style>
+</Layout>

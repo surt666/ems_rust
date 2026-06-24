@@ -1,0 +1,123 @@
+---
+// Fjernkøling — same delta-T analysis surface as Afkøling, but for cooling
+// (Køling) meters. The temperature column / index read "Opv." (opvarmning).
+// Mirrors the EMS analysis/consumption_heating view (shares /api/cooling/query).
+//
+// FilterBar + worst-first sort toggle + building/tags filters, then the shared
+// CoolingPanels surface in its districtcooling variant. Static data; the panel
+// region carries data-endpoint="/query/cooling" for HTMX wiring later. No JS.
+import Layout from "../layouts/Layout.astro";
+import FilterBar from "../components/FilterBar.astro";
+import CoolingPanels, { type CoolingMeter } from "../components/CoolingPanels.astro";
+
+const months = ["Jan", "Feb", "Mar", "Apr", "Maj", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dec"];
+
+// ~1–2 representative cooling meters (worst heating-spread first). Replaced by
+// the /query/cooling fragment when the backend is ready.
+const meters: CoolingMeter[] = [
+  {
+    id: "HO593484",
+    name: "Test meter 4",
+    building: "Sölvesborg",
+    energyLabel: "Køling",
+    energyClass: "vand",
+    index: 72,
+    indexLabel: "Opv. Indeks 72",
+    categories: months,
+    deltaT: [6, 7, 8, 10, 12, 14, 15, 14, 12, 9, 7, 6],
+    target: months.map(() => 8),
+    kpis: [
+      { period: "I år", delta: "10,3 °C", energy: "184 MWh", flow: "4.620 m³", cost: "142.800 kr", extraCost: "28.500 kr", index: "72" },
+      { period: "Sidste år", delta: "9,8 °C", energy: "176 MWh", flow: "4.410 m³", cost: "135.200 kr", extraCost: "24.100 kr", index: "67" },
+    ],
+    metadata: [
+      { key: "Unikt Id", value: "HO593484" },
+      { key: "Hierarki", value: "Hovedmåler" },
+      { key: "Energiform", value: "Køling" },
+      { key: "Afregningsmåler", value: "Nej" },
+      { key: "Måltemperatur (spread)", value: "≥ 8 °C" },
+      { key: "Tags", value: "Køling" },
+    ],
+  },
+  {
+    id: "HO593491",
+    name: "Cooling main meter",
+    building: "Karlshamn 1",
+    energyLabel: "Køling",
+    energyClass: "vand",
+    index: 38,
+    indexLabel: "Opv. Indeks 38",
+    categories: months,
+    deltaT: [9, 9, 10, 11, 12, 13, 13, 13, 12, 11, 10, 9],
+    target: months.map(() => 8),
+    kpis: [
+      { period: "I år", delta: "11,0 °C", energy: "121 MWh", flow: "2.980 m³", cost: "94.300 kr", extraCost: "6.700 kr", index: "38" },
+      { period: "Sidste år", delta: "10,6 °C", energy: "118 MWh", flow: "2.910 m³", cost: "91.100 kr", extraCost: "7.900 kr", index: "41" },
+    ],
+    metadata: [
+      { key: "Unikt Id", value: "HO593491" },
+      { key: "Hierarki", value: "Hovedmåler" },
+      { key: "Energiform", value: "Køling" },
+      { key: "Afregningsmåler", value: "Nej" },
+      { key: "Måltemperatur (spread)", value: "≥ 8 °C" },
+      { key: "Tags", value: "—" },
+    ],
+  },
+];
+---
+<Layout title="Fjernkøling">
+  <div class="page-container">
+    <div class="view-header">
+      <div>
+        <h1 class="page-title"><span data-i18n="nav.district_cooling">Fjernkøling</span> <span class="muted">— Bolag AB Janus</span></h1>
+        <p class="page-description">Temperatur-spread / delta-T effektivitet pr. køling-hovedmåler.</p>
+      </div>
+      <div class="view-actions">
+        <button type="button" class="btn-primary">Analyser</button>
+      </div>
+    </div>
+
+    <FilterBar
+      period="januar 2026 - december 2026"
+      resolution="Måned"
+      measures={["Energi", "Nøgletal", "Omkostning"]}
+      measure="Nøgletal"
+    >
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Sortering</span>
+        <div class="toggle-group">
+          <button type="button" class="toggle-btn sort-btn active"
+            _="on click remove .active from .sort-btn in the closest .toggle-group then add .active to me">Dårligst øverst</button>
+          <button type="button" class="toggle-btn sort-btn"
+            _="on click remove .active from .sort-btn in the closest .toggle-group then add .active to me">Bedst øverst</button>
+        </div>
+      </div>
+
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Bygning</span>
+        <select class="form-select">
+          <option>Alle bygninger (12)</option>
+          <option>Sölvesborg</option>
+          <option>Karlshamn 1</option>
+        </select>
+      </div>
+
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Tags</span>
+        <select class="form-select">
+          <option>Vælg tags (3)</option>
+          <option>Køling</option>
+        </select>
+      </div>
+
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Hovedmåler</span>
+        <select class="form-select">
+          <option>Hovedmåler (2)</option>
+        </select>
+      </div>
+    </FilterBar>
+
+    <CoolingPanels variant="districtcooling" meters={meters} />
+  </div>
+</Layout>

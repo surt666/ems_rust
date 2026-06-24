@@ -1,0 +1,40 @@
+---
+// "Filtre og visning" slide-over. Self-contained: renders its own trigger
+// button + overlay panel under one Alpine scope. Compose filter groups via the
+// default slot (wrap each in .filter-overlay__group). Override the footer with
+// the "actions" slot. Reactivity is Alpine only (no JS).
+interface Props {
+  triggerLabel?: string;
+  title?: string;
+}
+const { triggerLabel = "Filtre og visning", title = "Filtre og visning" } = Astro.props;
+---
+<div x-data="{ open: false }" class="filter-overlay-root">
+  <button type="button" class="btn-secondary" @click="open = true">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+    </svg>
+    <span>{triggerLabel}</span>
+  </button>
+
+  <div class="filter-overlay" x-show="open" x-cloak @keydown.escape.window="open = false">
+    <div class="filter-overlay__backdrop" @click="open = false"></div>
+    <div class="filter-overlay__panel" @click.stop>
+      <div class="filter-overlay__head">
+        <h3 class="section-title" style="margin-bottom:0">{title}</h3>
+        <button type="button" class="btn-icon btn-icon--sm" @click="open = false" aria-label="Luk">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <slot />
+
+      <div class="filter-overlay__actions">
+        <slot name="actions">
+          <button type="button" class="btn-secondary" data-i18n="common.reset_filters">Nulstil filtre</button>
+          <button type="button" class="btn-primary" @click="open = false" data-i18n="common.apply">Vis</button>
+        </slot>
+      </div>
+    </div>
+  </div>
+</div>

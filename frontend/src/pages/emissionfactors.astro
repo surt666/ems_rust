@@ -1,0 +1,264 @@
+---
+// Emissionsfaktorer (NEW) — §6.3. A "Navigator" card: search + "Vis alle"
+// toggle over an expandable emission-type list; expanding a type reveals a
+// Regionshierarki (region tree) down to the actual factor rows. UI reactivity
+// is Alpine (open/close/search) only — no bespoke JS. Data is static today;
+// data-endpoint="/query/emission-types" carries the future HTMX contract.
+import Layout from "../layouts/Layout.astro";
+
+// Representative emission-type → region → factor hierarchy (replaced by the
+// /query/emission-types fragment / emission-types/hierarchy when the backend
+// is ready). `energy` maps to a global.css colour token; `dot` is a fallback
+// colour for types without a dedicated badge class (Transport, Ressourcer).
+const types = [
+  {
+    name: "Varme", energy: "energy-varme", dot: "#f97316", unit: "kg CO₂e/kWh",
+    regions: [
+      { name: "Danmark", factors: [
+        { region: "DK1 (Vest)", value: "0,124", unit: "kg CO₂e/kWh" },
+        { region: "DK2 (Øst)", value: "0,138", unit: "kg CO₂e/kWh" },
+      ]},
+      { name: "Sverige", factors: [
+        { region: "SE3", value: "0,041", unit: "kg CO₂e/kWh" },
+      ]},
+    ],
+  },
+  {
+    name: "Vand", energy: "energy-vand", dot: "#38bdf8", unit: "kg CO₂e/m³",
+    regions: [
+      { name: "Danmark", factors: [
+        { region: "Hele landet", value: "0,442", unit: "kg CO₂e/m³" },
+      ]},
+    ],
+  },
+  {
+    name: "EL", energy: "energy-el", dot: "#facc15", unit: "kg CO₂e/kWh",
+    regions: [
+      { name: "Danmark", factors: [
+        { region: "DK1 (Vest)", value: "0,151", unit: "kg CO₂e/kWh" },
+        { region: "DK2 (Øst)", value: "0,163", unit: "kg CO₂e/kWh" },
+      ]},
+      { name: "Norden", factors: [
+        { region: "Nordisk mix", value: "0,028", unit: "kg CO₂e/kWh" },
+      ]},
+    ],
+  },
+  {
+    name: "Transport afstand", energy: "energy-gas", dot: "#a855f7", unit: "kg CO₂e/km",
+    regions: [
+      { name: "Danmark", factors: [
+        { region: "Personbil (benzin)", value: "0,171", unit: "kg CO₂e/km" },
+        { region: "Varebil (diesel)", value: "0,233", unit: "kg CO₂e/km" },
+      ]},
+    ],
+  },
+  {
+    name: "Ressourcer", energy: null, dot: "#34d399", unit: "kg CO₂e/t",
+    regions: [
+      { name: "Danmark", factors: [
+        { region: "Restaffald (forbrænding)", value: "421", unit: "kg CO₂e/t" },
+        { region: "Genanvendt papir", value: "21", unit: "kg CO₂e/t" },
+      ]},
+    ],
+  },
+  {
+    name: "Transport brændstof", energy: null, dot: "#fb7185", unit: "kg CO₂e/l",
+    regions: [
+      { name: "Danmark", factors: [
+        { region: "Diesel", value: "2,640", unit: "kg CO₂e/l" },
+        { region: "Benzin", value: "2,310", unit: "kg CO₂e/l" },
+      ]},
+    ],
+  },
+];
+---
+<Layout title="Emissionsfaktorer">
+  <div class="page-container">
+    <div class="view-header">
+      <div>
+        <h1 class="page-title">Emissionsfaktorer</h1>
+        <p class="page-description">Browse emissionsfaktorer pr. emissionstype og region.</p>
+      </div>
+      <div class="view-actions">
+        <button type="button" class="btn-secondary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>Eksporter</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Navigator card: search + Vis alle toggle over the emission-type tree -->
+    <div class="card ef-navigator"
+      x-data="{ q: '', showAll: false }"
+      data-endpoint="/query/emission-types">
+      <div class="ef-navigator__head">
+        <h3 class="section-title" style="margin-bottom:0">Navigator</h3>
+        <span class="muted ef-navigator__hint">Emissionstype → Regionshierarki → Emissionsfaktorer</span>
+      </div>
+
+      <div class="ef-toolbar">
+        <div class="ef-search">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="search" class="form-input ef-search__input" placeholder="Søg emissionstype…" x-model="q" />
+        </div>
+        <button type="button" class="btn-secondary" @click="q = q">Søg</button>
+        <button type="button" class="btn-secondary"
+          :class="showAll && 'is-active'"
+          @click="showAll = !showAll"
+          x-text="showAll ? 'Skjul alle' : 'Vis alle'">Vis alle</button>
+        <button type="button" class="btn-secondary" @click="q = ''; showAll = false">Luk</button>
+      </div>
+
+      <ul class="ef-list">
+        {types.map((t, i) => (
+          <li class="ef-type"
+            x-data={`{ open: false }`}
+            x-show={`showAll || q === '' || '${t.name.toLowerCase()}'.includes(q.toLowerCase())`}
+            x-cloak>
+            <button type="button" class="ef-type__row"
+              @click="open = !open"
+              :aria-expanded="(open || showAll).toString()">
+              <svg class="ef-chevron" width="10" height="10" viewBox="0 0 320 512" fill="currentColor"
+                :class="(open || showAll) && 'ef-chevron--open'">
+                <path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+              </svg>
+              {t.energy
+                ? <span class={`badge ${t.energy} ef-dot`}></span>
+                : <span class="badge ef-dot" style={`background:${t.dot}1f;color:${t.dot}`}></span>}
+              <span class="ef-type__name">{t.name}</span>
+              <span class="muted ef-type__unit">{t.unit}</span>
+            </button>
+
+            <!-- Regionshierarki -->
+            <div class="ef-regions" x-show="open || showAll" x-cloak>
+              {t.regions.map((r) => (
+                <div class="ef-region" x-data={`{ ropen: false }`}>
+                  <button type="button" class="ef-region__row"
+                    @click="ropen = !ropen"
+                    :aria-expanded="ropen.toString()">
+                    <svg class="ef-chevron" width="9" height="9" viewBox="0 0 320 512" fill="currentColor"
+                      :class="ropen && 'ef-chevron--open'">
+                      <path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+                    </svg>
+                    <span>{r.name}</span>
+                    <span class="badge">{r.factors.length}</span>
+                  </button>
+                  <table class="data-table ef-factors" x-show="ropen" x-cloak>
+                    <thead>
+                      <tr><th>Region</th><th>Faktor</th><th>Enhed</th></tr>
+                    </thead>
+                    <tbody>
+                      {r.factors.map((f) => (
+                        <tr>
+                          <td>{f.region}</td>
+                          <td class="ef-factor-value">{f.value}</td>
+                          <td class="muted">{f.unit}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </div>
+
+  <style>
+    .ef-navigator { display: grid; gap: 14px; }
+    .ef-navigator__head {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .ef-navigator__hint { font-size: var(--text-xs); }
+
+    .ef-toolbar {
+      display: grid;
+      grid-auto-flow: column;
+      grid-template-columns: 1fr auto auto auto;
+      gap: 8px;
+      align-items: center;
+    }
+    .ef-search {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-dark);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-sm);
+      padding: 0 10px;
+      color: var(--text-muted);
+    }
+    .ef-search__input { border: 0; background: none; padding: 6px 0; }
+    .ef-search__input:focus { outline: none; box-shadow: none; }
+    .btn-secondary.is-active { border-color: var(--accent); color: var(--accent); }
+
+    /* Emission-type list */
+    .ef-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+    .ef-type {
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+    .ef-type__row {
+      display: grid;
+      grid-template-columns: auto auto 1fr auto;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 10px 12px;
+      background: none;
+      border: 0;
+      color: var(--text-primary);
+      font-size: var(--text-sm);
+      cursor: pointer;
+      text-align: left;
+    }
+    .ef-type__row:hover { background: var(--bg-elevated); }
+    .ef-type__name { font-weight: 500; }
+    .ef-type__unit { font-size: var(--text-xs); }
+
+    .ef-chevron { color: var(--text-muted); transition: transform 0.15s ease; }
+    .ef-chevron--open { transform: rotate(90deg); }
+
+    /* Colored dot via the .badge token (empty pill) */
+    .ef-dot {
+      margin-left: 0;
+      width: 12px;
+      height: 12px;
+      padding: 0;
+      border-radius: 9999px;
+    }
+
+    /* Regionshierarki */
+    .ef-regions {
+      display: grid;
+      gap: 4px;
+      padding: 4px 12px 12px 34px;
+      background: var(--bg-dark);
+    }
+    .ef-region__row {
+      display: grid;
+      grid-auto-flow: column;
+      justify-content: start;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 7px 8px;
+      background: none;
+      border: 0;
+      color: var(--text-secondary);
+      font-size: var(--text-sm);
+      cursor: pointer;
+      text-align: left;
+    }
+    .ef-region__row:hover { color: var(--text-primary); }
+    .ef-factors { margin: 2px 0 8px 22px; width: auto; }
+    .ef-factor-value { font-variant-numeric: tabular-nums; font-weight: 600; }
+  </style>
+</Layout>

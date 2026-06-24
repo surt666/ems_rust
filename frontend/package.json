@@ -26,6 +26,7 @@
     "astro-hyperscript": "^0.0.3",
     "astro-navbar": "^2.3.9",
     "aws-amplify": "^6.15.3",
+    "echarts": "^6.1.0",
     "htmx.org": "^1.9.6",
     "hyperscript.org": "^0.9.14",
     "invokers": "^1.8.0",

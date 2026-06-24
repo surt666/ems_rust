@@ -1,0 +1,215 @@
+---
+// CoolingPanels — shared delta-T (afkøling/opvarmning) analysis surface, one
+// panel per meter. Drives both /cooling (Afkøling, heat meters) and
+// /districtcooling (Fjernkøling, cooling meters) via the `variant` prop.
+//
+// Each panel: header (name + id + building + energy badge), an ECharts island
+// (delta-T curve, zoomable), Nøgletal/Metadata tabs (Alpine), and a KPI table.
+// Static data today; the result region carries data-endpoint="/query/cooling"
+// for drop-in HTMX wiring later (no live hx-get — renders standalone).
+//
+// No bespoke JS: tab state via Alpine x-data, charts via the React island.
+import EChartsChartWrapper from "./EChartsChartWrapper.tsx";
+
+export interface CoolingMeter {
+  id: string;
+  name: string;
+  building: string;
+  /** energy form, e.g. "Fjernvarme" / "Køling" */
+  energyLabel: string;
+  /** badge color class suffix: "fjernvarme" | "vand" | "varme" | … */
+  energyClass: string;
+  /** worst-first index value (0–100), higher = worse cooling/heating */
+  index: number;
+  indexLabel: string;
+  /** months -> delta-T values for the chart */
+  categories?: string[];
+  deltaT?: number[];
+  target?: number[];
+  /** KPI rows */
+  kpis: {
+    period: string;
+    delta: string;
+    energy: string;
+    flow: string;
+    cost: string;
+    extraCost: string;
+    index: string;
+  }[];
+  /** metadata key/value pairs */
+  metadata: { key: string; value: string }[];
+}
+
+interface Props {
+  variant?: "cooling" | "districtcooling";
+  meters: CoolingMeter[];
+}
+
+const { variant = "cooling", meters } = Astro.props;
+
+// districtcooling = cooling meters → the temperature column reads "Opv." and the
+// chart series is the heating spread; cooling = heat meters → "Afk." (afkøling).
+const isDistrict = variant === "districtcooling";
+const deltaColTitle = isDistrict ? "Opv." : "Afk.";
+const seriesName = isDistrict ? "Opvarmning ΔT" : "Afkøling ΔT";
+const indexTitle = isDistrict ? "Opv. Indeks" : "Afk. Indeks";
+const months = ["Jan", "Feb", "Mar", "Apr", "Maj", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dec"];
+
+function indexBadge(index: number): string {
+  if (index >= 66) return "energy-fjernvarme"; // red — worst
+  if (index >= 33) return "energy-varme"; // orange — medium
+  return "energy-vand"; // blue — good
+}
+---
+<div class="cooling-panels" data-endpoint="/query/cooling" data-variant={variant}>
+  {meters.map((m) => (
+    <div class="card cooling-panel" x-data="{ tab: 'nøgletal' }">
+      <!-- Header -->
+      <div class="cooling-panel__head">
+        <div class="cooling-panel__title">
+          <span class="cooling-panel__name">{m.name}</span>
+          <span class="cooling-panel__id muted">{m.id}</span>
+          <span class="cooling-panel__building muted">· {m.building}</span>
+        </div>
+        <div class="cooling-panel__head-meta">
+          <span class={`energy-badge energy-${m.energyClass}`}>{m.energyLabel}</span>
+          <span class={`badge ${indexBadge(m.index)}`}>{m.indexLabel}</span>
+        </div>
+      </div>
+
+      <!-- Delta-T chart -->
+      <div class="cooling-panel__chart">
+        <EChartsChartWrapper
+          client:only="react"
+          height={260}
+          unit="°C"
+          categories={m.categories ?? months}
+          series={[
+            { name: seriesName, data: m.deltaT ?? [], color: m.energyClass === "vand" ? "#38bdf8" : "#f97316", type: "line" as const, areaStyle: true },
+            ...(m.target ? [{ name: "Mål", data: m.target, color: "#8b97b0", type: "line" as const }] : []),
+          ]}
+        />
+      </div>
+
+      <!-- Tabs -->
+      <div class="tab-bar cooling-panel__tabs">
+        <button type="button" class="tab-btn"
+          :class="{ 'active': tab === 'nøgletal' }"
+          @click="tab = 'nøgletal'">Nøgletal</button>
+        <button type="button" class="tab-btn"
+          :class="{ 'active': tab === 'metadata' }"
+          @click="tab = 'metadata'">Metadata</button>
+      </div>
+
+      <!-- Nøgletal tab: KPI table -->
+      <div class="table-panel cooling-panel__pane" x-show="tab === 'nøgletal'" x-cloak>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Periode</th>
+              <th>{deltaColTitle}</th>
+              <th>Energi</th>
+              <th>Flow</th>
+              <th>Omkostning</th>
+              <th>Est. meromk.</th>
+              <th>{indexTitle}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {m.kpis.map((k) => (
+              <tr>
+                <td>{k.period}</td>
+                <td>{k.delta}</td>
+                <td>{k.energy}</td>
+                <td>{k.flow}</td>
+                <td>{k.cost}</td>
+                <td>{k.extraCost}</td>
+                <td>{k.index}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Metadata tab -->
+      <div class="table-panel cooling-panel__pane" x-show="tab === 'metadata'" x-cloak>
+        <table class="data-table cooling-panel__meta">
+          <tbody>
+            {m.metadata.map((row) => (
+              <tr>
+                <th scope="row">{row.key}</th>
+                <td>{row.value}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  ))}
+
+  {meters.length === 0 && (
+    <div class="empty-state">Ingen målere matcher de valgte filtre.</div>
+  )}
+</div>
+
+<style>
+  .cooling-panels {
+    display: grid;
+    gap: 1rem;
+  }
+  .cooling-panel {
+    display: grid;
+    gap: 14px;
+  }
+  .cooling-panel__head {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 12px;
+  }
+  .cooling-panel__title {
+    display: grid;
+    grid-auto-flow: column;
+    justify-content: start;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+  .cooling-panel__name {
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .cooling-panel__id {
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+  }
+  .cooling-panel__building {
+    font-size: var(--text-sm);
+  }
+  .cooling-panel__head-meta {
+    display: grid;
+    grid-auto-flow: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .cooling-panel__tabs {
+    margin-bottom: 0;
+  }
+  .cooling-panel__pane {
+    padding-top: 14px;
+  }
+  /* Metadata: 2-column key/value table */
+  .cooling-panel__meta th[scope="row"] {
+    text-align: left;
+    width: 40%;
+    color: var(--text-muted);
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 500;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .cooling-panel__meta td {
+    color: var(--text-secondary);
+  }
+</style>

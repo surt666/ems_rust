@@ -1,0 +1,149 @@
+---
+// Afkøling — district-heating return-temperature / delta-T (afkøling)
+// efficiency, one panel per heat meter (Hovedmåler). Mirrors the EMS
+// analysis/consumption_cooling view.
+//
+// FilterBar (period/resolution/measure) + a worst-first sort toggle and
+// building/tags filters as extra .filter-bar__group children, then the shared
+// CoolingPanels surface. Data is static; the panel region carries
+// data-endpoint="/query/cooling" for HTMX wiring later. No bespoke JS.
+import Layout from "../layouts/Layout.astro";
+import FilterBar from "../components/FilterBar.astro";
+import CoolingPanels, { type CoolingMeter } from "../components/CoolingPanels.astro";
+
+const months = ["Jan", "Feb", "Mar", "Apr", "Maj", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dec"];
+
+// ~3 representative district-heating meters (worst cooling first). Replaced by
+// the /query/cooling fragment when the backend is ready.
+const meters: CoolingMeter[] = [
+  {
+    id: "HO593448",
+    name: "District heating billing",
+    building: "Administrationsbygning A",
+    energyLabel: "Fjernvarme",
+    energyClass: "fjernvarme",
+    index: 78,
+    indexLabel: "Afk. Indeks 78",
+    categories: months,
+    deltaT: [41, 40, 38, 35, 31, 28, 26, 27, 30, 34, 38, 40],
+    target: months.map(() => 45),
+    kpis: [
+      { period: "I år", delta: "34,8 °C", energy: "612 MWh", flow: "9.840 m³", cost: "486.200 kr", extraCost: "62.400 kr", index: "78" },
+      { period: "Sidste år", delta: "36,1 °C", energy: "598 MWh", flow: "9.120 m³", cost: "471.500 kr", extraCost: "54.900 kr", index: "71" },
+    ],
+    metadata: [
+      { key: "Unikt Id", value: "HO593448" },
+      { key: "Hierarki", value: "Hovedmåler" },
+      { key: "Energiform", value: "Fjernvarme" },
+      { key: "Afregningsmåler", value: "Ja" },
+      { key: "Måltemperatur (retur)", value: "≤ 40 °C" },
+      { key: "Tags", value: "Afregning" },
+    ],
+  },
+  {
+    id: "HO593470",
+    name: "Heating main meter",
+    building: "Kristianstad",
+    energyLabel: "Fjernvarme",
+    energyClass: "fjernvarme",
+    index: 54,
+    indexLabel: "Afk. Indeks 54",
+    categories: months,
+    deltaT: [44, 43, 42, 40, 38, 36, 35, 36, 38, 41, 43, 44],
+    target: months.map(() => 45),
+    kpis: [
+      { period: "I år", delta: "40,0 °C", energy: "438 MWh", flow: "6.210 m³", cost: "352.100 kr", extraCost: "21.700 kr", index: "54" },
+      { period: "Sidste år", delta: "41,2 °C", energy: "421 MWh", flow: "5.980 m³", cost: "339.800 kr", extraCost: "18.300 kr", index: "49" },
+    ],
+    metadata: [
+      { key: "Unikt Id", value: "HO593470" },
+      { key: "Hierarki", value: "Hovedmåler" },
+      { key: "Energiform", value: "Fjernvarme" },
+      { key: "Afregningsmåler", value: "Ja" },
+      { key: "Måltemperatur (retur)", value: "≤ 40 °C" },
+      { key: "Tags", value: "—" },
+    ],
+  },
+  {
+    id: "HO593459",
+    name: "District Meter Billing",
+    building: "Kalmar",
+    energyLabel: "Fjernvarme",
+    energyClass: "fjernvarme",
+    index: 31,
+    indexLabel: "Afk. Indeks 31",
+    categories: months,
+    deltaT: [49, 48, 47, 46, 45, 44, 43, 44, 45, 47, 48, 49],
+    target: months.map(() => 45),
+    kpis: [
+      { period: "I år", delta: "46,2 °C", energy: "527 MWh", flow: "6.840 m³", cost: "418.600 kr", extraCost: "4.100 kr", index: "31" },
+      { period: "Sidste år", delta: "45,9 °C", energy: "512 MWh", flow: "6.700 m³", cost: "406.200 kr", extraCost: "5.200 kr", index: "33" },
+    ],
+    metadata: [
+      { key: "Unikt Id", value: "HO593459" },
+      { key: "Hierarki", value: "Hovedmåler" },
+      { key: "Energiform", value: "Fjernvarme" },
+      { key: "Afregningsmåler", value: "Ja" },
+      { key: "Måltemperatur (retur)", value: "≤ 40 °C" },
+      { key: "Tags", value: "—" },
+    ],
+  },
+];
+---
+<Layout title="Afkøling">
+  <div class="page-container">
+    <div class="view-header">
+      <div>
+        <h1 class="page-title"><span data-i18n="nav.cooling">Afkøling</span> <span class="muted">— Bolag AB Janus</span></h1>
+        <p class="page-description">Returtemperatur / delta-T effektivitet pr. fjernvarme-hovedmåler.</p>
+      </div>
+      <div class="view-actions">
+        <button type="button" class="btn-primary">Analyser</button>
+      </div>
+    </div>
+
+    <FilterBar
+      period="januar 2026 - december 2026"
+      resolution="Måned"
+      measures={["Energi", "Nøgletal", "Omkostning"]}
+      measure="Nøgletal"
+    >
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Sortering</span>
+        <div class="toggle-group">
+          <button type="button" class="toggle-btn sort-btn active"
+            _="on click remove .active from .sort-btn in the closest .toggle-group then add .active to me">Dårligst øverst</button>
+          <button type="button" class="toggle-btn sort-btn"
+            _="on click remove .active from .sort-btn in the closest .toggle-group then add .active to me">Bedst øverst</button>
+        </div>
+      </div>
+
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Bygning</span>
+        <select class="form-select">
+          <option>Alle bygninger (12)</option>
+          <option>Administrationsbygning A</option>
+          <option>Kristianstad</option>
+          <option>Kalmar</option>
+        </select>
+      </div>
+
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Tags</span>
+        <select class="form-select">
+          <option>Vælg tags (3)</option>
+          <option>Afregning</option>
+        </select>
+      </div>
+
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Hovedmåler</span>
+        <select class="form-select">
+          <option>Hovedmåler (3)</option>
+        </select>
+      </div>
+    </FilterBar>
+
+    <CoolingPanels variant="cooling" meters={meters} />
+  </div>
+</Layout>

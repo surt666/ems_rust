@@ -1,0 +1,196 @@
+---
+// CSRD-rapport (NEW) — §6.2. Corporate Sustainability Reporting (Environment):
+// an intro/help block + a groupable CSRD line-item DataGrid with a date range +
+// Eksport. Data is static today; DataGrid carries the future endpoint contract
+// (data-endpoint="/query/csrd") for drop-in HTMX wiring later.
+import Layout from "../layouts/Layout.astro";
+import DataGrid from "../components/DataGrid.astro";
+
+// Representative CSRD environment disclosure rows (replaced by the
+// /query/csrd fragment when the backend is ready). Grouped by Kategori.
+const rows = [
+  { datapunkt: "Samlet energiforbrug", kategori: "Energi", enhed: "MWh", vaerdi: "12.480", periode: "2026" },
+  { datapunkt: "Energiforbrug fra vedvarende kilder", kategori: "Energi", enhed: "MWh", vaerdi: "4.310", periode: "2026" },
+  { datapunkt: "Energiintensitet pr. nettoomsætning", kategori: "Energi", enhed: "MWh/mio. kr", vaerdi: "3,2", periode: "2026" },
+  { datapunkt: "Drivhusgasudledning Scope 1", kategori: "Drivhusgasser", enhed: "t CO₂e", vaerdi: "125", periode: "2026" },
+  { datapunkt: "Drivhusgasudledning Scope 2 (lokationsbaseret)", kategori: "Drivhusgasser", enhed: "t CO₂e", vaerdi: "747", periode: "2026" },
+  { datapunkt: "Drivhusgasudledning Scope 3", kategori: "Drivhusgasser", enhed: "t CO₂e", vaerdi: "375", periode: "2026" },
+  { datapunkt: "Samlet drivhusgasudledning", kategori: "Drivhusgasser", enhed: "t CO₂e", vaerdi: "1.247", periode: "2026" },
+  { datapunkt: "Samlet vandforbrug", kategori: "Vand", enhed: "m³", vaerdi: "38.500", periode: "2026" },
+  { datapunkt: "Vandforbrug i områder med vandstress", kategori: "Vand", enhed: "m³", vaerdi: "0", periode: "2026" },
+  { datapunkt: "Samlet affaldsmængde", kategori: "Affald", enhed: "t", vaerdi: "214", periode: "2026" },
+  { datapunkt: "Affald sendt til genanvendelse", kategori: "Affald", enhed: "t", vaerdi: "168", periode: "2026" },
+  { datapunkt: "Farligt affald", kategori: "Affald", enhed: "t", vaerdi: "6,4", periode: "2026" },
+];
+
+// Group rows by Kategori for the row-grouping affordance.
+const groups = [...new Set(rows.map((r) => r.kategori))].map((k) => ({
+  kategori: k,
+  items: rows.filter((r) => r.kategori === k),
+}));
+---
+<Layout title="CSRD-rapport">
+  <div class="page-container">
+    <div class="view-header">
+      <div>
+        <h1 class="page-title">Corporate Sustainability Reporting (Environment)</h1>
+        <p class="page-description">CSRD-miljørapport — Bolag AB Janus</p>
+      </div>
+      <div class="view-actions">
+        <div class="daterange">
+          <span>01-01-2026 - 31-12-2026</span>
+          <button type="button" class="btn-icon btn-icon--sm" aria-label="Vælg dato">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          </button>
+        </div>
+        <button type="button" class="btn-secondary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>Eksport</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Intro / help block (collapsible) -->
+    <details class="csrd-intro card">
+      <summary class="csrd-intro__toggle">
+        <svg class="csrd-chevron" width="12" height="12" viewBox="0 0 320 512" fill="currentColor">
+          <path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+        </svg>
+        <span class="section-title" style="margin-bottom:0">Introduktion til CSRD-rapport</span>
+      </summary>
+      <div class="csrd-intro__body">
+        <p>Sådan bruger du CSRD-rapporten: rapporten samler de miljørelaterede datapunkter (ESRS E1–E5) på tværs af din portefølje for den valgte periode.</p>
+        <ul>
+          <li><strong>Periodevælger</strong> — vælg rapporteringsperioden øverst til højre.</li>
+          <li><strong>Gruppér</strong> — træk en kolonne til gruppeområdet for at samle datapunkter pr. kategori.</li>
+          <li><strong>Hurtig søgning</strong> — filtrér rækkerne på datapunkt, enhed eller værdi.</li>
+          <li><strong>Eksport</strong> — hent rapporten til videre revision og indberetning.</li>
+        </ul>
+      </div>
+    </details>
+
+    <DataGrid
+      count={`<strong>${rows.length}</strong> datapunkter`}
+      searchPlaceholder="Hurtig søgning..."
+      endpoint="/query/csrd"
+    >
+      <Fragment slot="actions">
+        <div class="csrd-grouping">
+          <span class="csrd-grouping__hint">Gruppering:</span>
+          <span class="badge">Kategori</span>
+          <button type="button" class="btn-icon btn-icon--sm csrd-group-toggle"
+            aria-label="Skift mellem grupperet og flad visning"
+            _="on click toggle .csrd--flat on the closest .data-grid">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          </button>
+        </div>
+      </Fragment>
+
+      <table class="data-table csrd-table">
+        <thead>
+          <tr>
+            <th><input type="checkbox" aria-label="Vælg alle"
+              _="on change set checked to my checked then for c in <tbody input[type=checkbox]/> in the closest .data-grid set c.checked to checked" /></th>
+            <th>Datapunkt</th>
+            <th>Kategori</th>
+            <th>Enhed</th>
+            <th>Værdi</th>
+            <th>Periode</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g) => (
+            <Fragment>
+              <tr class="csrd-group-row">
+                <td colspan="6">
+                  <button type="button" class="csrd-group-header"
+                    _={`on click toggle .collapsed on me then toggle .group-collapsed on <tr.csrd-child[data-group='${g.kategori}']/> in the closest .data-grid`}>
+                    <svg class="csrd-chevron" width="10" height="10" viewBox="0 0 320 512" fill="currentColor">
+                      <path d="M299.3 244.7c6.2 6.2 6.2 16.4 0 22.6l-192 192c-6.2 6.2-16.4 6.2-22.6 0s-6.2-16.4 0-22.6L265.4 256 84.7 75.3c-6.2-6.2-6.2-16.4 0-22.6s16.4-6.2 22.6 0l192 192z"/>
+                    </svg>
+                    <span>{g.kategori}</span>
+                    <span class="badge">{g.items.length}</span>
+                  </button>
+                </td>
+              </tr>
+              {g.items.map((r) => (
+                <tr class="csrd-child" data-group={g.kategori}>
+                  <td><input type="checkbox" aria-label={`Vælg ${r.datapunkt}`} /></td>
+                  <td>{r.datapunkt}</td>
+                  <td><span class="muted">{r.kategori}</span></td>
+                  <td>{r.enhed}</td>
+                  <td class="csrd-value">{r.vaerdi}</td>
+                  <td>{r.periode}</td>
+                </tr>
+              ))}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+
+      <Fragment slot="pagination">
+        <span>Side 1 af 1</span>
+      </Fragment>
+    </DataGrid>
+  </div>
+
+  <style>
+    /* CSRD intro/help block */
+    .csrd-intro { padding: 0; margin-bottom: 1rem; }
+    .csrd-intro__toggle {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 18px;
+      cursor: pointer;
+      list-style: none;
+    }
+    .csrd-intro__toggle::-webkit-details-marker { display: none; }
+    .csrd-chevron { transition: transform 0.15s ease; color: var(--text-muted); }
+    .csrd-intro[open] > .csrd-intro__toggle .csrd-chevron { transform: rotate(90deg); }
+    .csrd-intro__body {
+      padding: 0 18px 16px;
+      color: var(--text-secondary);
+      font-size: var(--text-sm);
+      display: grid;
+      gap: 10px;
+    }
+    .csrd-intro__body ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+
+    /* Grouping affordance in the toolbar */
+    .csrd-grouping {
+      display: grid;
+      grid-auto-flow: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .csrd-grouping__hint { font-size: var(--text-xs); color: var(--text-muted); }
+
+    /* Group header rows */
+    .csrd-group-row td { padding: 0; background: var(--bg-elevated); }
+    .csrd-group-header {
+      display: grid;
+      grid-auto-flow: column;
+      justify-content: start;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 8px 12px;
+      background: none;
+      border: 0;
+      color: var(--text-primary);
+      font-size: var(--text-sm);
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+    }
+    .csrd-group-header .csrd-chevron { transition: transform 0.15s ease; }
+    .csrd-group-header.collapsed .csrd-chevron { transform: rotate(-90deg); }
+    .csrd-child.group-collapsed { display: none; }
+    .csrd-value { font-variant-numeric: tabular-nums; }
+
+    /* "Flat" view hides the group header rows (toolbar toggle) */
+    .data-grid.csrd--flat .csrd-group-row { display: none; }
+  </style>
+</Layout>

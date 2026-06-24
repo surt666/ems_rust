@@ -1,5 +1,6 @@
 ---
 import Layout from '../layouts/Layout.astro';
+import FilterOverlay from '../components/FilterOverlay.astro';
 ---
 <Layout title="Klimaregnskab">
 	<div class="page-container">
@@ -13,11 +14,26 @@ import Layout from '../layouts/Layout.astro';
 					<option>Markedsbaseret</option>
 				</select>
 				<div class="climate-date-range">
-					<input type="text" class="form-input" value="01-01-2024 - 31-12-2024" readonly />
+					<input type="text" class="form-input" value="01-01-2026 - 31-12-2026" readonly />
 					<button type="button" class="btn-icon btn-icon--sm">
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
 					</button>
 				</div>
+				<FilterOverlay triggerLabel="Bygningsfiltre" title="Bygningsfiltre">
+					<div class="filter-overlay__group">
+						<span class="filter-overlay__group-title">Bygningsfiltre</span>
+						<div class="form-field">
+							<label class="form-label">Bygningsanvendelse</label>
+							<select class="form-select"><option>Alle (6)</option></select>
+						</div>
+						<div class="form-field">
+							<label class="form-label">Bygninger</label>
+							<select class="form-select"><option>Alle (16)</option></select>
+						</div>
+					</div>
+					<button slot="actions" type="button" class="btn-secondary">Nulstil filtre</button>
+					<button slot="actions" type="button" class="btn-primary">Hent klimaregnskab</button>
+				</FilterOverlay>
 				<button type="button" class="btn-primary">Rapporter</button>
 			</div>
 		</div>
@@ -234,7 +250,7 @@ import Layout from '../layouts/Layout.astro';
 		<!-- Buildings emissions table -->
 		<div class="climate-table-section">
 			<div class="climate-table-header">
-				<h3 class="climate-card-title">Udledning pr. bygning</h3>
+				<h3 class="climate-card-title">Emissionsopgørelse</h3>
 				<div class="climate-table-toggles">
 					<button type="button" class="toggle-btn active" _="on click remove .active from .climate-view-btn then add .active to me">Scopes</button>
 					<button type="button" class="toggle-btn climate-view-btn" _="on click remove .active from .climate-view-btn then add .active to me">Bygninger</button>

@@ -1,0 +1,56 @@
+---
+// Results grid: toolbar (count + quick-search + actions) over a .data-table,
+// with an HTMX-ready body wrapper and a pagination footer. Pass the table
+// (thead+tbody) via the default slot; static fallback rows live inside the
+// HTMX target so the page renders standalone today. Quick-search filters rows
+// client-side via hyperscript (no JS). Header-checkbox select via Alpine.
+interface Props {
+  count?: string;            // HTML, e.g. "<strong>69</strong> målere"
+  searchPlaceholder?: string;
+  endpoint?: string;         // backend fragment URL (CloudFront-proxied)
+  live?: boolean;            // when true, HTMX loads it now; else inert+static
+  bodyId?: string;
+}
+const {
+  count = "",
+  searchPlaceholder = "Hurtig søgning...",
+  endpoint,
+  live = false,
+  bodyId = "grid-body",
+} = Astro.props;
+// Until the backend fragment exists, expose the contract inertly via
+// data-endpoint (renders the static slot). Going live = set live={true}.
+const hxAttrs = endpoint && live
+  ? { "hx-get": endpoint, "hx-trigger": "load", "hx-swap": "innerHTML", "hx-request": '{"noHeaders": true}' }
+  : endpoint
+    ? { "data-endpoint": endpoint }
+    : {};
+---
+<div class="data-grid">
+  <div class="grid-toolbar">
+    <div class="grid-count" set:html={count}></div>
+    <input
+      type="search"
+      class="grid-search"
+      placeholder={searchPlaceholder}
+      _="on input
+           set q to my value.toLowerCase()
+           for r in <tbody tr/> in the closest .data-grid
+             if r.textContent.toLowerCase() contains q
+               remove .row-hidden from r
+             else
+               add .row-hidden to r
+             end
+           end"
+    />
+    <div class="view-actions"><slot name="actions" /></div>
+  </div>
+
+  <div class="table-panel">
+    <div id={bodyId} {...hxAttrs}>
+      <slot />
+    </div>
+  </div>
+
+  <div class="grid-pagination"><slot name="pagination" /></div>
+</div>
