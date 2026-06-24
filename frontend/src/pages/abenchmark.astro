@@ -1,10 +1,217 @@
 ---
-import Layout from '../layouts/Layout.astro';
----
+// Asset benchmark — meter/asset-level benchmark (NEW). Same surface as
+// Bygningsbenchmark (03-analyse.md §3.1) but benchmarks individual meters/assets
+// against their peers instead of whole buildings. Composes the shared FilterBar
+// + FilterOverlay over a performance gauge (inline SVG arc, scoped CSS) +
+// .kpi-grid + a DataGrid of assets. Static today; the future HTMX contract is
+// carried inertly via data-endpoint="/query/benchmark/assets". No JS file —
+// toggles via hyperscript only. (Markup intentionally parallels bbenchmark.astro
+// — copied, not factored into a new shared component.)
+import Layout from "../layouts/Layout.astro";
+import FilterBar from "../components/FilterBar.astro";
+import FilterOverlay from "../components/FilterOverlay.astro";
+import DataGrid from "../components/DataGrid.astro";
 
-<Layout title="Asset Benchmark">
-	<div class="page-container">
-		<h1 class="page-title">Asset Benchmark</h1>
-		<p class="page-description">Benchmark og ydeevne af energiaktiver.</p>
-	</div>
+// Representative asset rows (replaced by the /query/benchmark/assets fragment
+// when the backend is ready). dev = deviation vs. peer assets (%).
+const assets = [
+  { asset: "Elmåler hovedtavle", building: "Administrationsbygning A", type: "EL", energy: "el", key: "18,4 kWh/m²", dev: 22.6, worse: true },
+  { asset: "District heating billing", building: "Administrationsbygning A", type: "Fjernvarme", energy: "fjernvarme", key: "94 kWh/m²", dev: -8.7, worse: false },
+  { asset: "Vandmåler kælder", building: "Bygning B", type: "Vand", energy: "vand", key: "0,42 m³/m²", dev: 14.1, worse: true },
+  { asset: "Heating main meter", building: "Kristianstad", type: "Varme", energy: "varme", key: "112 kWh/m²", dev: -4.3, worse: false },
+  { asset: "EL ventilation", building: "Kalmar", type: "EL", energy: "el", key: "9,8 kWh/m²", dev: 31.5, worse: true },
+  { asset: "Gas main meter", building: "Karlshamn 1", type: "Naturgas", energy: "gas", key: "67 kWh/m²", dev: -18.9, worse: false },
+];
+---
+<Layout title="Asset benchmark">
+  <div class="page-container">
+    <div class="view-header">
+      <div>
+        <h1 class="page-title">Asset benchmark <span class="muted">— Bolag AB Janus</span></h1>
+        <p class="page-description">Sammenligning af enkelte målere og aktiver mod tilsvarende aktiver (peers).</p>
+      </div>
+      <div class="view-actions">
+        <button type="button" class="btn-secondary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span data-i18n="common.export">Eksportér</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Inline analysis bar: period + measure; secondary filters in the overlay -->
+    <FilterBar period="01.06.2025 - 31.05.2026" measures={["Omkostning", "Energi", "CO₂e"]} measure="Omkostning" showExport={false}>
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Energiform</span>
+        <div class="toggle-group">
+          <button type="button" class="toggle-btn ab-energy-btn active"
+            _="on click remove .active from .ab-energy-btn in the closest .toggle-group then add .active to me">Samlet</button>
+          <button type="button" class="toggle-btn ab-energy-btn"
+            _="on click remove .active from .ab-energy-btn in the closest .toggle-group then add .active to me">El</button>
+          <button type="button" class="toggle-btn ab-energy-btn"
+            _="on click remove .active from .ab-energy-btn in the closest .toggle-group then add .active to me">Varme</button>
+        </div>
+      </div>
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Nøgle</span>
+        <div class="daterange">
+          <span>Opvarmet areal (m²)</span>
+        </div>
+      </div>
+      <FilterOverlay slot="actions" triggerLabel="Filtre" title="Benchmarkfiltre">
+        <div class="filter-overlay__group">
+          <span class="filter-overlay__group-title">Reference</span>
+          <div class="form-field">
+            <label class="form-label">Vælg energiform</label>
+            <select class="form-select"><option>Samlet (3)</option></select>
+          </div>
+          <div class="form-field">
+            <label class="form-label">Nøgle (areal basis)</label>
+            <select class="form-select">
+              <option>Opvarmet areal (m²)</option>
+              <option>Bruttoareal (m²)</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label class="form-label">Vælg referenceassets land</label>
+            <select class="form-select"><option>Alle lande (59)</option></select>
+          </div>
+        </div>
+        <div class="filter-overlay__group">
+          <span class="filter-overlay__group-title">Assets</span>
+          <div class="form-field">
+            <label class="form-label">Målertyper</label>
+            <select class="form-select"><option>Alle (11)</option></select>
+          </div>
+          <div class="form-field">
+            <label class="form-label">Vælg assets / målere</label>
+            <select class="form-select"><option>Alle (69)</option></select>
+          </div>
+        </div>
+      </FilterOverlay>
+    </FilterBar>
+
+    <!-- Performance summary: gauge + KPI metrics -->
+    <div class="card ab-summary">
+      <h3 class="section-title">Performance — omkostning i forhold til peers</h3>
+      <div class="ab-summary-grid">
+
+        <!-- Inline SVG arc gauge with a coloured performance band -->
+        <div class="ab-gauge">
+          <svg viewBox="0 0 200 120" class="ab-gauge-svg">
+            <!-- Track -->
+            <path d="M 20 110 A 80 80 0 0 1 180 110" fill="none" stroke="var(--border-medium)" stroke-width="16" stroke-linecap="round" />
+            <!-- Performance band: green (good) -> warning -> red (poor) -->
+            <path d="M 20 110 A 80 80 0 0 1 73 38" fill="none" stroke="var(--success)" stroke-width="16" stroke-linecap="round" />
+            <path d="M 73 38 A 80 80 0 0 1 127 38" fill="none" stroke="var(--warning)" stroke-width="16" />
+            <path d="M 127 38 A 80 80 0 0 1 180 110" fill="none" stroke="var(--danger)" stroke-width="16" stroke-linecap="round" />
+            <!-- Needle at ~63% (worse than peers) -->
+            <line x1="100" y1="110" x2="146" y2="62" stroke="var(--text-primary)" stroke-width="3" stroke-linecap="round" />
+            <circle cx="100" cy="110" r="6" fill="var(--text-primary)" />
+            <text x="100" y="86" text-anchor="middle" fill="var(--text-primary)" font-size="22" font-weight="700">+11,3 %</text>
+            <text x="100" y="103" text-anchor="middle" fill="var(--text-muted)" font-size="9">vs. peers</text>
+          </svg>
+          <div class="ab-gauge-scale">
+            <span class="ab-scale-good">Bedre</span>
+            <span class="ab-scale-avg">Gennemsnit</span>
+            <span class="ab-scale-poor">Dårligere</span>
+          </div>
+        </div>
+
+        <!-- KPI metrics -->
+        <div class="kpi-grid ab-kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-label">Afvigelse for alle assets</div>
+            <div class="kpi-value">+11,3 <span class="kpi-unit">%</span></div>
+            <div class="kpi-change negative">+318.000 kr · +61 t CO₂</div>
+          </div>
+          <div class="kpi-card heating">
+            <div class="kpi-label">Afvigelse — assets dårligere end peers</div>
+            <div class="kpi-value">+26,1 <span class="kpi-unit">%</span></div>
+            <div class="kpi-change negative">Potentielle besparelser: 498.000 kr · 88 t CO₂</div>
+          </div>
+          <div class="kpi-card electricity">
+            <div class="kpi-label">Afvigelse — assets bedre end peers</div>
+            <div class="kpi-value">-12,6 <span class="kpi-unit">%</span></div>
+            <div class="kpi-change positive">Opnåede besparelser: 174.000 kr · 31 t CO₂</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Detail grid: per-asset benchmark -->
+    <DataGrid
+      count={`<strong>${assets.length}</strong> assets`}
+      searchPlaceholder="Søg efter asset / måler…"
+      endpoint="/query/benchmark/assets"
+    >
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Asset / Måler</th>
+            <th data-i18n="common.building">Bygning</th>
+            <th>Energiform</th>
+            <th>Nøgletal</th>
+            <th>Afvigelse vs. peers</th>
+          </tr>
+        </thead>
+        <tbody>
+          {assets.map((a) => (
+            <tr>
+              <td>{a.asset}</td>
+              <td>{a.building}</td>
+              <td><span class={`badge energy-${a.energy}`}>{a.type}</span></td>
+              <td>{a.key}</td>
+              <td>
+                <span class={`ab-dev ${a.worse ? "ab-dev--worse" : "ab-dev--better"}`}>
+                  {a.worse ? "▲" : "▼"} {a.worse ? "+" : ""}{a.dev.toString().replace(".", ",")} %
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <Fragment slot="pagination">
+        <span>Side 1 af 1</span>
+      </Fragment>
+    </DataGrid>
+  </div>
+
+  <style>
+    /* Page-specific bits for Asset benchmark. Reuses .card / .kpi-grid /
+       .filter-bar / .data-table / .badge / .energy-* from global.css; only adds
+       the gauge + the deviation indicator (no global edits). CSS grid only. */
+    .ab-summary { margin: 1rem 0; }
+    .ab-summary-grid {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 24px;
+      align-items: center;
+    }
+    @media (max-width: 900px) {
+      .ab-summary-grid { grid-template-columns: 1fr; }
+    }
+
+    .ab-gauge { display: grid; gap: 6px; justify-items: center; }
+    .ab-gauge-svg { width: 100%; max-width: 240px; }
+    .ab-gauge-scale {
+      display: grid;
+      grid-template-columns: repeat(3, auto);
+      gap: 12px;
+      font-size: var(--text-xs);
+    }
+    .ab-scale-good { color: var(--success); }
+    .ab-scale-avg { color: var(--warning); }
+    .ab-scale-poor { color: var(--danger); }
+
+    .ab-kpi-grid { margin-bottom: 0; }
+
+    .ab-dev {
+      display: inline-block;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .ab-dev--worse { color: var(--danger); }
+    .ab-dev--better { color: var(--success); }
+  </style>
 </Layout>

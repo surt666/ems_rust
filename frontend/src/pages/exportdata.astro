@@ -1,10 +1,179 @@
 ---
-import Layout from '../layouts/Layout.astro';
----
+// Eksporter forbrugsdata — consumption-data export builder (NEW). Per §7.4.
+// A Filtre form (period + resolution + multi-selects + options) with a live-count
+// preview row + Eksport button, then the "Eksportfiler" results table (empty-state
+// today). Static today; data-endpoint="/query/export" carries the future HTMX
+// contract. Toggle reactivity via hyperscript (Klimakorrigér Ja/Nej); no JS.
+import Layout from "../layouts/Layout.astro";
 
-<Layout title="Eksporter Forbrugsdata">
-	<div class="page-container">
-		<h1 class="page-title">Eksporter Forbrugsdata</h1>
-		<p class="page-description">Eksportér energiforbrugsdata til eksterne systemer.</p>
-	</div>
+// Export-files list (empty for this context — exercises the empty-state).
+const exportFiles: { date: string; buildings: number; meters: number; lines: number; status: string }[] = [];
+---
+<Layout title="Eksporter forbrugsdata">
+  <div class="page-container">
+    <div class="view-header">
+      <div>
+        <h1 class="page-title">Eksporter forbrugsdata <span class="muted">— Bolag AB Janus</span></h1>
+        <p class="page-description">Byg et filtreret eksportjob og hent den genererede fil.</p>
+      </div>
+    </div>
+
+    <!-- Filtre form -->
+    <div class="card">
+      <div class="export-filterhead">
+        <h2 class="section-title">Filtre</h2>
+        <button type="button" class="btn-secondary">Nulstil filtre</button>
+      </div>
+
+      <div class="export-grid">
+        <div class="form-field">
+          <label class="form-label">Periode</label>
+          <div class="daterange">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span>01-06-2025 - 31-05-2026</span>
+          </div>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Opløsning</label>
+          <select class="form-select">
+            <option>Valgte periode</option>
+            <option>15 min</option>
+            <option>Time</option>
+            <option>Dag</option>
+            <option>Uge</option>
+            <option>Måned</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Bygninger</label>
+          <select class="form-select"><option>Alle (12)</option></select>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Bygningsanvendelse</label>
+          <select class="form-select"><option>Alle (4)</option></select>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Målertype <span class="combinator" _="on click if my textContent is 'og' set my textContent to 'eller' else set my textContent to 'og'">og</span></label>
+          <select class="form-select"><option>Alle (11)</option></select>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Vælg tags</label>
+          <select class="form-select"><option>Vælg tags (3)</option></select>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Målere</label>
+          <select class="form-select"><option>+66 målere valgt</option></select>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Tællerenhed</label>
+          <select class="form-select">
+            <option>Tællerens nuværende enhed</option>
+            <option>Energiform</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label class="form-label">&nbsp;</label>
+          <label class="check-inline"><input type="checkbox" checked /> Inkludér bimålere</label>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Klimakorrigér forbrug</label>
+          <div class="toggle-group">
+            <button type="button" class="toggle-btn climate-btn"
+              _="on click remove .active from .climate-btn in the closest .toggle-group then add .active to me">Ja</button>
+            <button type="button" class="toggle-btn climate-btn active"
+              _="on click remove .active from .climate-btn in the closest .toggle-group then add .active to me">Nej</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live preview row -->
+      <div class="export-preview" data-endpoint="/query/export">
+        <span><span class="muted">Antal bygninger</span> <strong>12</strong></span>
+        <span><span class="muted">Antal målere</span> <strong>67</strong></span>
+        <span><span class="muted">Antal datalinier</span> <strong>67</strong></span>
+        <span><span class="muted">Estimeret eksporttid:</span> <strong>få sekunder</strong></span>
+        <button type="button" class="btn-primary export-btn">Eksport</button>
+      </div>
+    </div>
+
+    <!-- Eksportfiler -->
+    <div class="card">
+      <h2 class="section-title">Eksportfiler</h2>
+      <div class="table-panel" data-endpoint="/query/export">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Dato</th>
+              <th>Antal bygninger</th>
+              <th>Antal målere</th>
+              <th>Antal datalinier</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {exportFiles.length === 0 ? (
+              <tr>
+                <td colspan="5">
+                  <div class="empty-state">Der er ingen tilgængelige eksportfiler i dit depot</div>
+                </td>
+              </tr>
+            ) : (
+              exportFiles.map((f) => (
+                <tr>
+                  <td>{f.date}</td>
+                  <td>{f.buildings}</td>
+                  <td>{f.meters}</td>
+                  <td>{f.lines}</td>
+                  <td><span class="badge">{f.status}</span></td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    /* Page-specific layout for Eksporter forbrugsdata. Reuses .card / .daterange /
+       .form-field / .toggle-group / .check-inline / .data-table / .empty-state;
+       only local refinements (no global edits). CSS grid only. */
+    .export-filterhead {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    .export-filterhead .section-title { margin-bottom: 0; }
+    .export-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem 1.25rem;
+      align-items: end;
+    }
+    .check-inline {
+      display: grid;
+      grid-auto-flow: column;
+      justify-content: start;
+      align-items: center;
+      gap: 6px;
+      font-size: var(--text-sm);
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .export-preview {
+      display: grid;
+      grid-auto-flow: column;
+      justify-content: start;
+      align-items: center;
+      gap: 1.5rem;
+      margin-top: 1.5rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--border-medium);
+      font-size: var(--text-sm);
+      color: var(--text-secondary);
+    }
+    .export-preview strong { color: var(--text-primary); }
+    .export-btn { justify-self: end; margin-left: auto; }
+  </style>
 </Layout>

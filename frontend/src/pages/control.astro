@@ -1,10 +1,101 @@
 ---
-import Layout from '../layouts/Layout.astro';
----
+// Aktiv Styring — upsell / marketing landing page (NEW). Per 07-aktiv-styring-rapportering.md §7.1.
+// Childless top-level menu item: a static promo block for the Active Control
+// product (no charts, tables, filters, or data calls). Pure server-rendered HTML
+// reusing global tokens (.card / .view-header / .btn-primary). No JS.
+import Layout from "../layouts/Layout.astro";
 
-<Layout title="Aktiv Styring">
-	<div class="page-container">
-		<h1 class="page-title">Aktiv Styring</h1>
-		<p class="page-description">Automatisk styring og optimering af energisystemer.</p>
-	</div>
+// Static benefit blurbs (mirror the EMS upsell surface). Not data-driven.
+const benefits = [
+  {
+    title: "Massive besparelser",
+    body: "Aktiv Styring optimerer drift og standby automatisk og høster besparelser, som manuel styring ikke kan indhente.",
+  },
+  {
+    title: "Automatisk optimering",
+    body: "Systemet justerer løbende efter forbrugsmønstre, vejr og priser — uden daglig indgriben fra jer.",
+  },
+  {
+    title: "Lavere CO₂-aftryk",
+    body: "Mindre spild og smartere drift sænker både energiregningen og det samlede klimaaftryk.",
+  },
+  {
+    title: "Fuldt integreret",
+    body: "Aktiv Styring bygger oven på jeres eksisterende målere og bygningshierarki — ingen ny hardware nødvendig.",
+  },
+];
+---
+<Layout title="Aktiv styring">
+  <div class="page-container">
+    <div class="view-header">
+      <div>
+        <h1 class="page-title">Aktiv Styring</h1>
+        <p class="page-description">Automatisk styring og optimering af jeres energisystemer.</p>
+      </div>
+    </div>
+
+    <!-- Hero / upsell block -->
+    <div class="card control-hero">
+      <span class="badge control-hero__tag">Produkt</span>
+      <h2 class="control-hero__headline">Opnå massive besparelser med Aktiv Styring.</h2>
+      <p class="control-hero__tagline">
+        Opnå massive besparelser med Aktiv Styring. Læs mere om dine muligheder her.
+      </p>
+      <div class="control-hero__actions">
+        <button type="button" class="btn-primary">Læs mere</button>
+        <button type="button" class="btn-secondary">Kontakt os</button>
+      </div>
+    </div>
+
+    <!-- Benefit blurbs -->
+    <div class="control-benefits">
+      {benefits.map((b) => (
+        <div class="card control-benefit">
+          <h3 class="section-title">{b.title}</h3>
+          <p class="muted">{b.body}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+
+  <style>
+    /* Page-specific layout for the Aktiv Styring upsell page. Reuses global
+       tokens + .card / .btn-primary / .badge / .muted; only local refinements
+       (no global edits). CSS grid only. */
+    .control-hero {
+      display: grid;
+      justify-items: start;
+      gap: 14px;
+      padding: 2.5rem;
+      background:
+        radial-gradient(120% 140% at 0% 0%, var(--accent-bg) 0%, transparent 55%),
+        var(--bg-panel);
+    }
+    .control-hero__tag { margin-left: 0; }
+    .control-hero__headline {
+      font-size: 1.75rem;
+      line-height: 1.2;
+      color: var(--text-primary);
+      max-width: 36ch;
+    }
+    .control-hero__tagline {
+      font-size: var(--text-lg);
+      color: var(--text-secondary);
+      max-width: 60ch;
+    }
+    .control-hero__actions {
+      display: grid;
+      grid-auto-flow: column;
+      gap: 10px;
+      margin-top: 6px;
+    }
+
+    .control-benefits {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1.25rem;
+    }
+    .control-benefit { margin-bottom: 0; }
+    .control-benefit .section-title { margin-bottom: 8px; }
+  </style>
 </Layout>

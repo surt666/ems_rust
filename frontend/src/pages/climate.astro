@@ -1,6 +1,15 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import FilterOverlay from '../components/FilterOverlay.astro';
+import EChartsChartWrapper from '../components/EChartsChartWrapper.tsx';
+
+// Per-category emissions, split by scope — vertical stacked columns.
+const emissionCategories = ['El', 'Fjernvarme', 'Naturgas', 'Vand', 'Transport'];
+const emissionScopes = [
+  { name: 'Scope 1', data: [0, 0, 125, 0, 0], color: '#f97316', type: 'bar' as const },
+  { name: 'Scope 2', data: [312, 435, 0, 0, 0], color: '#2dd4bf', type: 'bar' as const },
+  { name: 'Scope 3', data: [23, 155, 68, 45, 84], color: '#38bdf8', type: 'bar' as const },
+];
 ---
 <Layout title="Klimaregnskab">
 	<div class="page-container">
@@ -79,59 +88,15 @@ import FilterOverlay from '../components/FilterOverlay.astro';
 				</div>
 			</div>
 
-			<!-- Bar chart: Emissions by type -->
+			<!-- Bar chart: Emissions by type — vertical stacked columns (Scope 1/2/3;
+			     toggle scopes via the chart legend) -->
 			<div class="card climate-bar-card">
 				<div class="climate-bar-header">
 					<h3 class="climate-card-title">Udledning pr. forbrugstype</h3>
-					<div class="climate-scope-toggles">
-						<button type="button" class="climate-scope-btn active" style="--scope-color: #f97316;"
-							_="on click toggle .active on me then if I match .active remove .view-hidden from .bar-scope1 else add .view-hidden to .bar-scope1">Scope 1</button>
-						<button type="button" class="climate-scope-btn active" style="--scope-color: #2dd4bf;"
-							_="on click toggle .active on me then if I match .active remove .view-hidden from .bar-scope2 else add .view-hidden to .bar-scope2">Scope 2</button>
-						<button type="button" class="climate-scope-btn active" style="--scope-color: #38bdf8;"
-							_="on click toggle .active on me then if I match .active remove .view-hidden from .bar-scope3 else add .view-hidden to .bar-scope3">Scope 3</button>
-					</div>
 				</div>
 				<div class="climate-bar-chart">
-					<!-- Stacked bars -->
-					<div class="climate-bar-group">
-						<div class="climate-bar-label">El</div>
-						<div class="climate-bar-stack">
-							<div class="climate-bar bar-scope2" style="width: 42%; background: #2dd4bf;" title="Scope 2: 312 t CO₂e"></div>
-							<div class="climate-bar bar-scope3" style="width: 8%; background: #38bdf8;" title="Scope 3: 23 t CO₂e"></div>
-						</div>
-						<span class="climate-bar-value">335 t CO₂e</span>
-					</div>
-					<div class="climate-bar-group">
-						<div class="climate-bar-label">Fjernvarme</div>
-						<div class="climate-bar-stack">
-							<div class="climate-bar bar-scope2" style="width: 48%; background: #2dd4bf;" title="Scope 2: 435 t CO₂e"></div>
-							<div class="climate-bar bar-scope3" style="width: 12%; background: #38bdf8;" title="Scope 3: 155 t CO₂e"></div>
-						</div>
-						<span class="climate-bar-value">590 t CO₂e</span>
-					</div>
-					<div class="climate-bar-group">
-						<div class="climate-bar-label">Naturgas</div>
-						<div class="climate-bar-stack">
-							<div class="climate-bar bar-scope1" style="width: 18%; background: #f97316;" title="Scope 1: 125 t CO₂e"></div>
-							<div class="climate-bar bar-scope3" style="width: 8%; background: #38bdf8;" title="Scope 3: 68 t CO₂e"></div>
-						</div>
-						<span class="climate-bar-value">193 t CO₂e</span>
-					</div>
-					<div class="climate-bar-group">
-						<div class="climate-bar-label">Vand</div>
-						<div class="climate-bar-stack">
-							<div class="climate-bar bar-scope3" style="width: 6%; background: #38bdf8;" title="Scope 3: 45 t CO₂e"></div>
-						</div>
-						<span class="climate-bar-value">45 t CO₂e</span>
-					</div>
-					<div class="climate-bar-group">
-						<div class="climate-bar-label">Transport</div>
-						<div class="climate-bar-stack">
-							<div class="climate-bar bar-scope3" style="width: 10%; background: #38bdf8;" title="Scope 3: 84 t CO₂e"></div>
-						</div>
-						<span class="climate-bar-value">84 t CO₂e</span>
-					</div>
+					<EChartsChartWrapper client:only="react" height={300} stacked={true} zoom={false}
+						unit="t CO₂e" categories={emissionCategories} series={emissionScopes} />
 				</div>
 			</div>
 		</div>

@@ -1,10 +1,114 @@
 ---
-import Layout from '../layouts/Layout.astro';
----
+// Bygningsrapporten — per-building report subscriptions (NEW). Per §7.3.
+// A Filtre row (Brugere / Bygninger) + Alle/Frameldt/Tilmeldt tabs (toggle-group,
+// hyperscript) over the "Abonnementer" DataGrid grouped by building. Static today;
+// DataGrid carries the future endpoint contract (data-endpoint="/query/reports/buildings").
+import Layout from "../layouts/Layout.astro";
+import DataGrid from "../components/DataGrid.astro";
 
+// Representative subscription rows grouped by building (replaced by the
+// /query/reports/buildings fragment when the backend is ready).
+const subscriptions = [
+  { building: "Administrationsbygning A", subscriber: "Administrator", grouping: "Alle bygninger", contact: "Anna Lund", profile: "Firmaansvarlig", schedule: "Man. kl. 07:00", cost: "2.587.200 kr", subscribed: true },
+  { building: "Administrationsbygning A", subscriber: "0 ud af 1 Abonnenter", grouping: "Hovedmålere", contact: "—", profile: "Firmaansvarlig", schedule: "Man. kl. 07:00", cost: "Intet forbrug", subscribed: false },
+  { building: "Bygning B", subscriber: "Administrator", grouping: "Alle bygninger", contact: "Anna Lund", profile: "Firmaansvarlig", schedule: "Man. kl. 07:00", cost: "1.142.880 kr", subscribed: true },
+  { building: "Kalmar", subscriber: "Administrator", grouping: "Alle bygninger", contact: "Anna Lund", profile: "Firmaansvarlig", schedule: "Man. kl. 07:00", cost: "984.500 kr", subscribed: true },
+  { building: "Kristianstad", subscriber: "0 ud af 1 Abonnenter", grouping: "Alle bygninger", contact: "—", profile: "Firmaansvarlig", schedule: "Man. kl. 07:00", cost: "Intet forbrug", subscribed: false },
+  { building: "Sölvesborg", subscriber: "Administrator", grouping: "Alle bygninger", contact: "Anna Lund", profile: "Firmaansvarlig", schedule: "Man. kl. 07:00", cost: "651.300 kr", subscribed: true },
+];
+---
 <Layout title="Bygningsrapporten">
-	<div class="page-container">
-		<h1 class="page-title">Bygningsrapporten</h1>
-		<p class="page-description">Standardrapporter for bygningseffektivitet.</p>
-	</div>
+  <div class="page-container">
+    <div class="view-header">
+      <div>
+        <h1 class="page-title">Bygningsrapporten <span class="muted">— Bolag AB Janus</span></h1>
+        <p class="page-description">Per-bygning rapportabonnementer — hvem modtager den planlagte rapport.</p>
+      </div>
+    </div>
+
+    <!-- Filtre row -->
+    <div class="filter-bar">
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Brugere</span>
+        <select class="form-select"><option>Administrator</option></select>
+      </div>
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">Bygninger</span>
+        <select class="form-select"><option>+8 bygninger valgt</option></select>
+      </div>
+      <div class="filter-bar__group">
+        <span class="filter-bar__label">&nbsp;</span>
+        <button type="button" class="btn-secondary">Nulstil filtre</button>
+      </div>
+    </div>
+
+    <!-- Subscription filter tabs -->
+    <div class="toggle-group buildingreport-tabs">
+      <button type="button" class="toggle-btn sub-tab active"
+        _="on click remove .active from .sub-tab in the closest .toggle-group then add .active to me">Alle</button>
+      <button type="button" class="toggle-btn sub-tab"
+        _="on click remove .active from .sub-tab in the closest .toggle-group then add .active to me">Frameldt</button>
+      <button type="button" class="toggle-btn sub-tab"
+        _="on click remove .active from .sub-tab in the closest .toggle-group then add .active to me">Tilmeldt</button>
+    </div>
+
+    <DataGrid
+      count={`<strong>${subscriptions.length}</strong> abonnementer`}
+      searchPlaceholder="Søg efter abonnent, bygning…"
+      endpoint="/query/reports/buildings"
+    >
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Abonnent</th>
+            <th>Gruppering</th>
+            <th>Kontaktperson</th>
+            <th>Brugerprofil</th>
+            <th>Afsendes</th>
+            <th>Årlig omk. (FA)</th>
+            <th>Tilmeldt</th>
+          </tr>
+        </thead>
+        <tbody>
+          {subscriptions.map((s) => (
+            <tr>
+              <td>
+                <span class="buildingreport-building muted">{s.building}</span>
+                {s.subscriber}
+              </td>
+              <td>{s.grouping}</td>
+              <td>{s.contact === "—" ? <span class="muted">—</span> : s.contact}</td>
+              <td>{s.profile}</td>
+              <td>{s.schedule}</td>
+              <td>{s.cost === "Intet forbrug" ? <span class="muted">Intet forbrug</span> : s.cost}</td>
+              <td>
+                {s.subscribed
+                  ? <span class="badge buildingreport-yes">Tilmeldt</span>
+                  : <span class="badge">Frameldt</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <Fragment slot="pagination">
+        <span>Side 1 af 1</span>
+      </Fragment>
+    </DataGrid>
+  </div>
+
+  <style>
+    /* Page-specific bits for Bygningsrapporten. Reuses .filter-bar /
+       .toggle-group / .data-table / .badge; only local refinements. */
+    .buildingreport-tabs { margin-bottom: 1rem; }
+    .buildingreport-building {
+      display: block;
+      font-size: var(--text-xs);
+      margin-bottom: 2px;
+    }
+    .buildingreport-yes {
+      background: var(--accent-bg);
+      color: var(--accent);
+    }
+  </style>
 </Layout>

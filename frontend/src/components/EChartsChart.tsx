@@ -20,6 +20,7 @@ interface Props {
   unit?: string;
   height?: number;
   stacked?: boolean;
+  zoom?: boolean;
 }
 
 // palette aligned to the app's energy/accent tokens
@@ -42,7 +43,7 @@ function mockYear(): { categories: string[]; series: EChartsSeries[] } {
   };
 }
 
-export default function EChartsChart({ categories, series, unit = "kWh", height = 320, stacked = false }: Props) {
+export default function EChartsChart({ categories, series, unit = "kWh", height = 320, stacked = false, zoom = true }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
 
@@ -58,7 +59,7 @@ export default function EChartsChart({ categories, series, unit = "kWh", height 
     chart.setOption({
       backgroundColor: "transparent",
       textStyle: { color: TEXT, fontSize: 11 },
-      grid: { left: 56, right: 18, top: 28, bottom: 64 },
+      grid: { left: 56, right: 18, top: 28, bottom: zoom ? 64 : 36 },
       tooltip: { trigger: "axis", backgroundColor: "#141d30", borderColor: GRID, textStyle: { color: TEXT } },
       legend: { data: ser.map((s) => s.name), textStyle: { color: MUTED }, top: 0, right: 0 },
       xAxis: {
@@ -74,11 +75,13 @@ export default function EChartsChart({ categories, series, unit = "kWh", height 
         splitLine: { lineStyle: { color: GRID } },
         axisLabel: { color: MUTED },
       },
-      // zoomable: drag-select / scroll inside + a slider handle
-      dataZoom: [
-        { type: "inside", throttle: 50 },
-        { type: "slider", height: 18, bottom: 16, borderColor: GRID, textStyle: { color: MUTED } },
-      ],
+      // zoomable: drag-select / scroll inside + a slider handle (skip for small category charts)
+      dataZoom: zoom
+        ? [
+            { type: "inside", throttle: 50 },
+            { type: "slider", height: 18, bottom: 16, borderColor: GRID, textStyle: { color: MUTED } },
+          ]
+        : [],
       series: ser.map((s, i) => ({
         name: s.name,
         type: s.type ?? "line",
@@ -99,7 +102,7 @@ export default function EChartsChart({ categories, series, unit = "kWh", height 
       chart.dispose();
       chartRef.current = null;
     };
-  }, [categories, series, unit, stacked]);
+  }, [categories, series, unit, stacked, zoom]);
 
   return <div ref={ref} style={{ width: "100%", height: `${height}px` }} />;
 }

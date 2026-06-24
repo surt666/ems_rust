@@ -116,13 +116,12 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
       </li>
       <li class="relative">
         <Dropdown class="group">
-          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/userlist', '/areas']) ? 'active' : ''}`} data-i18n="nav.setup">
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/userlist']) ? 'active' : ''}`} data-i18n="nav.setup">
             Opsætning
           </button>
           <DropdownItems class="dropdown-items hidden group-open:block">
             <ul class="dropdown-menu">
               <li><a href="/userlist" class={`nav-link ${currentPath === '/userlist' ? 'active' : ''}`} data-i18n="nav.user_list">Brugerliste</a></li>
-              <li><a href="/areas" class={`nav-link ${currentPath === '/areas' ? 'active' : ''}`} data-i18n="nav.areas">Områder</a></li>
             </ul>
           </DropdownItems>
         </Dropdown>
@@ -222,7 +221,7 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
       'Målere': ['/meters', '/gateways'],
       'Klimaregnskab': ['/climate', '/csrd', '/emissionfactors'],
       'Rapportering': ['/customreports', '/buildingreport', '/exportdata'],
-      'Opsætning': ['/userlist', '/areas']
+      'Opsætning': ['/userlist']
     };
 
     Object.values(parentMenuPaths).forEach(paths => {

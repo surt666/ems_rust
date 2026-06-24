@@ -1,10 +1,110 @@
 ---
-import Layout from '../layouts/Layout.astro';
----
+// Brugertilpassede rapporter — custom report registry (NEW). Per §7.2.
+// Two server-rendered report lists ("jeg har oprettet" / "andre har oprettet")
+// + "Opret ny rapport" flow. One section carries representative rows, the other
+// shows the empty-state — to exercise both states. Static today;
+// data-endpoint="/query/reports/custom" carries the future HTMX contract. No JS.
+import Layout from "../layouts/Layout.astro";
 
-<Layout title="Brugertilpassede Rapporter">
-	<div class="page-container">
-		<h1 class="page-title">Brugertilpassede Rapporter</h1>
-		<p class="page-description">Opret og administrér tilpassede energirapporter.</p>
-	</div>
+// Representative rows for "Rapporter jeg har oprettet" (replaced by the
+// /query/reports/custom fragment when the backend is ready).
+const myReports = [
+  { name: "Månedlig forbrugsrapport", type: "Forbrug", created: "12-03-2026" },
+  { name: "Standby pr. bygning (Q1)", type: "Standby", created: "28-02-2026" },
+];
+const otherReports: { name: string; type: string; created: string }[] = [];
+---
+<Layout title="Brugertilpassede rapporter">
+  <div class="page-container">
+    <div class="view-header">
+      <div>
+        <h1 class="page-title">Brugertilpassede rapporter <span class="muted">— Bolag AB Janus</span></h1>
+        <p class="page-description">Opret og administrér tilpassede energirapporter.</p>
+      </div>
+      <div class="view-actions">
+        <button type="button" class="btn-primary">+ Opret ny rapport</button>
+      </div>
+    </div>
+
+    <div class="reports-sections" data-endpoint="/query/reports/custom">
+
+      <!-- Rapporter jeg har oprettet (populated) -->
+      <div class="card">
+        <h2 class="section-title">Rapporter jeg har oprettet</h2>
+        {myReports.length === 0 ? (
+          <div class="empty-state">Der blev ikke fundet nogle rapporter</div>
+        ) : (
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Navn</th>
+                <th>Type</th>
+                <th>Oprettet</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {myReports.map((r) => (
+                <tr>
+                  <td>{r.name}</td>
+                  <td><span class="badge">{r.type}</span></td>
+                  <td>{r.created}</td>
+                  <td class="reports-rowactions">
+                    <button type="button" class="btn-icon btn-icon--sm" aria-label="Rediger">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button type="button" class="btn-icon btn-icon--sm" aria-label="Slet">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <!-- Rapporter andre har oprettet (empty) -->
+      <div class="card">
+        <h2 class="section-title">Rapporter andre har oprettet</h2>
+        {otherReports.length === 0 ? (
+          <div class="empty-state">Der blev ikke fundet nogle rapporter</div>
+        ) : (
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Navn</th>
+                <th>Type</th>
+                <th>Oprettet</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {otherReports.map((r) => (
+                <tr>
+                  <td>{r.name}</td>
+                  <td><span class="badge">{r.type}</span></td>
+                  <td>{r.created}</td>
+                  <td></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+    </div>
+  </div>
+
+  <style>
+    /* Page-specific layout for Brugertilpassede rapporter. Reuses .card /
+       .data-table / .empty-state / .btn-icon; only local refinements. */
+    .reports-sections { display: grid; gap: 0; }
+    .reports-rowactions {
+      display: grid;
+      grid-auto-flow: column;
+      justify-content: end;
+      gap: 6px;
+    }
+  </style>
 </Layout>

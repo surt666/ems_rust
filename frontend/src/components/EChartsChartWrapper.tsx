@@ -10,6 +10,7 @@ interface Props {
   unit?: string;
   height?: number;
   stacked?: boolean;
+  zoom?: boolean;
   eventName?: string;
 }
 
@@ -29,5 +30,5 @@ export default function EChartsChartWrapper(props: Props) {
     return () => window.removeEventListener(props.eventName!, handler);
   }, [props.eventName]);
 
-  return <EChartsChart categories={categories} series={series} unit={unit} height={props.height} stacked={props.stacked} />;
+  return <EChartsChart categories={categories} series={series} unit={unit} height={props.height} stacked={props.stacked} zoom={props.zoom} />;
 }
