@@ -97,8 +97,13 @@ export default function EChartsChart({ categories, series, unit = "kWh", height 
 
     const onResize = () => chart.resize();
     window.addEventListener("resize", onResize);
+    // Resize when the container itself changes size — e.g. when a hidden tab
+    // panel (x-show / display:none) becomes visible. Avoids 0-width charts.
+    const ro = new ResizeObserver(() => chart.resize());
+    ro.observe(ref.current);
     return () => {
       window.removeEventListener("resize", onResize);
+      ro.disconnect();
       chart.dispose();
       chartRef.current = null;
     };

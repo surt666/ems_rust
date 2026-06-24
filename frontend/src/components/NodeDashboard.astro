@@ -1,0 +1,77 @@
+---
+// Per-hierarchy-node dashboard (consumption overview). Rendered inside the node
+// view's "Dashboard" tab. Static/representative today; the result region carries
+// the future HTMX contract (data-endpoint="/query/node/dashboard?id=…"). When
+// backend-integrated this becomes the node view's default tab. Eventually the
+// dashboard shown will vary by hierarchy level, driven by the company schema
+// definition — see docs/superpowers/specs/2026-06-24-node-dashboard-schema-driven.md.
+import EChartsChartWrapper from "./EChartsChartWrapper.tsx";
+
+const months = ["Jan", "Feb", "Mar", "Apr", "Maj", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dec"];
+const cur = (a: number) => months.map((_, i) => Math.round(a - a * 0.7 * Math.cos((i / 11) * Math.PI * 2) + i));
+const prev = (a: number) => months.map((_, i) => Math.round(a * 0.95 - a * 0.66 * Math.cos((i / 11) * Math.PI * 2) + i));
+const energyCards = [
+  { name: "Varme", energy: "varme", color: "#f97316", unit: "MWh", total: "1.949 MWh", cur: cur(180), prev: prev(180) },
+  { name: "Vand", energy: "vand", color: "#38bdf8", unit: "m³", total: "522 m³", cur: cur(48), prev: prev(48) },
+  { name: "EL", energy: "el", color: "#facc15", unit: "MWh", total: "5.917 MWh", cur: cur(520), prev: prev(520) },
+];
+---
+<div class="node-dashboard" data-endpoint="/query/node/dashboard">
+  <!-- KPI row -->
+  <div class="kpi-grid">
+    <div class="kpi-card heating">
+      <div class="kpi-label">Samlet omkostning (i år)</div>
+      <div class="kpi-value">5.147.411 <span class="kpi-unit">kr.</span></div>
+      <div class="kpi-change negative">+4,2 % vs. sidste år</div>
+    </div>
+    <div class="kpi-card electricity">
+      <div class="kpi-label">Samlet forbrug</div>
+      <div class="kpi-value">8.388 <span class="kpi-unit">MWh</span></div>
+      <div class="kpi-change positive">−2,1 % vs. budget</div>
+    </div>
+    <div class="kpi-card water">
+      <div class="kpi-label">CO₂e</div>
+      <div class="kpi-value">978,7 <span class="kpi-unit">t CO₂e</span></div>
+      <div class="kpi-change positive">−8,0 t vs. sidste år</div>
+    </div>
+  </div>
+
+  <!-- Forbrugsoverblik: one chart card per energy type -->
+  <h3 class="section-title" style="margin-top:1rem">Forbrugsoverblik</h3>
+  <div class="node-dashboard__charts">
+    {energyCards.map((c) => (
+      <div class="chart-card">
+        <div class="chart-card__head">
+          <span class="chart-card__title">{c.name} <span class={`badge energy-${c.energy}`}>{c.name}</span></span>
+          <span class="chart-kpi__val">{c.total}</span>
+        </div>
+        <div class="chart-card__body">
+          <EChartsChartWrapper client:only="react" height={240} unit={c.unit} categories={months}
+            series={[
+              { name: "I år", data: c.cur, color: c.color, type: "bar" },
+              { name: "Sidste år", data: c.prev, color: "#8b97b0", type: "line" },
+            ]} />
+        </div>
+      </div>
+    ))}
+  </div>
+
+  <!-- Alarms summary -->
+  <div class="card node-dashboard__alarms">
+    <div class="section-header">
+      <svg width="16" height="16" viewBox="0 0 512 512"><path fill="currentColor" d="M256 32c14.2 0 27.3 7.5 34.5 19.8l216 368c7.3 12.4 7.3 27.7 .2 40.1S486.3 480 472 480H40c-14.3 0-27.6-7.7-34.7-20.1s-7-27.8 .2-40.1l216-368C228.7 39.5 241.8 32 256 32zm0 128c-13.3 0-24 10.7-24 24V296c0 13.3 10.7 24 24 24s24-10.7 24-24V184c0-13.3-10.7-24-24-24zm32 224a32 32 0 1 0 -64 0 32 32 0 1 0 64 0z"/></svg>
+      <h2 class="section-title" style="margin-bottom:0">Alarmer</h2>
+      <a href="/alarms" class="btn-secondary" style="margin-left:auto">Gå til alarmoversigt</a>
+    </div>
+    <p class="muted">0 ukvitterede alarmer for denne node.</p>
+  </div>
+</div>
+
+<style>
+  .node-dashboard__charts {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 1rem;
+  }
+  .node-dashboard__alarms { margin-top: 1rem; }
+</style>

@@ -5,16 +5,26 @@
 // Spike: Data tab loads the existing render_node fragment; the other tabs are
 // inline HTML stubs (later each gets its own backend HTML-fragment endpoint).
 import Layout from "../layouts/Layout.astro";
+import NodeDashboard from "../components/NodeDashboard.astro";
 ---
 
 <Layout title="Node">
+  <!-- TODO: once the node dashboard is backend-integrated, make 'dashboard' the
+       default tab (x-data="{ tab: 'dashboard' }"). Kept on 'data' for now. -->
   <div class="page-container" x-data="{ tab: 'data' }">
     <!-- Tab bar (pure HTML; adding a tab is pure HTML) -->
     <div class="tab-bar">
+      <button class="tab-btn" :class="tab === 'dashboard' ? 'active' : ''" @click="tab = 'dashboard'">Dashboard</button>
       <button class="tab-btn" :class="tab === 'data' ? 'active' : ''" @click="tab = 'data'">Data</button>
       <button class="tab-btn" :class="tab === 'prices' ? 'active' : ''" @click="tab = 'prices'">Energipriser</button>
-      <button class="tab-btn" :class="tab === 'co2' ? 'active' : ''" @click="tab = 'co2'">CO2e faktorer</button>
+      <button class="tab-btn" :class="tab === 'readings' ? 'active' : ''" @click="tab = 'readings'">Manuel aflæsning</button>
       <button class="tab-btn" :class="tab === 'license' ? 'active' : ''" @click="tab = 'license'">Licens</button>
+    </div>
+
+    <!-- Dashboard panel: per-node consumption overview. Static today; the
+         component carries the future HTMX contract. Will become the default. -->
+    <div x-show="tab === 'dashboard'" x-cloak>
+      <NodeDashboard />
     </div>
 
     <!-- Data panel: the server-rendered node detail (render_node), loaded on
@@ -29,20 +39,70 @@ import Layout from "../layouts/Layout.astro";
       <p style="color: var(--text-muted); padding: 1.5rem;">Indlæser node…</p>
     </div>
 
-    <!-- Stub panels (inline HTML for now; later: hx-get a backend HTML fragment per tab) -->
-    <div x-show="tab === 'prices'" id="node-energy-panel" style="display:none">
-      <div style="padding: 1.5rem;">
-        <h2 class="section-title">Energipriser</h2>
-        <p style="color: var(--text-muted);">Ingen data for denne node endnu.</p>
+    <!-- Energipriser: price configuration per energy form. Static today;
+         data-endpoint carries the future HTMX contract. -->
+    <div x-show="tab === 'prices'" x-cloak id="node-energy-panel">
+      <div class="table-panel" data-endpoint="/query/node/energy-prices">
+        <div class="view-header">
+          <h2 class="section-title" style="margin-bottom:0">Energipriser</h2>
+          <button type="button" class="btn-secondary">+ Tilføj pris</button>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr><th>Energiform</th><th>Pristype</th><th>Pris</th><th>Enhed</th><th>Gyldig fra</th><th>Gyldig til</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="badge energy-el">EL</span></td><td>Spotpris + tillæg</td><td>2,15</td><td>kr/kWh</td><td>01.01.2026</td><td class="muted">—</td></tr>
+            <tr><td><span class="badge energy-varme">Varme</span></td><td>Fast</td><td>0,78</td><td>kr/kWh</td><td>01.01.2026</td><td>31.12.2026</td></tr>
+            <tr><td><span class="badge energy-vand">Vand</span></td><td>Fast</td><td>62,50</td><td>kr/m³</td><td>01.01.2026</td><td class="muted">—</td></tr>
+            <tr><td><span class="badge energy-fjernvarme">Fjernvarme</span></td><td>Variabel</td><td>0,64</td><td>kr/kWh</td><td>01.01.2026</td><td class="muted">—</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
-    <div x-show="tab === 'co2'" id="node-co2-panel" style="display:none">
-      <div style="padding: 1.5rem;">
-        <h2 class="section-title">CO2e faktorer</h2>
-        <p style="color: var(--text-muted);">Ingen data for denne node endnu.</p>
+
+    <!-- (CO2e faktorer removed from the node view — it now lives under Klimaregnskab.) -->
+
+    <!-- Manuel aflæsning: manual meter readings (latest stand + entry). The new
+         reading inputs are read-only here (no submit). -->
+    <div x-show="tab === 'readings'" x-cloak id="node-readings-panel">
+      <div class="table-panel" data-endpoint="/query/node/manual-readings">
+        <div class="view-header">
+          <h2 class="section-title" style="margin-bottom:0">Manuel aflæsning</h2>
+          <span class="muted">Indtast nye aflæsninger for manuelt aflæste målere</span>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr><th>Måler</th><th>Energiform</th><th>Seneste stand</th><th>Aflæst dato</th><th>Enhed</th><th>Ny aflæsning</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Elmåler hovedtavle <span class="muted">(EL120014)</span></td>
+              <td><span class="badge energy-el">EL</span></td>
+              <td>184.302</td><td>30.11.2025</td><td>kWh</td>
+              <td><input type="text" class="form-input" placeholder="ny stand" inputmode="decimal" style="max-width:140px" /></td>
+            </tr>
+            <tr>
+              <td>Vandmåler kælder <span class="muted">(VA771203)</span></td>
+              <td><span class="badge energy-vand">Vand</span></td>
+              <td>12.842</td><td>30.11.2025</td><td>m³</td>
+              <td><input type="text" class="form-input" placeholder="ny stand" inputmode="decimal" style="max-width:140px" /></td>
+            </tr>
+            <tr>
+              <td>Varmemåler stue <span class="muted">(HO593448)</span></td>
+              <td><span class="badge energy-varme">Varme</span></td>
+              <td>98.115</td><td>30.11.2025</td><td>kWh</td>
+              <td><input type="text" class="form-input" placeholder="ny stand" inputmode="decimal" style="max-width:140px" /></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="view-actions" style="justify-content:end; margin-top:12px">
+          <button type="button" class="btn-primary">Gem aflæsninger</button>
+        </div>
       </div>
     </div>
-    <div x-show="tab === 'license'" id="node-license-panel" style="display:none">
+
+    <div x-show="tab === 'license'" x-cloak id="node-license-panel">
       <div style="padding: 1.5rem;">
         <h2 class="section-title">Licens</h2>
         <p style="color: var(--text-muted);">Ingen data for denne node endnu.</p>
