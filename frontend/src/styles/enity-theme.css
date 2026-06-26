@@ -76,6 +76,48 @@ body { background: var(--bg-dark); color: var(--text-primary); }
 /* Hierarchy toggle arrows stay readable on dark */
 .tree-toggle-area { color: #7c8a99; }
 
+/* ——— Partner / company selectors (top two hierarchy levels) ——— */
+/* Sidebar becomes a 3-row grid: label, selectors, then the scrolling tree
+   (CSS grid only — no flexbox). minmax(0,1fr) lets the tree track shrink so it
+   scrolls instead of pushing the aside. */
+.sidebar {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+}
+.sidebar-label   { align-self: start; }
+.hier-selectors {
+  display: grid;
+  gap: 8px;
+  padding: 4px 4px 12px;
+}
+.hier-tree {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.hier-select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: #1f2c3b;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%237c8a99' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  border: 1px solid #2b3a4a;
+  border-radius: 8px;
+  padding: 11px 34px 11px 14px;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.hier-select:hover { border-color: #3a4d61; }
+.hier-select:focus { outline: none; border-color: var(--accent); }
+.hier-select option { background: #1f2c3b; color: #c5ced8; font-weight: 400; }
+
 /* ——— Top-nav links sit on dark chrome ——— */
 .nav-link        { color: #7c8a99; }
 .nav-link:hover  { color: #c5ced8; }

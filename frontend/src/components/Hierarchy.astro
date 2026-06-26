@@ -1,8 +1,76 @@
 ---
+// Sidebar hierarchy. The top two levels (partner = HN1, company = HN2) are lifted
+// out of the fold-tree into two <select>s; the fold-tree then starts at the
+// selected company's children and folds exactly as before.
+//
+// No new backend endpoints: the existing `/hierarchy/query/nodes` already returns
+//   - partners (HN1) at the root level (no id), and
+//   - a node's children for `?id=<nodeId>` (companies for a partner, the tree for a company).
+// Two hidden loaders fetch those `<li data-id>` fragments; hyperscript reshapes
+// them into <option>s (HTML-over-the-wire, no JS). Node selection + the
+// loadChildren fold path are untouched.
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 ---
 <div id="container" class="sidebar-label">Hierarki</div>
-<div _="on click
+
+<!-- Top two levels, lifted out of the tree -->
+<div class="hier-selectors">
+  <select id="partner-select" class="hier-select" aria-label="Partner"
+    _="on change
+         set sessionStorage.selectedPartnerId to my value
+         call sessionStorage.removeItem('selectedCompanyId')
+         send loadCompanies to #companies-src">
+  </select>
+  <select id="company-select" class="hier-select" aria-label="Virksomhed"
+    _="on change
+         set sessionStorage.selectedCompanyId to my value
+         send loadTree to #hier-tree-list">
+  </select>
+</div>
+
+<!-- Hidden loaders: fetch /nodes <li> fragments, reshape into <option>s.
+     partners-src = root level (HN1); companies-src = the chosen partner's children (HN2). -->
+<div id="partners-src" style="display:none"
+     hx-get={`${API_BASE_URL}/hierarchy/query/nodes`}
+     hx-vals="js:{user: localStorage.getItem('loginId')}"
+     hx-request='{"noHeaders": true}'
+     hx-trigger="load delay:100ms once"
+     _="on htmx:afterSwap
+          set sel to #partner-select
+          set sel.innerHTML to ''
+          for li in <li[data-id]/> in me
+            make an <option/> called opt
+            set opt.value to li's @data-id
+            set opt.textContent to the textContent of (first .node-name-link in li)
+            put opt at the end of sel
+          end
+          set saved to sessionStorage.getItem('selectedPartnerId')
+          if saved then set sel.value to saved end
+          send loadCompanies to #companies-src">
+</div>
+<div id="companies-src" style="display:none"
+     hx-get={`${API_BASE_URL}/hierarchy/query/nodes`}
+     hx-vals="js:{user: localStorage.getItem('loginId'), id: document.getElementById('partner-select').value}"
+     hx-request='{"noHeaders": true}'
+     hx-trigger="loadCompanies"
+     _="on htmx:afterSwap
+          set sel to #company-select
+          set sel.innerHTML to ''
+          for li in <li[data-id]/> in me
+            make an <option/> called opt
+            set opt.value to li's @data-id
+            set opt.textContent to the textContent of (first .node-name-link in li)
+            put opt at the end of sel
+          end
+          set saved to sessionStorage.getItem('selectedCompanyId')
+          if saved then set sel.value to saved end
+          set sessionStorage.selectedCompanyId to sel.value
+          send loadTree to #hier-tree-list">
+</div>
+
+<!-- The existing fold-tree, now rooted at the selected company's children. -->
+<div class="hier-tree"
+     _="on click
           set w to closest .icon-wrapper to event.target
           if w is null then exit end
           set row to closest <li/> to w
@@ -18,14 +86,13 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
               set the @style of list to 'display:none;'
             end
           end">
-    <ul class="nested-list">
-        <li hx-get={`${API_BASE_URL}/hierarchy/query/nodes`}
-            hx-vals="js:{user: localStorage.getItem('loginId')}"
-            hx-request='{"noHeaders": true}'
-            hx-target=".nested-list"
-            hx-trigger="load delay:100ms once"
-            style="cursor: pointer;">
-        <ul class="nested-list"></ul>
-        </li>
-    </ul>
+  <ul id="hier-tree-list" class="nested-list"
+      hx-get={`${API_BASE_URL}/hierarchy/query/nodes`}
+      hx-vals="js:{user: localStorage.getItem('loginId'), id: (sessionStorage.getItem('selectedCompanyId') || document.getElementById('company-select').value)}"
+      hx-request='{"noHeaders": true}'
+      hx-target="#hier-tree-list"
+      hx-swap="innerHTML"
+      hx-trigger="loadTree"
+      style="cursor: pointer;">
+  </ul>
 </div>
