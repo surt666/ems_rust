@@ -23,11 +23,12 @@ interface Props {
   zoom?: boolean;
 }
 
-// palette aligned to the app's energy/accent tokens
-const PALETTE = ["#38bdf8", "#f97316", "#facc15", "#a855f7", "#22c55e", "#ef4444"];
-const TEXT = "#c9d3e3";
-const MUTED = "#8b97b0";
-const GRID = "#1f2a42";
+// Enity light-theme palette (orange/teal), aligned with enity-theme.css tokens.
+const PALETTE = ["#f5841f", "#1f9e8f", "#46b97c", "#a855f7", "#facc15", "#ef4444"];
+const TEXT = "#28333d";
+const MUTED = "#5a6671";
+const GRID = "#e5e8eb";
+const FAINT = "#aab2ba"; // subtle gray for comparison/baseline series (--text-dim)
 
 function mockYear(): { categories: string[]; series: EChartsSeries[] } {
   const months = ["Jan", "Feb", "Mar", "Apr", "Maj", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dec"];
@@ -38,7 +39,7 @@ function mockYear(): { categories: string[]; series: EChartsSeries[] } {
     categories: months,
     series: [
       { name: "I år", data: cur, color: PALETTE[0], type: "line", areaStyle: true },
-      { name: "Sidste år", data: prev, color: MUTED, type: "line" },
+      { name: "Sidste år", data: prev, color: FAINT, type: "line" },
     ],
   };
 }
@@ -60,7 +61,7 @@ export default function EChartsChart({ categories, series, unit = "kWh", height 
       backgroundColor: "transparent",
       textStyle: { color: TEXT, fontSize: 11 },
       grid: { left: 56, right: 18, top: 28, bottom: zoom ? 64 : 36 },
-      tooltip: { trigger: "axis", backgroundColor: "#141d30", borderColor: GRID, textStyle: { color: TEXT } },
+      tooltip: { trigger: "axis", backgroundColor: "#ffffff", borderColor: GRID, textStyle: { color: TEXT } },
       legend: { data: ser.map((s) => s.name), textStyle: { color: MUTED }, top: 0, right: 0 },
       xAxis: {
         type: "category",

@@ -1,6 +1,9 @@
 import { ResponsiveLine } from '@nivo/line';
 import { useEffect, useState } from 'react';
 
+// Enity light-theme palette (orange/teal), aligned with enity-theme.css tokens.
+const SERIES_COLORS = ['#f5841f', '#1f9e8f', '#46b97c', '#a855f7', '#facc15', '#ef4444'];
+
 interface AggregationData {
   level_id: string;
   purpose: string;
@@ -128,15 +131,15 @@ export default function AggregationChart({ startDate, endDate, levelId, resoluti
         yFormat=" >-.2f"
         curve="monotoneX"
         theme={{
-          text: { fill: '#cbd5e1', fontSize: 11 },
+          text: { fill: '#5a6671', fontSize: 11 },
           axis: {
-            domain: { line: { stroke: '#475569' } },
-            ticks: { line: { stroke: '#475569' }, text: { fill: '#cbd5e1' } },
-            legend: { text: { fill: '#e2e8f0', fontSize: 12 } },
+            domain: { line: { stroke: '#e5e8eb' } },
+            ticks: { line: { stroke: '#e5e8eb' }, text: { fill: '#5a6671' } },
+            legend: { text: { fill: '#28333d', fontSize: 12 } },
           },
-          legends: { text: { fill: '#cbd5e1' } },
-          grid: { line: { stroke: '#334155', strokeWidth: 1 } },
-          tooltip: { container: { background: '#1e293b', color: '#e2e8f0' } },
+          legends: { text: { fill: '#5a6671' } },
+          grid: { line: { stroke: '#e5e8eb', strokeWidth: 1 } },
+          tooltip: { container: { background: '#ffffff', color: '#28333d', border: '1px solid #e5e8eb' } },
         }}
         axisTop={null}
         axisRight={null}
@@ -157,7 +160,7 @@ export default function AggregationChart({ startDate, endDate, levelId, resoluti
           legendOffset: -50,
           legendPosition: 'middle',
         }}
-        colors={{ scheme: 'category10' }}
+        colors={SERIES_COLORS}
         pointSize={8}
         pointColor={{ theme: 'background' }}
         pointBorderWidth={2}

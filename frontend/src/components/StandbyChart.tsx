@@ -145,7 +145,7 @@ export default function StandbyChart({
         }}
         yFormat={` >-.2f`}
         curve="monotoneX"
-        colors={['#f97316']}
+        colors={['#f5841f']}
         lineWidth={1.5}
         enablePoints={false}
         enableArea={false}
@@ -180,15 +180,16 @@ export default function StandbyChart({
         tooltip={({ point }) => (
           <div
             style={{
-              background: 'rgba(30, 41, 59, 0.95)',
-              color: '#e2e8f0',
+              background: '#ffffff',
+              color: '#28333d',
               padding: '8px 12px',
               borderRadius: '4px',
               fontSize: '12px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+              border: '1px solid #e5e8eb',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
             }}
           >
-            <div style={{ marginBottom: '4px', color: '#94a3b8' }}>
+            <div style={{ marginBottom: '4px', color: '#5a6671' }}>
               {new Date(point.data.x as Date).toLocaleDateString('da-DK', {
                 weekday: 'long',
                 day: 'numeric',
@@ -199,25 +200,25 @@ export default function StandbyChart({
               })}
             </div>
             <div>
-              <span style={{ color: '#f97316' }}>&#9632;</span>{' '}
+              <span style={{ color: '#f5841f' }}>&#9632;</span>{' '}
               {(point as any).serieId ?? (point as any).id}: <strong>{Number(point.data.yFormatted).toFixed(0)} {unit}</strong>
             </div>
           </div>
         )}
         theme={{
           background: 'transparent',
-          text: { fill: '#94a3b8', fontSize: 11 },
+          text: { fill: '#5a6671', fontSize: 11 },
           grid: {
-            line: { stroke: '#1e293b', strokeWidth: 1 },
+            line: { stroke: '#e5e8eb', strokeWidth: 1 },
           },
           axis: {
             ticks: {
-              text: { fill: '#64748b', fontSize: 10 },
-              line: { stroke: '#334155' },
+              text: { fill: '#5a6671', fontSize: 10 },
+              line: { stroke: '#e5e8eb' },
             },
           },
           crosshair: {
-            line: { stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' },
+            line: { stroke: '#8a949e', strokeWidth: 1, strokeDasharray: '4 4' },
           },
         }}
       />

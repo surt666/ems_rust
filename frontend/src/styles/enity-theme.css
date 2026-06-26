@@ -1,0 +1,163 @@
+/* ============================================================
+   enity-theme.css  —  Enity look overlay for the EMS app
+   ------------------------------------------------------------
+   Import this AFTER global.css, e.g. in Layout.astro:
+       import "../styles/global.css";
+       import "../styles/enity-theme.css";
+   Loaded last, it overrides the :root tokens and the
+   readability override block at the bottom of global.css.
+   To revert the theme: remove the single import line.
+   ============================================================ */
+
+:root {
+  /* ——— Surfaces: content goes LIGHT, chrome stays dark ——— */
+  --bg-deepest:  #16212e;   /* sidebar / top-nav base   (was #020617) */
+  --bg-dark:     #f4f5f6;   /* app background           (was #0b1220) */
+  --bg-panel:    #ffffff;   /* cards                    (was #141d30) */
+  --bg-elevated: #eef0f2;   /* filter pills, hovers     (was #1f2a42) */
+
+  --border-subtle: #eef0f2; /* (was #1f2a42) */
+  --border-medium: #e5e8eb; /* (was #2c3a5a) */
+
+  /* ——— Text: dark on light ——— */
+  --text-primary:   #28333d; /* (was #f1f5fb) */
+  --text-secondary: #5a6671; /* (was #c9d3e3) */
+  --text-muted:     #8a949e; /* (was #8b97b0) */
+  --text-dim:       #aab2ba; /* (was #6b7795) */
+
+  /* ——— Accent: cyan ➜ Enity orange ——— */
+  --accent:       #f5841f;  /* (was #38bdf8) */
+  --accent-hover: #e0740f;  /* (was #0ea5e9) */
+  --accent-bg:    #fef1e3;  /* soft orange pill fill (was #0c4a6e) */
+
+  /* ——— Secondary brand: teal / green ——— */
+  --teal:    #1f9e8f;       /* breadcrumb links, info icons (new token) */
+  --success: #46b97c;       /* (was #22c55e) */
+  --warning: #f5841f;       /* (was #f97316) */
+  --danger:  #ef4444;
+
+  /* Softer cards, Enity-style */
+  --radius-md: 12px;        /* (was 6px)  */
+  --radius-lg: 14px;        /* (was 10px) */
+}
+
+/* Light page needs a dark default link tone except where teal applies */
+body { background: var(--bg-dark); color: var(--text-primary); }
+
+/* ============================================================
+   Keep the SIDEBAR + TOP NAV dark on the light shell
+   (global.css shares --bg-panel between sidebar and cards,
+    so we re-darken the chrome explicitly)
+   ============================================================ */
+.sidebar,
+.top-nav {
+  background: var(--bg-deepest);
+  border-color: #2b3a4a;
+}
+
+.sidebar-label        { color: #7c8a99; }
+.tree-item            { color: #c5ced8; }
+.tree-item:hover      { background: #1f2c3b; }
+.tree-icon            { color: #3cb89e; }      /* teal home icons */
+
+/* Selected tree row: solid orange + white text
+   (was --accent-bg fill behind --accent text) */
+.tree-item.selected,
+.node-name-link.selected {
+  background: var(--accent);
+  color: #ffffff;
+}
+.tree-item.selected .tree-icon { stroke: #ffffff; color: #ffffff; }
+.node-name-link:hover:not(.selected) { background: #1f2c3b; }
+
+/* Hierarchy toggle arrows stay readable on dark */
+.tree-toggle-area { color: #7c8a99; }
+
+/* ——— Top-nav links sit on dark chrome ——— */
+.nav-link        { color: #7c8a99; }
+.nav-link:hover  { color: #c5ced8; }
+.nav-link.active { color: #ffffff; border-bottom-color: var(--accent); }
+
+/* Dropdown menus that open off the dark nav */
+.dropdown-menu { background: var(--bg-deepest); border-color: #2b3a4a; }
+.dropdown-menu .nav-link:hover { background: #1f2c3b; }
+.dropdown-menu .nav-link.active { background: rgba(245,132,31,0.18); }
+
+/* ============================================================
+   CARDS — real borders + soft shadow on the light bg
+   ============================================================ */
+.card,
+.chart-panel,
+.table-panel,
+.kpi-card,
+.info-box,
+.cta-card {
+  border: 1px solid var(--border-medium);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+
+/* Info box: soft-orange tint reads fine with orange title */
+.info-box { border-color: rgba(245,132,31,0.3); }
+.info-box .section-title { color: var(--accent); }
+
+/* Section / chart / table headers: data-forward weights */
+.section-title,
+.page-title      { color: var(--text-primary); }
+.chart-title,
+.table-title     { color: var(--text-secondary); }
+
+/* ============================================================
+   FILTER TOGGLES ➜ gray pills with orange active
+   ============================================================ */
+.time-toggle    { background: var(--bg-elevated); }
+.time-btn       { color: var(--text-secondary); }
+.time-btn.active{ background: var(--accent); color: #ffffff; }
+.time-btn:hover:not(.active) { color: var(--text-primary); }
+
+/* KPI accent stripe colors still work on light */
+.kpi-card.electricity .kpi-value { color: var(--success); }
+.kpi-card.heating     .kpi-value { color: var(--warning); }
+
+/* ============================================================
+   BREADCRUMB ➜ teal links, muted current page
+   ============================================================ */
+.breadcrumb-item,
+.breadcrumb-item a          { color: var(--teal); }
+.breadcrumb-item a:hover    { color: var(--accent-hover); }
+.breadcrumb-item:last-child { color: var(--text-muted); font-weight: 600; }
+.breadcrumb-separator       { color: var(--text-dim); }
+
+/* ============================================================
+   TABLES ➜ data is primary, headers muted, numbers aligned
+   ============================================================ */
+.data-table td            { color: var(--text-primary); }
+.data-table th            { color: var(--text-muted); }
+.data-table tr:hover td   { background: rgba(245,132,31,0.04); }
+.data-table td:last-child,
+.kpi-value,
+.alarm-cost,
+.alarm-deviation          { font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+   BUTTONS ➜ orange primary / teal-tinted secondary
+   ============================================================ */
+.btn-primary  { background: var(--accent); color: #ffffff; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-warning  { background: var(--accent); }
+
+/* Generic links (outside breadcrumb) follow teal, not orange */
+a { color: var(--teal); }
+a:hover { color: var(--accent-hover); }
+
+/* ============================================================
+   FORM INPUTS on the light surface
+   ============================================================ */
+.form-input,
+.form-select {
+  background: #ffffff;
+  border-color: var(--border-medium);
+  color: var(--text-primary);
+}
+.form-input::placeholder { color: var(--text-muted); }
+.form-input:focus,
+.form-select:focus { box-shadow: 0 0 0 2px rgba(245,132,31,0.15); }
