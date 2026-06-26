@@ -7,29 +7,69 @@
 //   - partners (HN1) at the root level (no id), and
 //   - a node's children for `?id=<nodeId>` (companies for a partner, the tree for a company).
 // Two hidden loaders fetch those `<li data-id>` fragments; hyperscript reshapes
-// them into <option>s (HTML-over-the-wire, no JS). Node selection + the
-// loadChildren fold path are untouched.
+// them into <option>s (HTML-over-the-wire, no JS), carrying each node's path so a
+// selection can jump to /node the same way a tree-name click does.
+//
+// Orange highlight = the currently-selected node ONLY. #hier-sync re-marks the
+// dropdown whose value matches sessionStorage.selectedNodeId (the same single-
+// selection model the tree uses via .node-name-link.selected); it's nudged on
+// every selection change — dropdown change OR a tree-node click.
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 ---
-<div id="container" class="sidebar-label">Hierarki</div>
+<!-- Scope tabs (the top block in the real EMS): Hierarchy / Shared / Private
+     groups. Hierarki is active; the group tabs are placeholders until their
+     backend (companyGroups/privateGroups) exists. -->
+<div id="container" class="scope-tabs" role="tablist" aria-label="Hierarki-omfang">
+  <button type="button" class="scope-tab active">Hierarki</button>
+  <button type="button" class="scope-tab" disabled title="Kommer snart">Fælles grp.</button>
+  <button type="button" class="scope-tab" disabled title="Kommer snart">Privat grp.</button>
+</div>
 
-<!-- Top two levels, lifted out of the tree -->
+<!-- Top two levels, lifted out of the tree. Selecting one navigates main to that
+     node's /node view (same as clicking a node name) AND drives the dropdowns below. -->
 <div class="hier-selectors">
   <select id="partner-select" class="hier-select" aria-label="Partner"
     _="on change
+         if my value is '' then exit end
          set sessionStorage.selectedPartnerId to my value
          call sessionStorage.removeItem('selectedCompanyId')
-         send loadCompanies to #companies-src">
+         set sopt to the first of my selectedOptions
+         set sessionStorage.selectedNodeId to my value
+         set sessionStorage.selectedNodePath to sopt's @data-path
+         send synchier to #hier-sync
+         send loadCompanies to #companies-src
+         set u to '/node/?id=' + encodeURIComponent(my value)
+         if window.emsNavigate then call window.emsNavigate(u) else set window.location.href to u end">
   </select>
   <select id="company-select" class="hier-select" aria-label="Virksomhed"
     _="on change
+         if my value is '' then exit end
+         set sopt to the first of my selectedOptions
          set sessionStorage.selectedCompanyId to my value
-         send loadTree to #hier-tree-list">
+         set sessionStorage.selectedNodeId to my value
+         set sessionStorage.selectedNodePath to sopt's @data-path
+         send synchier to #hier-sync
+         send loadTree to #hier-tree-list
+         set u to '/node/?id=' + encodeURIComponent(my value)
+         if window.emsNavigate then call window.emsNavigate(u) else set window.location.href to u end">
   </select>
 </div>
 
+<!-- Re-marks the dropdown that is the active node (orange), clears the others. -->
+<span id="hier-sync" style="display:none"
+  _="on synchier
+       for s in <.hier-select/>
+         if the value of s is sessionStorage.getItem('selectedNodeId') then
+           add .active to s
+         else
+           remove .active from s
+         end
+       end"></span>
+
 <!-- Hidden loaders: fetch /nodes <li> fragments, reshape into <option>s.
-     partners-src = root level (HN1); companies-src = the chosen partner's children (HN2). -->
+     partners-src = root level (HN1); companies-src = the chosen partner's children (HN2).
+     Each option carries data-id (value) + data-path (the <a data-node-path>) so a
+     selection can drive /node like a tree click. -->
 <div id="partners-src" style="display:none"
      hx-get={`${API_BASE_URL}/hierarchy/query/nodes`}
      hx-vals="js:{user: localStorage.getItem('loginId')}"
@@ -39,9 +79,11 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
           set sel to #partner-select
           set sel.innerHTML to ''
           for li in <li[data-id]/> in me
+            set link to first .node-name-link in li
             make an <option/> called opt
             set opt.value to li's @data-id
-            set opt.textContent to the textContent of (first .node-name-link in li)
+            set opt.textContent to the textContent of link
+            set opt's @data-path to link's @data-node-path
             put opt at the end of sel
           end
           set saved to sessionStorage.getItem('selectedPartnerId')
@@ -57,20 +99,26 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
           set sel to #company-select
           set sel.innerHTML to ''
           for li in <li[data-id]/> in me
+            set link to first .node-name-link in li
             make an <option/> called opt
             set opt.value to li's @data-id
-            set opt.textContent to the textContent of (first .node-name-link in li)
+            set opt.textContent to the textContent of link
+            set opt's @data-path to link's @data-node-path
             put opt at the end of sel
           end
           set saved to sessionStorage.getItem('selectedCompanyId')
           if saved then set sel.value to saved end
           set sessionStorage.selectedCompanyId to sel.value
-          send loadTree to #hier-tree-list">
+          send loadTree to #hier-tree-list
+          send synchier to #hier-sync">
 </div>
 
-<!-- The existing fold-tree, now rooted at the selected company's children. -->
+<!-- The existing fold-tree, now rooted at the selected company's children.
+     synchier runs on every tree click so picking a subnode clears the dropdown
+     orange (the subnode becomes the selected item via .node-name-link.selected). -->
 <div class="hier-tree"
      _="on click
+          send synchier to #hier-sync
           set w to closest .icon-wrapper to event.target
           if w is null then exit end
           set row to closest <li/> to w

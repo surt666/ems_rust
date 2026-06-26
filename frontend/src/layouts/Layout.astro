@@ -102,6 +102,11 @@ import "../styles/enity-theme.css";
 	import 'invokers/compatible';
 	import { Amplify } from 'aws-amplify';
 	import { getCurrentUser, signOut } from 'aws-amplify/auth';
+	import { navigate } from 'astro:transitions/client';
+
+	// Expose Astro's view-transition navigate so the hierarchy dropdowns can jump
+	// to /node the same (no-full-reload) way clicking a tree node name does.
+	window.emsNavigate = navigate;
 
 	Amplify.configure({
 		Auth: {

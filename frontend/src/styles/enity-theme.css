@@ -86,6 +86,28 @@ body { background: var(--bg-dark); color: var(--text-primary); }
   overflow: hidden;
 }
 .sidebar-label   { align-self: start; }
+
+/* Scope tabs — the top block (Hierarchy / Shared / Private groups). */
+.scope-tabs {
+  display: grid;
+  grid-auto-flow: column;
+  justify-content: start;
+  gap: 2px;
+  padding: 2px 4px 8px;
+}
+.scope-tab {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: #7c8a99;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.scope-tab.active { color: #ffffff; border-bottom-color: var(--accent); }
+.scope-tab:disabled { color: #46586a; cursor: not-allowed; }
+
 .hier-selectors {
   display: grid;
   gap: 8px;
@@ -112,11 +134,20 @@ body { background: var(--bg-dark); color: var(--text-primary); }
   font-weight: 600;
   line-height: 1.2;
   cursor: pointer;
-  transition: border-color 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 .hier-select:hover { border-color: #3a4d61; }
 .hier-select:focus { outline: none; border-color: var(--accent); }
 .hier-select option { background: #1f2c3b; color: #c5ced8; font-weight: 400; }
+
+/* Orange ONLY when this partner/company is the currently-selected node — the same
+   "selected" highlight a chosen subnode gets in the tree (.node-name-link.selected). */
+.hier-select.active {
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23ffffff' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  border-color: var(--accent-hover);
+}
+.hier-select.active:hover { background-color: var(--accent-hover); }
 
 /* ——— Top-nav links sit on dark chrome ——— */
 .nav-link        { color: #7c8a99; }
