@@ -56,7 +56,10 @@ body { background: var(--bg-dark); color: var(--text-primary); }
 }
 
 .sidebar-label        { color: #7c8a99; }
-.tree-item            { color: #c5ced8; }
+/* Rust-generated tree uses .node-name-link; light text so it's visible on the
+   dark navy sidebar (it inherits the now-dark --text-secondary otherwise). */
+.tree-item,
+.node-name-link       { color: #c5ced8; }
 .tree-item:hover      { background: #1f2c3b; }
 .tree-icon            { color: #3cb89e; }      /* teal home icons */
 

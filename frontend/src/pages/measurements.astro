@@ -39,7 +39,7 @@ const hxBase = `${RAW_API}/measurements`;
 const hxDaq = "js:{daq_id: new URLSearchParams(location.search).get('daq')}";
 ---
 <Layout title="Datatilegnelse">
-  <div class="page-container" x-data="{ q: new URLSearchParams(location.search) }">
+  <div class="page-container" x-data="{ q: new URLSearchParams(location.search), to: new Date(Date.now() - new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10), from: new Date(Date.now() - new Date().getTimezoneOffset()*6e4 - 864e5).toISOString().slice(0,10) }">
     <!-- Header: meter identity from the kebab link -->
     <div class="view-header">
       <div>
@@ -79,11 +79,11 @@ const hxDaq = "js:{daq_id: new URLSearchParams(location.search).get('daq')}";
     <div class="filter-bar" id="m-controls">
       <div class="filter-field">
         <label class="form-label" data-i18n="measurements.from">Fra</label>
-        <input type="date" class="form-input" name="from" />
+        <input type="date" class="form-input" name="from" x-model="from" />
       </div>
       <div class="filter-field">
         <label class="form-label" data-i18n="measurements.to">Til</label>
-        <input type="date" class="form-input" name="to" />
+        <input type="date" class="form-input" name="to" x-model="to" />
       </div>
       <div class="filter-field">
         <label class="form-label" data-i18n="measurements.rows">Antal rækker</label>
@@ -115,7 +115,7 @@ const hxDaq = "js:{daq_id: new URLSearchParams(location.search).get('daq')}";
         {live ? (
           <tbody id="m-rows"
             hx-get={hxBase}
-            hx-trigger="load"
+            hx-trigger="load delay:60ms"
             hx-include="#m-controls"
             hx-vals={hxDaq}
             hx-swap="innerHTML"

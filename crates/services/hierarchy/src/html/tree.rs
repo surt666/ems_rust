@@ -146,7 +146,7 @@ pub fn list_item(
                     data-node-id=(id_str)
                     data-node-path=(node_path)
                     _=(hyperscript)
-                    style="cursor: pointer; text-decoration: none; color: inherit;"
+                    style="cursor: pointer; text-decoration: none;"
                 {
                     (display_name)
                 }
