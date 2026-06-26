@@ -172,10 +172,11 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 	// ── Rust / Graviton (arm64) read API — the single production read lambda. ──
 	// Two routes on ONE Function URL (PUBLIC_AGG_API_BASE_URL): `/aggregations`
 	// (JSON, Resource-Insights chart, reads DynamoDB) and `/measurements` (HTML
-	// fragment, Datatilegnelse page, reads `all.raw_data` via the iceberg-rust
-	// S3Tables catalog — no Athena). Kept to one lambda to limit the Datadog-
-	// instrumented function count. Built via `cargo lambda build --release --arm64 -p aggregations`.
-	tableBucketArn := "arn:aws:s3tables:" + region + ":" + account + ":bucket/" + props.TableBucket
+	// fragment, Datatilegnelse page, reads `all.raw_data` via **Amazon Athena** —
+	// Athena does the dedup GROUP BY server-side; ~3.5s vs ~12s for iceberg-direct).
+	// Kept to one lambda to limit the Datadog-instrumented function count.
+	// Built via `cargo lambda build --release --arm64 -p aggregations`.
+	athenaResults := "daq-athena-query-results-" + account + "-" + region
 	aggFn := awslambda.NewFunction(stack, jsii.String("AggregationsFn"), &awslambda.FunctionProps{
 		FunctionName: jsii.String("measurements-aggregations-api"),
 		Runtime:      awslambda.Runtime_PROVIDED_AL2023(),
@@ -186,29 +187,46 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		MemorySize:   jsii.Number(512),
 		Environment: &map[string]*string{
 			"ROLLUP_TABLE":     table.TableName(),
-			"TABLE_BUCKET_ARN": jsii.String(tableBucketArn),
+			"ATHENA_WORKGROUP": jsii.String("daq-workgroup"),
+			"ATHENA_OUTPUT":    jsii.String("s3://" + athenaResults + "/"),
+			"ATHENA_CATALOG":   jsii.String("s3tablescatalog/" + props.TableBucket),
+			"ATHENA_DATABASE":  jsii.String("all"),
+			"ATHENA_TABLE":     jsii.String("raw_data"),
 		},
 		LogRetention: awslogs.RetentionDays_ONE_WEEK,
 	})
 	table.GrantReadData(aggFn)
 
-	// The `/measurements` route reads `all.raw_data` (S3 Tables) via the iceberg-rust
-	// S3Tables catalog: needs s3tables read IAM + Lake Formation SELECT on the table
-	// (same gating as the Glue job above). NOTE: first-deploy-verify — if the runtime
-	// hits AccessDenied, add the missing s3tables:* action (and a KMS decrypt grant if
-	// the table bucket is CMK-encrypted).
+	// The `/measurements` route queries `all.raw_data` via Athena: needs athena query
+	// exec on the workgroup, Glue catalog read for the s3tables federated catalog, R/W
+	// on the Athena results bucket, lakeformation:GetDataAccess, and (below) Lake
+	// Formation SELECT on the table. NOTE: first-deploy-verify — if the runtime hits
+	// AccessDenied, add the missing action.
 	aggFn.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
-		Effect: awsiam.Effect_ALLOW,
-		Actions: jsii.Strings(
-			"s3tables:GetTableBucket",
-			"s3tables:ListNamespaces",
-			"s3tables:GetNamespace",
-			"s3tables:ListTables",
-			"s3tables:GetTable",
-			"s3tables:GetTableMetadataLocation",
-			"s3tables:GetTableData",
+		Effect:    awsiam.Effect_ALLOW,
+		Actions:   jsii.Strings("athena:StartQueryExecution", "athena:GetQueryExecution", "athena:GetQueryResults", "athena:StopQueryExecution"),
+		Resources: jsii.Strings("arn:aws:athena:" + region + ":" + account + ":workgroup/daq-workgroup"),
+	}))
+	aggFn.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect:  awsiam.Effect_ALLOW,
+		Actions: jsii.Strings("glue:GetDatabase", "glue:GetDatabases", "glue:GetTable", "glue:GetTables", "glue:GetCatalog", "glue:GetPartitions"),
+		Resources: jsii.Strings(
+			"arn:aws:glue:"+region+":"+account+":catalog",
+			"arn:aws:glue:"+region+":"+account+":catalog/s3tablescatalog",
+			"arn:aws:glue:"+region+":"+account+":catalog/s3tablescatalog/"+props.TableBucket,
+			"arn:aws:glue:"+region+":"+account+":database/s3tablescatalog/"+props.TableBucket+"/*",
+			"arn:aws:glue:"+region+":"+account+":table/s3tablescatalog/"+props.TableBucket+"/*/*",
 		),
-		Resources: jsii.Strings(tableBucketArn, tableBucketArn+"/*"),
+	}))
+	aggFn.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect:    awsiam.Effect_ALLOW,
+		Actions:   jsii.Strings("s3:GetBucketLocation", "s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:ListMultipartUploadParts", "s3:AbortMultipartUpload"),
+		Resources: jsii.Strings("arn:aws:s3:::"+athenaResults, "arn:aws:s3:::"+athenaResults+"/*"),
+	}))
+	aggFn.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect:    awsiam.Effect_ALLOW,
+		Actions:   jsii.Strings("lakeformation:GetDataAccess"),
+		Resources: jsii.Strings("*"),
 	}))
 	aggDl := &awslakeformation.CfnPermissions_DataLakePrincipalProperty{
 		DataLakePrincipalIdentifier: aggFn.Role().RoleArn(),

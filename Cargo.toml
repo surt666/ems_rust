@@ -6,7 +6,7 @@ members = ["crates/model", "crates/services/hierarchy", "crates/services/aggrega
 edition = "2021"
 
 [workspace.dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_dynamo = { version = "4", features = ["aws-sdk-dynamodb+1"] }
@@ -28,10 +28,7 @@ urlencoding = "2"
 rand = "0.8"
 regex = "1"
 url = "2"
-iceberg = "0.9"
-iceberg-catalog-s3tables = "0.9"
-arrow-array = "57"
-futures = "0.3"
+aws-sdk-athena = "1"
 
 [profile.release]
 opt-level = "z"

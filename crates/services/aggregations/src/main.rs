@@ -259,7 +259,12 @@ fn json_error(status: u16, message: impl Into<String>) -> Result<Response<Body>,
     json_response(status, HashMap::from([("error", message.into())]))
 }
 
-async fn handler(event: Request, client: &Client, table: &str) -> Result<Response<Body>, Error> {
+async fn handler(
+    event: Request,
+    client: &Client,
+    table: &str,
+    athena: &aws_sdk_athena::Client,
+) -> Result<Response<Body>, Error> {
     // Parse query params from URI
     let uri = event.uri();
     let qs: HashMap<String, String> = uri
@@ -274,7 +279,7 @@ async fn handler(event: Request, client: &Client, table: &str) -> Result<Respons
     // Route: /measurements → raw_data viewer (HTML fragment, Datatilegnelse page);
     // everything else → the aggregations rollup (JSON, Resource-Insights chart).
     if uri.path().trim_end_matches('/').ends_with("/measurements") {
-        return raw::handle_measurements(&qs).await;
+        return raw::handle_measurements(athena, &qs).await;
     }
 
     let level_id = qs.get("level_id").cloned().unwrap_or_default();
@@ -329,10 +334,11 @@ async fn handler(event: Request, client: &Client, table: &str) -> Result<Respons
 async fn main() -> Result<(), Error> {
     let cfg = aws_config::load_from_env().await;
     let client = Client::new(&cfg);
+    let athena = aws_sdk_athena::Client::new(&cfg);
     let table =
         std::env::var("ROLLUP_TABLE").unwrap_or_else(|_| "measurements_aggregate".to_string());
 
-    run(service_fn(|req| handler(req, &client, &table))).await
+    run(service_fn(|req| handler(req, &client, &table, &athena))).await
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────

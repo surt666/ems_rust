@@ -93,12 +93,15 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
   It also hosts **one Rust/arm64 Function-URL lambda** (`measurements-aggregations-api`,
   `crates/services/aggregations`) with **two routes** on the single `AggregationsUrl` —
   `/aggregations` (JSON, Resource-Insights chart, reads DynamoDB) and `/measurements` (HTML fragment,
-  Datatilegnelse page, reads `all.raw_data` via the iceberg-rust S3Tables catalog — **no Athena**).
-  Kept to one function to limit Datadog-instrumented lambdas. Build with `cargo lambda build --release
-  --arm64 -p aggregations` before `cdk deploy` (the stack reads `target/lambda/aggregations` via
-  `Code.FromAsset`). The frontend uses `PUBLIC_AGG_API_BASE_URL` for both routes. The `/measurements`
-  route's S3 Tables IAM + Lake Formation SELECT on `raw_data` are **first-deploy-verify** — watch
-  CloudWatch for `AccessDenied` and add the missing `s3tables:*`/LF grant.
+  Datatilegnelse page, reads `all.raw_data` via **Amazon Athena** — `start → poll → get_query_results`,
+  dedup `GROUP BY` + `max_by(value, ingested_time)` done server-side, result-reuse caching on; ~4-6s
+  vs ~12s for the abandoned iceberg-rust-direct path). Kept to one function to limit Datadog-
+  instrumented lambdas. Build with `cargo lambda build --release --arm64 -p aggregations` before
+  `cdk deploy` (the stack reads `target/lambda/aggregations` via `Code.FromAsset`). The frontend uses
+  `PUBLIC_AGG_API_BASE_URL` for both routes. The `/measurements` route needs **Athena** IAM
+  (workgroup `daq-workgroup`, Glue catalog read on `s3tablescatalog`, R/W on
+  `daq-athena-query-results-<acct>-<region>`, `lakeformation:GetDataAccess`) + Lake Formation SELECT
+  on `raw_data` — all wired in the stack.
 - Verify the live Flink JAR is the one you built:
   `aws kinesisanalyticsv2 describe-application --application-name flink-iceberg-processor`
   → download the `FileKey` jar from `s3://flink-code-891377204778-eu-central-1/...` and
