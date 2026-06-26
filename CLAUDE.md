@@ -90,6 +90,15 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
   counter consumption per node/purpose/hour|day. `-c LookbackDays=N` sets the day-aligned recompute
   window (default `1` = today + yesterday). Spec/plan:
   `infra/daq/data_pipeline/docs/superpowers/specs/2026-06-07-measurements-rollup-view-design.md`.
+  It also hosts **one Rust/arm64 Function-URL lambda** (`measurements-aggregations-api`,
+  `crates/services/aggregations`) with **two routes** on the single `AggregationsUrl` —
+  `/aggregations` (JSON, Resource-Insights chart, reads DynamoDB) and `/measurements` (HTML fragment,
+  Datatilegnelse page, reads `all.raw_data` via the iceberg-rust S3Tables catalog — **no Athena**).
+  Kept to one function to limit Datadog-instrumented lambdas. Build with `cargo lambda build --release
+  --arm64 -p aggregations` before `cdk deploy` (the stack reads `target/lambda/aggregations` via
+  `Code.FromAsset`). The frontend uses `PUBLIC_AGG_API_BASE_URL` for both routes. The `/measurements`
+  route's S3 Tables IAM + Lake Formation SELECT on `raw_data` are **first-deploy-verify** — watch
+  CloudWatch for `AccessDenied` and add the missing `s3tables:*`/LF grant.
 - Verify the live Flink JAR is the one you built:
   `aws kinesisanalyticsv2 describe-application --application-name flink-iceberg-processor`
   → download the `FileKey` jar from `s3://flink-code-891377204778-eu-central-1/...` and

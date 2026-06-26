@@ -28,6 +28,10 @@ urlencoding = "2"
 rand = "0.8"
 regex = "1"
 url = "2"
+iceberg = "0.9"
+iceberg-catalog-s3tables = "0.9"
+arrow-array = "57"
+futures = "0.3"
 
 [profile.release]
 opt-level = "z"

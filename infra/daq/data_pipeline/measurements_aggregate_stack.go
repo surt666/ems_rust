@@ -169,9 +169,13 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		},
 	})
 
-	// ── Rust / Graviton (arm64) read API — the production aggregations lambda. ──
-	// The frontend's Resource-Insights chart hits this Function URL (PUBLIC_AGG_API_BASE_URL).
-	// Built via `cargo lambda build --release --arm64 -p aggregations` -> target/lambda/aggregations.
+	// ── Rust / Graviton (arm64) read API — the single production read lambda. ──
+	// Two routes on ONE Function URL (PUBLIC_AGG_API_BASE_URL): `/aggregations`
+	// (JSON, Resource-Insights chart, reads DynamoDB) and `/measurements` (HTML
+	// fragment, Datatilegnelse page, reads `all.raw_data` via the iceberg-rust
+	// S3Tables catalog — no Athena). Kept to one lambda to limit the Datadog-
+	// instrumented function count. Built via `cargo lambda build --release --arm64 -p aggregations`.
+	tableBucketArn := "arn:aws:s3tables:" + region + ":" + account + ":bucket/" + props.TableBucket
 	aggFn := awslambda.NewFunction(stack, jsii.String("AggregationsFn"), &awslambda.FunctionProps{
 		FunctionName: jsii.String("measurements-aggregations-api"),
 		Runtime:      awslambda.Runtime_PROVIDED_AL2023(),
@@ -179,11 +183,55 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		Handler:      jsii.String("bootstrap"),
 		Code:         awslambda.Code_FromAsset(jsii.String("../../../target/lambda/aggregations"), nil),
 		Timeout:      awscdk.Duration_Seconds(jsii.Number(30)),
-		MemorySize:   jsii.Number(256),
-		Environment:  &map[string]*string{"ROLLUP_TABLE": table.TableName()},
+		MemorySize:   jsii.Number(512),
+		Environment: &map[string]*string{
+			"ROLLUP_TABLE":     table.TableName(),
+			"TABLE_BUCKET_ARN": jsii.String(tableBucketArn),
+		},
 		LogRetention: awslogs.RetentionDays_ONE_WEEK,
 	})
 	table.GrantReadData(aggFn)
+
+	// The `/measurements` route reads `all.raw_data` (S3 Tables) via the iceberg-rust
+	// S3Tables catalog: needs s3tables read IAM + Lake Formation SELECT on the table
+	// (same gating as the Glue job above). NOTE: first-deploy-verify — if the runtime
+	// hits AccessDenied, add the missing s3tables:* action (and a KMS decrypt grant if
+	// the table bucket is CMK-encrypted).
+	aggFn.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect: awsiam.Effect_ALLOW,
+		Actions: jsii.Strings(
+			"s3tables:GetTableBucket",
+			"s3tables:ListNamespaces",
+			"s3tables:GetNamespace",
+			"s3tables:ListTables",
+			"s3tables:GetTable",
+			"s3tables:GetTableMetadataLocation",
+			"s3tables:GetTableData",
+		),
+		Resources: jsii.Strings(tableBucketArn, tableBucketArn+"/*"),
+	}))
+	aggDl := &awslakeformation.CfnPermissions_DataLakePrincipalProperty{
+		DataLakePrincipalIdentifier: aggFn.Role().RoleArn(),
+	}
+	awslakeformation.NewCfnPermissions(stack, jsii.String("RawLfDbPermissions"), &awslakeformation.CfnPermissionsProps{
+		DataLakePrincipal: aggDl,
+		Resource: &awslakeformation.CfnPermissions_ResourceProperty{
+			DatabaseResource: &awslakeformation.CfnPermissions_DatabaseResourceProperty{
+				Name: jsii.String("all"), CatalogId: jsii.String(s3tablesCatalogId),
+			},
+		},
+		Permissions: jsii.Strings("DESCRIBE"),
+	})
+	awslakeformation.NewCfnPermissions(stack, jsii.String("RawLfTablePermissions"), &awslakeformation.CfnPermissionsProps{
+		DataLakePrincipal: aggDl,
+		Resource: &awslakeformation.CfnPermissions_ResourceProperty{
+			TableResource: &awslakeformation.CfnPermissions_TableResourceProperty{
+				DatabaseName: jsii.String("all"), Name: jsii.String("raw_data"),
+				CatalogId: jsii.String(s3tablesCatalogId),
+			},
+		},
+		Permissions: jsii.Strings("SELECT", "DESCRIBE"),
+	})
 
 	aggUrl := aggFn.AddFunctionUrl(&awslambda.FunctionUrlOptions{
 		AuthType: awslambda.FunctionUrlAuthType_NONE,
@@ -195,7 +243,7 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 	})
 	awscdk.NewCfnOutput(stack, jsii.String("AggregationsUrl"), &awscdk.CfnOutputProps{
 		Value:       aggUrl.Url(),
-		Description: jsii.String("Public Function URL for GET /aggregations (Resource Insights chart)"),
+		Description: jsii.String("Public Function URL — GET /aggregations (chart, JSON) + GET /measurements (Datatilegnelse, HTML)"),
 	})
 
 	return stack

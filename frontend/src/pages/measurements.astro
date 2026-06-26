@@ -1,0 +1,168 @@
+---
+// Datatilegnelse / measurements viewer — reached from a sensor's "…" kebab menu
+// in the node sensors table ("Gå til datatilegnelse"). Mirrors the EMS
+// /datasource page: a metadata section (the logical meter's identity + unit /
+// purpose / type) with Fra/Til calendars, then the raw measurement readings.
+//
+// The sensor identity + metadata arrive as query params from the kebab link
+// (daq, sid, logical, purpose, unit, type) and are bound client-side via Alpine.
+//
+// Measurement ROWS are representative today. They will be HTMX/fetch-loaded from
+// the cross-account raw-measurements API (PUBLIC_RAW_MEASUREMENTS_API_BASE_URL,
+// daq account) — see data-endpoint below. That API reads `raw_data` (Iceberg) via
+// Athena, returns the newest version of each reading (max ingested_time per
+// timestamp), supports a row LIMIT, and a keyset cursor (`before`) for "load more".
+import Layout from "../layouts/Layout.astro";
+
+// Representative readings (a counter odometer climbing over time). Replaced by
+// the raw-measurements API response: { rows:[{timestamp,value,unit,ingested_time}], next_before }.
+const rows = [
+  { ts: "2026-06-25 09:00", value: "739.163,000", ingested: "2026-06-25 09:04" },
+  { ts: "2026-06-25 08:00", value: "739.121,000", ingested: "2026-06-25 08:03" },
+  { ts: "2026-06-25 07:00", value: "739.088,000", ingested: "2026-06-25 07:05" },
+  { ts: "2026-06-25 06:00", value: "739.061,000", ingested: "2026-06-25 06:04" },
+  { ts: "2026-06-25 05:00", value: "739.040,000", ingested: "2026-06-25 05:03" },
+  { ts: "2026-06-25 04:00", value: "739.026,000", ingested: "2026-06-25 04:06" },
+  { ts: "2026-06-25 03:00", value: "739.018,000", ingested: "2026-06-25 03:04" },
+  { ts: "2026-06-25 02:00", value: "739.013,000", ingested: "2026-06-25 02:05" },
+];
+
+// The /measurements route lives on the SAME aggregations Function URL as the
+// chart data (one lambda; PUBLIC_AGG_API_BASE_URL). When configured, the table
+// goes live via HTMX (cross-account GET → HTML fragment); until then the
+// representative rows above render so the page still looks correct. `noHeaders`
+// keeps it a simple CORS GET (no preflight); daq_id comes from the URL, the rest
+// from #m-controls.
+const RAW_API = import.meta.env.PUBLIC_AGG_API_BASE_URL || "";
+const live = RAW_API !== "";
+const hxBase = `${RAW_API}/measurements`;
+const hxDaq = "js:{daq_id: new URLSearchParams(location.search).get('daq')}";
+---
+<Layout title="Datatilegnelse">
+  <div class="page-container" x-data="{ q: new URLSearchParams(location.search) }">
+    <!-- Header: meter identity from the kebab link -->
+    <div class="view-header">
+      <div>
+        <h1 class="page-title">
+          <span data-i18n="measurements.title">Datatilegnelse</span>
+          <span class="muted">—</span>
+          <span x-text="q.get('purpose') || '—'"></span>
+        </h1>
+        <p class="page-description">
+          <span data-i18n="measurements.subtitle">Rå måleraflæsninger for den valgte sensor.</span>
+        </p>
+      </div>
+      <div class="view-actions">
+        <a href="javascript:history.back()" class="btn-secondary" data-i18n="common.close">Luk</a>
+      </div>
+    </div>
+
+    <!-- Metadata section: the logical meter id + its metadata -->
+    <section class="card">
+      <div class="section-header">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+        <h2 class="section-title" style="margin-bottom:0" data-i18n="measurements.metadata">Metadata</h2>
+        <span class="badge" style="margin-left:auto" x-text="(q.get('type')||'—')"></span>
+      </div>
+      <dl class="meta-grid">
+        <div><dt data-i18n="measurements.logical_id">Logisk måler-id</dt><dd x-text="q.get('logical') || '—'"></dd></div>
+        <div><dt data-i18n="measurements.sensor_id">Sensor-id</dt><dd x-text="q.get('sid') || '—'"></dd></div>
+        <div><dt>DAQ ID</dt><dd class="mono" x-text="q.get('daq') || '—'"></dd></div>
+        <div><dt data-i18n="common.purpose">Formål</dt><dd x-text="q.get('purpose') || '—'"></dd></div>
+        <div><dt data-i18n="common.unit">Enhed</dt><dd x-text="q.get('unit') || '—'"></dd></div>
+        <div><dt data-i18n="measurements.type">Type</dt><dd x-text="q.get('type') || '—'"></dd></div>
+      </dl>
+    </section>
+
+    <!-- Filter bar: from / to calendars + row limit. #m-controls is hx-included
+         on the live requests; #m-before is the keyset cursor (OOB-updated). -->
+    <div class="filter-bar" id="m-controls">
+      <div class="filter-field">
+        <label class="form-label" data-i18n="measurements.from">Fra</label>
+        <input type="date" class="form-input" name="from" />
+      </div>
+      <div class="filter-field">
+        <label class="form-label" data-i18n="measurements.to">Til</label>
+        <input type="date" class="form-input" name="to" />
+      </div>
+      <div class="filter-field">
+        <label class="form-label" data-i18n="measurements.rows">Antal rækker</label>
+        <select class="form-select" name="limit">
+          <option>100</option><option>250</option><option>500</option>
+        </select>
+      </div>
+      <div class="filter-field filter-field--action">
+        <button type="button" class="btn-primary" data-i18n="common.apply"
+          {...(live ? { "hx-get": hxBase, "hx-include": "#m-controls", "hx-vals": hxDaq, "hx-target": "#m-rows", "hx-swap": "innerHTML", "hx-request": '{"noHeaders":true}', "_": "on click set #m-before.value to ''" } : {})}>Opdater</button>
+      </div>
+      <input type="hidden" id="m-before" name="before" value="" />
+    </div>
+
+    <!-- Measurement readings. data-endpoint carries the future contract:
+         GET <PUBLIC_RAW_MEASUREMENTS_API_BASE_URL>/measurements
+             ?daq_id=<daq>&from=<iso>&to=<iso>&limit=<n>&before=<cursor> -->
+    <div class="table-panel" data-endpoint="/measurements"
+         data-endpoint-params="daq_id,from,to,limit,before">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th data-i18n="measurements.date">Dato</th>
+            <th style="text-align:right" data-i18n="measurements.reading">Aflæsning</th>
+            <th data-i18n="common.unit">Enhed</th>
+            <th data-i18n="measurements.ingested">Indlæst (version)</th>
+          </tr>
+        </thead>
+        {live ? (
+          <tbody id="m-rows"
+            hx-get={hxBase}
+            hx-trigger="load"
+            hx-include="#m-controls"
+            hx-vals={hxDaq}
+            hx-swap="innerHTML"
+            hx-request='{"noHeaders":true}'>
+            <tr><td colspan="4" class="muted">Indlæser…</td></tr>
+          </tbody>
+        ) : (
+          <tbody id="m-rows">
+            {rows.map((r) => (
+              <tr>
+                <td class="mono">{r.ts}</td>
+                <td class="mono" style="text-align:right">{r.value}</td>
+                <td><span x-text="q.get('unit') || ''"></span></td>
+                <td class="mono muted">{r.ingested}</td>
+              </tr>
+            ))}
+          </tbody>
+        )}
+      </table>
+      <div class="table-foot">
+        <span class="muted" data-i18n="measurements.dedup_note">Viser nyeste version af hver aflæsning (max. ingested_time).</span>
+        <button type="button" class="btn-secondary" data-i18n="measurements.load_more"
+          {...(live ? { "hx-get": hxBase, "hx-include": "#m-controls", "hx-vals": hxDaq, "hx-target": "#m-rows", "hx-swap": "beforeend", "hx-request": '{"noHeaders":true}' } : {})}>Hent flere</button>
+      </div>
+    </div>
+  </div>
+</Layout>
+
+<style>
+  .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px 24px;
+    margin: 0;
+  }
+  .meta-grid > div { display: grid; gap: 2px; }
+  .meta-grid dt { font-size: var(--text-xs); color: var(--text-muted); }
+  .meta-grid dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: var(--text-sm); }
+  .filter-field--action { align-self: end; }
+  .table-foot {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border-top: 1px solid var(--border-medium);
+  }
+  @media (max-width: 760px) { .meta-grid { grid-template-columns: 1fr 1fr; } }
+</style>

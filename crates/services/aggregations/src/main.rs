@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+mod raw;
+
 // ── pure helpers ──────────────────────────────────────────────────────────────
 
 fn hn_re() -> &'static Regex {
@@ -268,6 +270,12 @@ async fn handler(event: Request, client: &Client, table: &str) -> Result<Respons
                 .collect()
         })
         .unwrap_or_default();
+
+    // Route: /measurements → raw_data viewer (HTML fragment, Datatilegnelse page);
+    // everything else → the aggregations rollup (JSON, Resource-Insights chart).
+    if uri.path().trim_end_matches('/').ends_with("/measurements") {
+        return raw::handle_measurements(&qs).await;
+    }
 
     let level_id = qs.get("level_id").cloned().unwrap_or_default();
     let resolution = qs

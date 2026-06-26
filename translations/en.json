@@ -31,7 +31,9 @@
     "measure": "View",
     "export": "Export",
     "reset_filters": "Reset filters",
-    "apply": "Show"
+    "apply": "Show",
+    "unit": "Unit",
+    "purpose": "Purpose"
   },
   "energy": {
     "electricity": "Electricity",
@@ -183,5 +185,33 @@
     "sensors_loading": "Loading sensors…",
     "no_metadata": "No metadata available",
     "metadata": "Metadata"
+  },
+  "sensor": {
+    "actions": "Actions",
+    "menu": {
+      "details": "View more details",
+      "edit": "Edit sensor",
+      "tags": "Edit tags",
+      "consumption": "Go to consumption",
+      "datatilegnelse": "Go to data acquisition",
+      "deactivate": "Deactivate sensor",
+      "delete": "Delete sensor"
+    }
+  },
+  "measurements": {
+    "title": "Data acquisition",
+    "subtitle": "Raw meter readings for the selected sensor.",
+    "metadata": "Metadata",
+    "logical_id": "Logical meter id",
+    "sensor_id": "Sensor id",
+    "type": "Type",
+    "from": "From",
+    "to": "To",
+    "rows": "Row count",
+    "date": "Date",
+    "reading": "Reading",
+    "ingested": "Ingested (version)",
+    "dedup_note": "Showing the newest version of each reading (max ingested_time).",
+    "load_more": "Load more"
   }
 }

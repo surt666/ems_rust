@@ -31,11 +31,58 @@ The company's **meter registry** — a filterable, paginated, column-configurabl
     `Vælg adfærd` (behaviour, 3).
   - Each group `Nulstil`; panel actions `Filtre`, `Visning` (columns), `Nulstil filtre`,
     `Vis målere` (apply → "show meters"), `Nulstil visning` (reset view), `Luk`.
+- **Per-row `...` action menu** (pinned-right `actionColumn`, `fa-ellipsis` toggle → `meter-list-button-menu`).
+  Screenshot: `screenshots/c997-ma-row-actionmenu.png`. Items (icon · label):
+  `fa-list` **Vis flere detaljer**, `fa-pencil` **Redigér måler**, `fa-tags` **Rediger målertags**,
+  `fa-chart-bar` **Gå til forbrug**, `fa-database` **Gå til datatilegnelse** (→ §5.2),
+  `fa-plugSlash` **Deaktivér måler** (destructive), `fa-trash-can` **Slet måler** (destructive).
 - **Charts:** none.
 - **APIs (page-specific):**
   `POST /api/meters/list` (the grid data),
   `POST /api/filter/getbuildingsbyfilter` (building-filter resolution),
   `GET /api/common/custom-filter` (saved filters).
+
+---
+
+## 5.2 Datatilegnelse (data acquisition) — `datasource?maalerId=<id>`
+Screenshot: `screenshots/c997-ma-datatilegnelse.png` · reached from the row menu's **Gå til datatilegnelse**
+(`/App/company/997/datasource?maalerId=593466&quickLink=true`). Title "Enity EMS - Datatilegnelse".
+
+The per-meter **data-source + counter-reading** workbench: which logger/source feeds the meter, its
+counter registers (incl. **start value**), and the full reading/odometer time-series with per-reading
+corrections (meter change, rollover, manual readings).
+
+- **Header:** meter name + EMS id + **physical meter number**, e.g. "Gas Billing 593466 (Fysisk
+  målernummer: 1111113)"; status toggle **`I drift` / `Under installation`**.
+- **Filter bar:** `Fra` / `Til` (datasource validity date range), `Fysisk målernummer`, `Type`.
+- **Datasource block:** header `electrocom (Box: 11848302)` + validity `1.1.2015, 01.00 – 31.12.2099,
+  01.00`; **Type** dropdown = the logger/source vocabulary: `Electrocom, Danfoss, Danfoss_v2,
+  lichtwart, Techem, Datahub, Kinect, ME1 import, CsvFile, ME1 Conversion, Manual, Import Historical,
+  Brunata, DS En…`. (This is the *datatilegnelse* concept the Oversigt "Fjernaflæst datatilegnelse"
+  count rolls up — Datalogger / API / Filer.)
+- **Counter-registers grid (Tællerdele):** columns `Enhed` (unit), `Gange-faktor` (multiplier),
+  `Omregningsfaktor` (conversion factor), **`Startværdi`** (start value), `DAQ ID`, `Indberettes i
+  forbrug` (reported in consumption Y/N). Example row `T1`: `m³-Ngas | 1 | 1 | 0 |
+  electrocom:11848302:11848302:1 | Nej` (DAQ ID = `logger:box:box:register`). `Gem opsætning` saves.
+- **Readings grid** (per register tab, e.g. `T1 Energi`): columns `Dato` (date+hour), **`Ans.
+  tællerst.`** (anslået tællerstand = estimated counter reading / **odometer**), `Aflæsning` (actual
+  reading), `Forbrug` (consumption). Hourly rows. Period selector `Vælg periode` (date range) +
+  `Antal rækker` (row cap, "100 / N") + export. Toolbar: **`Indsæt ny aflæsning`**, `Slet datakilde`,
+  `Luk`.
+- **Per-reading `...` menu** (the important one): `Indsæt aflæsning over` / `…under`, `Rediger
+  aflæsning`, `Slet aflæsning`, **`Justér anslået tællerstand`** (adjust estimated odometer),
+  `Gå til forbrug`, **`Tællervending`** (counter rollover/wrap), **`Målerskifte`** (meter change /
+  device swap), `Split datakilde her`, `Vis ændringslog (N)` (change log).
+- **Charts:** none (grids only).
+- **APIs:** `GET /api/meters/{id}/datasources/entities`, `GET
+  /api/meters/{id}/datasources/counters?isActive=true`, `POST /api/sensorMeasurements/getmeasurements`.
+
+> **Relevance to the base-value plan** (`docs/superpowers/specs/2026-06-26-physical-meter-reading-base-value.md`):
+> the real EMS already models this domain explicitly — **`Startværdi`** per counter register = the
+> per-meter base; **`Ans. tællerst.`** = the reconstructed odometer shown to users; **`Målerskifte`**
+> and **`Tællervending`** are the meter-change / rollover events that reset the base; **`Justér anslået
+> tællerstand`** is a manual odometer correction. Strong naming + requirements reference for when that
+> plan resumes.
 
 ---
 

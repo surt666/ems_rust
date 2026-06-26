@@ -587,8 +587,50 @@ pub fn render_sensors(sensors: &[Sensor]) -> Markup {
     } else {
         html! {
             @for s in sensors {
-                li class="sensor-item" {
-                    (s.daq_id) " (" (s.purpose) ")"
+                (render_sensor_row(s))
+            }
+        }
+    }
+}
+
+/// A single sensor `<li>`: label on the left, a native `<details>` "…" (kebab)
+/// action menu on the right. `<details>` needs no JS, so it survives the HTMX
+/// swap into `#sensor-list`. Only **Gå til datatilegnelse** is wired (links to
+/// the measurements page, carrying the sensor's identity + metadata as query
+/// params); the other items mirror the EMS meter menu and are inert for now
+/// (`_="on click halt"` stops the placeholder `#` navigation).
+fn render_sensor_row(s: &Sensor) -> Markup {
+    let sid = s.id.to_string(); // "S#20001"
+    let logical = sid.strip_prefix("S#").unwrap_or(&sid);
+    let unit = s.unit.clone().unwrap_or_default();
+    // Trailing slash BEFORE the query — the static host 301s `/measurements?x`
+    // → `/measurements/` and drops the query string; `/measurements/?x` doesn't.
+    let datatilegnelse = format!(
+        "/measurements/?daq={}&sid={}&logical={}&purpose={}&unit={}&type={}",
+        urlencoding::encode(&s.daq_id),
+        urlencoding::encode(&sid),
+        urlencoding::encode(logical),
+        urlencoding::encode(&s.purpose),
+        urlencoding::encode(&unit),
+        urlencoding::encode(&s.meter_type.to_string()),
+    );
+    html! {
+        li class="sensor-item sensor-row" {
+            div class="sensor-row__label" {
+                span class="sensor-row__name" { (s.purpose) }
+                " "
+                span class="muted" { "(" (s.daq_id) ")" }
+            }
+            details class="kebab" {
+                summary class="kebab__toggle" title="Handlinger" data-i18n-title="sensor.actions" { "\u{22EF}" }
+                div class="action-dropdown kebab__menu" {
+                    a href="#" _="on click halt" data-i18n="sensor.menu.details" { "Vis flere detaljer" }
+                    a href="#" _="on click halt" data-i18n="sensor.menu.edit" { "Redigér sensor" }
+                    a href="#" _="on click halt" data-i18n="sensor.menu.tags" { "Redigér tags" }
+                    a href="#" _="on click halt" data-i18n="sensor.menu.consumption" { "Gå til forbrug" }
+                    a href=(datatilegnelse) data-i18n="sensor.menu.datatilegnelse" { "Gå til datatilegnelse" }
+                    a href="#" class="danger-link" _="on click halt" data-i18n="sensor.menu.deactivate" { "Deaktivér sensor" }
+                    a href="#" class="danger-link" _="on click halt" data-i18n="sensor.menu.delete" { "Slet sensor" }
                 }
             }
         }

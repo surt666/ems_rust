@@ -19,3 +19,8 @@ chrono.workspace = true
 regex.workspace = true
 anyhow.workspace = true
 url.workspace = true
+# /measurements route — direct Iceberg/S3Tables read of all.raw_data (no Athena).
+futures.workspace = true
+iceberg.workspace = true
+iceberg-catalog-s3tables.workspace = true
+arrow-array.workspace = true

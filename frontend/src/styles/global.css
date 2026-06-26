@@ -1280,6 +1280,36 @@ dialog::backdrop {
   font-size: var(--text-sm);
 }
 
+/* Sensor row with a kebab action menu */
+.sensor-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+.sensor-row__name { font-weight: 600; }
+
+/* Native <details> kebab — no JS, survives htmx swaps */
+.kebab {
+  position: relative;
+  justify-self: end;
+}
+.kebab__toggle {
+  list-style: none;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--text-lg);
+  line-height: 1;
+  user-select: none;
+}
+.kebab__toggle::-webkit-details-marker { display: none; }
+.kebab__toggle::marker { content: ""; }
+.kebab__toggle:hover { background: var(--bg-panel); color: var(--text-primary); }
+.kebab[open] .kebab__toggle { background: var(--bg-panel); color: var(--text-primary); }
+.kebab__menu { margin-top: 6px; }
+
 /* Permission grid rows */
 .permission-row {
   padding: 12px;
