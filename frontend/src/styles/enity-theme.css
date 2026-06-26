@@ -51,16 +51,17 @@ body { background: var(--bg-dark); color: var(--text-primary); }
    ============================================================ */
 .sidebar,
 .top-nav {
-  background: var(--bg-deepest);
   border-color: #2b3a4a;
 }
+.top-nav { background: var(--bg-deepest); }          /* navy chrome */
+.sidebar { background: #16323a; }                    /* dark teal/petrol (matches the EMS reference) */
 
 .sidebar-label        { color: #7c8a99; }
 /* Rust-generated tree uses .node-name-link; light text so it's visible on the
    dark navy sidebar (it inherits the now-dark --text-secondary otherwise). */
 .tree-item,
 .node-name-link       { color: #c5ced8; }
-.tree-item:hover      { background: #1f2c3b; }
+.tree-item:hover      { background: #1f3a40; }
 .tree-icon            { color: #3cb89e; }      /* teal home icons */
 
 /* Selected tree row: solid orange + white text
@@ -71,7 +72,7 @@ body { background: var(--bg-dark); color: var(--text-primary); }
   color: #ffffff;
 }
 .tree-item.selected .tree-icon { stroke: #ffffff; color: #ffffff; }
-.node-name-link:hover:not(.selected) { background: #1f2c3b; }
+.node-name-link:hover:not(.selected) { background: #1f3a40; }
 
 /* Hierarchy toggle arrows stay readable on dark */
 .tree-toggle-area { color: #7c8a99; }
@@ -122,7 +123,7 @@ body { background: var(--bg-dark); color: var(--text-primary); }
   width: 100%;
   appearance: none;
   -webkit-appearance: none;
-  background-color: #1f2c3b;
+  background-color: #1d3a41;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%237c8a99' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 14px center;
@@ -138,7 +139,7 @@ body { background: var(--bg-dark); color: var(--text-primary); }
 }
 .hier-select:hover { border-color: #3a4d61; }
 .hier-select:focus { outline: none; border-color: var(--accent); }
-.hier-select option { background: #1f2c3b; color: #c5ced8; font-weight: 400; }
+.hier-select option { background: #1d3a41; color: #c5ced8; font-weight: 400; }
 
 /* Orange ONLY when this partner/company is the currently-selected node — the same
    "selected" highlight a chosen subnode gets in the tree (.node-name-link.selected). */
