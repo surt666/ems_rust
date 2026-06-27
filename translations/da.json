@@ -212,6 +212,7 @@
     "reading": "Aflæsning",
     "ingested": "Indlæst (version)",
     "dedup_note": "Viser nyeste version af hver aflæsning (max. ingested_time).",
-    "load_more": "Hent flere"
+    "load_more": "Hent flere",
+    "use_redshift": "Redshift (VPC)"
   }
 }

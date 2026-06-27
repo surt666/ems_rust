@@ -2784,6 +2784,20 @@ dialog::backdrop {
   margin-bottom: 1rem;
   overflow-x: auto;
 }
+/* Backend toggle (Athena ⇄ Redshift) sitting in the filter bar */
+.filter-toggle {
+  display: inline-grid;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 6px;
+  align-self: end;
+  padding-bottom: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.filter-toggle input { cursor: pointer; }
 .filter-bar__group {
   display: grid;
   gap: 4px;
