@@ -30,6 +30,10 @@ use model::repository::EdgeSpec;
 
 use crate::command::Command;
 use crate::json;
+use crate::repo_fns::{
+    delete_edge_fn, delete_user_fn, get_node_fn, get_user_fn, list_access_edges_fn,
+    list_blocked_nodes_fn, list_children_fn, put_edge_fn, put_node_fn, put_user_fn, repo_parts,
+};
 
 // ---------------------------------------------------------------------------
 // Response helpers (ok_response / error_response)
@@ -53,35 +57,44 @@ fn bad_request(msg: &str) -> Value {
     })
 }
 
-fn repo_error_response(e: RepositoryError) -> Value {
-    let (status, code, msg) = match &e {
-        RepositoryError::NotFound(id) => (404, "Not_found", format!("{} not found", id)),
-        RepositoryError::NotFoundUser(id) => (404, "Not_found", format!("{} not found", id)),
-        RepositoryError::Conflict(m) => (409, "Conflict", m.clone()),
-        RepositoryError::BadRequest(m) => (400, "Bad_request", m.clone()),
-        RepositoryError::Validation(errs) => {
-            let details: Vec<_> = errs
-                .iter()
-                .map(|e| json!({"path": e.path, "message": e.message}))
-                .collect();
-            return json!({
-                "statusCode": 400,
-                "body": json!({
-                    "error": {
-                        "code": "Validation",
-                        "message": "validation failed",
-                        "details": details
-                    }
-                }).to_string()
-            });
-        }
-        RepositoryError::SchemaMissing(id) => {
-            (400, "Schema_missing", format!("no hn2 schema found above {}", id))
-        }
-        RepositoryError::Codec(m) => (500, "Internal", m.clone()),
-        RepositoryError::Aws(m) => (500, "Internal", m.clone()),
-    };
+/// Parse an optional string field into `Option<T>`. `None` stays `None`; a present
+/// value is `FromStr`-parsed, and a parse failure short-circuits as a
+/// `bad_request` envelope (returned via the `Err` arm at the call site).
+fn parse_opt<T>(s: &Option<String>, label: &str) -> Result<Option<T>, Value>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    match s {
+        None => Ok(None),
+        Some(s) => s
+            .parse::<T>()
+            .map(Some)
+            .map_err(|e| bad_request(&format!("bad {}: {}", label, e))),
+    }
+}
 
+fn repo_error_response(e: RepositoryError) -> Value {
+    // Validation carries a per-error `details` array (the contract); the rest map
+    // through the shared `repo_parts`.
+    if let RepositoryError::Validation(errs) = &e {
+        let details: Vec<_> = errs
+            .iter()
+            .map(|e| json!({"path": e.path, "message": e.message}))
+            .collect();
+        return json!({
+            "statusCode": 400,
+            "body": json!({
+                "error": {
+                    "code": "Validation",
+                    "message": "validation failed",
+                    "details": details
+                }
+            }).to_string()
+        });
+    }
+
+    let (status, code, msg) = repo_parts(&e);
     json!({
         "statusCode": status,
         "body": json!({
@@ -147,12 +160,9 @@ where
         Err(e) => return bad_request(&format!("bad parent_id: {}", e)),
     };
 
-    let level_parsed = match level {
-        None => None,
-        Some(ref s) => match s.parse::<model::domain::ids::Level>() {
-            Ok(l) => Some(l),
-            Err(e) => return bad_request(&format!("bad level: {}", e)),
-        },
+    let level_parsed = match parse_opt::<model::domain::ids::Level>(&level, "level") {
+        Ok(v) => v,
+        Err(r) => return r,
     };
 
     let schema_parsed = match schema_val {
@@ -325,19 +335,13 @@ where
     let cognito_group = profile.to_cognito_group();
 
     // Parse optional language / currency.
-    let language = match language_s {
-        None => None,
-        Some(ref s) => match s.parse::<Language>() {
-            Ok(l) => Some(l),
-            Err(e) => return bad_request(&format!("bad language: {}", e)),
-        },
+    let language = match parse_opt::<Language>(&language_s, "language") {
+        Ok(v) => v,
+        Err(r) => return r,
     };
-    let currency = match currency_s {
-        None => None,
-        Some(ref s) => match s.parse::<Currency>() {
-            Ok(c) => Some(c),
-            Err(e) => return bad_request(&format!("bad currency: {}", e)),
-        },
+    let currency = match parse_opt::<Currency>(&currency_s, "currency") {
+        Ok(v) => v,
+        Err(r) => return r,
     };
 
     // 2. Create user in DDB.
@@ -445,26 +449,17 @@ where
         Ok(i) => i,
         Err(e) => return bad_request(&format!("bad id: {}", e)),
     };
-    let cognito_group = match cognito_group_s {
-        None => None,
-        Some(ref s) => match s.parse::<CognitoGroup>() {
-            Ok(g) => Some(g),
-            Err(e) => return bad_request(&format!("bad cognito_group: {}", e)),
-        },
+    let cognito_group = match parse_opt::<CognitoGroup>(&cognito_group_s, "cognito_group") {
+        Ok(v) => v,
+        Err(r) => return r,
     };
-    let language = match language_s {
-        None => None,
-        Some(ref s) => match s.parse::<Language>() {
-            Ok(l) => Some(l),
-            Err(e) => return bad_request(&format!("bad language: {}", e)),
-        },
+    let language = match parse_opt::<Language>(&language_s, "language") {
+        Ok(v) => v,
+        Err(r) => return r,
     };
-    let currency = match currency_s {
-        None => None,
-        Some(ref s) => match s.parse::<Currency>() {
-            Ok(c) => Some(c),
-            Err(e) => return bad_request(&format!("bad currency: {}", e)),
-        },
+    let currency = match parse_opt::<Currency>(&currency_s, "currency") {
+        Ok(v) => v,
+        Err(r) => return r,
     };
 
     match users::update(
@@ -762,7 +757,7 @@ where
 ///
 /// Obtains shared clients (OnceCell) and builds the real repository closures.
 pub async fn run(cmd: Command) -> Value {
-    use model::repository::dynamodb::{edge, node as ddb_node, sensor as ddb_sensor, user};
+    use model::repository::dynamodb::{node as ddb_node, sensor as ddb_sensor};
 
     let ddb = model::get_dynamodb_client().await;
     let cog = model::get_cognito_client().await;
@@ -785,22 +780,8 @@ pub async fn run(cmd: Command) -> Value {
                 label,
                 metadata,
                 schema,
-                {
-                    let t = table.clone();
-                    move |id| {
-                        let t = t.clone();
-                        async move { ddb_node::get_node(ddb, &t, &id).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |parent, kind: Option<EdgeKind>| {
-                        let t = t.clone();
-                        async move {
-                            ddb_node::list_children(ddb, &t, &parent, kind.as_ref()).await
-                        }
-                    }
-                },
+                get_node_fn(ddb, table.clone()),
+                list_children_fn(ddb, table.clone()),
                 {
                     let t = table.clone();
                     move |level, build: Box<dyn Fn(u32) -> (Node, EdgeSpec) + Send>| {
@@ -829,13 +810,7 @@ pub async fn run(cmd: Command) -> Value {
         Command::DeleteNode { id } => {
             handle_delete_node(
                 id,
-                {
-                    let t = table.clone();
-                    move |nid| {
-                        let t = t.clone();
-                        async move { ddb_node::get_node(ddb, &t, &nid).await }
-                    }
-                },
+                get_node_fn(ddb, table.clone()),
                 {
                     let t = table.clone();
                     move |nid| {
@@ -851,20 +826,8 @@ pub async fn run(cmd: Command) -> Value {
             handle_update_node(
                 id,
                 metadata,
-                {
-                    let t = table.clone();
-                    move |nid| {
-                        let t = t.clone();
-                        async move { ddb_node::get_node(ddb, &t, &nid).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |node| {
-                        let t = t.clone();
-                        async move { ddb_node::put_node(ddb, &t, &node).await }
-                    }
-                },
+                get_node_fn(ddb, table.clone()),
+                put_node_fn(ddb, table.clone()),
             )
             .await
         }
@@ -886,13 +849,7 @@ pub async fn run(cmd: Command) -> Value {
                 unit,
                 resample_minutes,
                 formula,
-                {
-                    let t = table.clone();
-                    move |id| {
-                        let t = t.clone();
-                        async move { ddb_node::get_node(ddb, &t, &id).await }
-                    }
-                },
+                get_node_fn(ddb, table.clone()),
                 {
                     let t = table.clone();
                     move |build: Box<dyn Fn(u32) -> (Sensor, EdgeSpec) + Send>| {
@@ -959,7 +916,6 @@ pub async fn run(cmd: Command) -> Value {
             allowed,
             blocked,
         } => {
-            let pool = pool_id.clone();
             handle_create_user(
                 email,
                 name,
@@ -968,82 +924,19 @@ pub async fn run(cmd: Command) -> Value {
                 currency,
                 allowed,
                 blocked,
-                {
-                    let t = table.clone();
-                    move |uid| {
-                        let t = t.clone();
-                        async move { user::get_user(ddb, &t, &uid).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |u| {
-                        let t = t.clone();
-                        async move { user::put_user(ddb, &t, &u).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |id| {
-                        let t = t.clone();
-                        async move { ddb_node::get_node(ddb, &t, &id).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |spec: EdgeSpec| {
-                        let t = t.clone();
-                        async move {
-                            edge::put_edge(
-                                ddb,
-                                &t,
-                                &spec.from_,
-                                &spec.to_,
-                                &spec.kind,
-                                &spec.name,
-                                &chrono::Utc::now(),
-                                None,
-                            )
-                            .await
-                        }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |uid| {
-                        let t = t.clone();
-                        async move { user::list_access_edges(ddb, &t, &uid).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |uid| {
-                        let t = t.clone();
-                        async move { user::list_blocked_nodes(ddb, &t, &uid).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |from_, to_, kind| {
-                        let t = t.clone();
-                        async move { edge::delete_edge(ddb, &t, &from_, &to_, &kind).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |uid| {
-                        let t = t.clone();
-                        async move { user::delete_user(ddb, &t, &uid).await }
-                    }
-                },
-                move |email, name, group| {
-                    let pool = pool.clone();
-                    async move {
-                        model::repository::cognito::user::provision_cognito_user(
-                            cog, &pool, &email, &name, group,
-                        )
-                        .await
-                    }
+                get_user_fn(ddb, table.clone()),
+                put_user_fn(ddb, table.clone()),
+                get_node_fn(ddb, table.clone()),
+                put_edge_fn(ddb, table.clone()),
+                list_access_edges_fn(ddb, table.clone()),
+                list_blocked_nodes_fn(ddb, table.clone()),
+                delete_edge_fn(ddb, table.clone()),
+                delete_user_fn(ddb, table.clone()),
+                move |email, name, group| async move {
+                    model::repository::cognito::user::provision_cognito_user(
+                        cog, &pool_id, &email, &name, group,
+                    )
+                    .await
                 },
             )
             .await
@@ -1062,70 +955,24 @@ pub async fn run(cmd: Command) -> Value {
                 cognito_group,
                 language,
                 currency,
-                {
-                    let t = table.clone();
-                    move |uid| {
-                        let t = t.clone();
-                        async move { user::get_user(ddb, &t, &uid).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |u| {
-                        let t = t.clone();
-                        async move { user::put_user(ddb, &t, &u).await }
-                    }
-                },
+                get_user_fn(ddb, table.clone()),
+                put_user_fn(ddb, table.clone()),
             )
             .await
         }
 
         Command::DeleteUser { email, id } => {
             let email_or_id = email.or(id).unwrap_or_default();
-            let pool = pool_id.clone();
             handle_delete_user(
                 &email_or_id,
-                {
-                    let t = table.clone();
-                    move |uid| {
-                        let t = t.clone();
-                        async move { user::get_user(ddb, &t, &uid).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |uid| {
-                        let t = t.clone();
-                        async move { user::list_access_edges(ddb, &t, &uid).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |uid| {
-                        let t = t.clone();
-                        async move { user::list_blocked_nodes(ddb, &t, &uid).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |from_, to_, kind| {
-                        let t = t.clone();
-                        async move { edge::delete_edge(ddb, &t, &from_, &to_, &kind).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |uid| {
-                        let t = t.clone();
-                        async move { user::delete_user(ddb, &t, &uid).await }
-                    }
-                },
-                move |email| {
-                    let pool = pool.clone();
-                    async move {
-                        model::repository::cognito::user::delete_cognito_user(cog, &pool, &email)
-                            .await
-                    }
+                get_user_fn(ddb, table.clone()),
+                list_access_edges_fn(ddb, table.clone()),
+                list_blocked_nodes_fn(ddb, table.clone()),
+                delete_edge_fn(ddb, table.clone()),
+                delete_user_fn(ddb, table.clone()),
+                move |email| async move {
+                    model::repository::cognito::user::delete_cognito_user(cog, &pool_id, &email)
+                        .await
                 },
             )
             .await
@@ -1135,95 +982,24 @@ pub async fn run(cmd: Command) -> Value {
             handle_block_user(
                 user_id,
                 node_id,
-                {
-                    let t = table.clone();
-                    move |uid| {
-                        let t = t.clone();
-                        async move { user::get_user(ddb, &t, &uid).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |nid| {
-                        let t = t.clone();
-                        async move { ddb_node::get_node(ddb, &t, &nid).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |spec: EdgeSpec| {
-                        let t = t.clone();
-                        async move {
-                            edge::put_edge(
-                                ddb,
-                                &t,
-                                &spec.from_,
-                                &spec.to_,
-                                &spec.kind,
-                                &spec.name,
-                                &chrono::Utc::now(),
-                                None,
-                            )
-                            .await
-                        }
-                    }
-                },
+                get_user_fn(ddb, table.clone()),
+                get_node_fn(ddb, table.clone()),
+                put_edge_fn(ddb, table.clone()),
             )
             .await
         }
 
         Command::UnblockUser { user_id, node_id } => {
-            handle_unblock_user(
-                user_id,
-                node_id,
-                {
-                    let t = table.clone();
-                    move |from_, to_, kind| {
-                        let t = t.clone();
-                        async move { edge::delete_edge(ddb, &t, &from_, &to_, &kind).await }
-                    }
-                },
-            )
-            .await
+            handle_unblock_user(user_id, node_id, delete_edge_fn(ddb, table.clone())).await
         }
 
         Command::GrantAdministrates { user_id, node_id } => {
             handle_grant_administrates(
                 user_id,
                 node_id,
-                {
-                    let t = table.clone();
-                    move |uid| {
-                        let t = t.clone();
-                        async move { user::get_user(ddb, &t, &uid).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |nid| {
-                        let t = t.clone();
-                        async move { ddb_node::get_node(ddb, &t, &nid).await }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |spec: EdgeSpec| {
-                        let t = t.clone();
-                        async move {
-                            edge::put_edge(
-                                ddb,
-                                &t,
-                                &spec.from_,
-                                &spec.to_,
-                                &spec.kind,
-                                &spec.name,
-                                &chrono::Utc::now(),
-                                None,
-                            )
-                            .await
-                        }
-                    }
-                },
+                get_user_fn(ddb, table.clone()),
+                get_node_fn(ddb, table.clone()),
+                put_edge_fn(ddb, table.clone()),
             )
             .await
         }

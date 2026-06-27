@@ -136,7 +136,7 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
           end">
   <ul id="hier-tree-list" class="nested-list"
       hx-get={`${API_BASE_URL}/hierarchy/query/nodes`}
-      hx-vals="js:{user: localStorage.getItem('loginId'), id: (sessionStorage.getItem('selectedCompanyId') || document.getElementById('company-select').value)}"
+      hx-vals="js:{user: localStorage.getItem('loginId'), id: (sessionStorage.getItem('selectedCompanyId') || document.getElementById('company-select').value), path: (sessionStorage.getItem('selectedCompanyId') || document.getElementById('company-select').value)}"
       hx-request='{"noHeaders": true}'
       hx-target="#hier-tree-list"
       hx-swap="innerHTML"

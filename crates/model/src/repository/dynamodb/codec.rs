@@ -67,12 +67,12 @@ fn field<'a>(item: &'a Item, k: &str) -> Result<&'a AttributeValue, RepositoryEr
     item.get(k).ok_or_else(|| RepositoryError::Codec(format!("missing field {:?}", k)))
 }
 
-fn field_map<'a>(
-    map: &'a HashMap<String, AttributeValue>,
-    k: &str,
-) -> Result<&'a AttributeValue, RepositoryError> {
-    map.get(k)
-        .ok_or_else(|| RepositoryError::Codec(format!("missing field {:?}", k)))
+/// Extract an optional `S` attribute as an owned `String`.
+fn opt_s(item: &Item, k: &str) -> Option<String> {
+    match item.get(k) {
+        Some(AttributeValue::S(v)) => Some(v.clone()),
+        _ => None,
+    }
 }
 
 fn as_s(v: &AttributeValue) -> Result<&str, RepositoryError> {
@@ -96,23 +96,10 @@ fn as_l(v: &AttributeValue) -> Result<&Vec<AttributeValue>, RepositoryError> {
     }
 }
 
-fn opt_int_of_n(v: Option<&AttributeValue>) -> Option<i32> {
+/// Parse an optional numeric `N` attribute into any `FromStr` type.
+fn opt_num_of_n<T: std::str::FromStr>(v: Option<&AttributeValue>) -> Option<T> {
     match v {
-        Some(AttributeValue::N(s)) => s.parse::<i32>().ok(),
-        _ => None,
-    }
-}
-
-fn opt_i64_of_n(v: Option<&AttributeValue>) -> Option<i64> {
-    match v {
-        Some(AttributeValue::N(s)) => s.parse::<i64>().ok(),
-        _ => None,
-    }
-}
-
-fn opt_f64_of_n(v: Option<&AttributeValue>) -> Option<f64> {
-    match v {
-        Some(AttributeValue::N(s)) => s.parse::<f64>().ok(),
+        Some(AttributeValue::N(s)) => s.parse::<T>().ok(),
         _ => None,
     }
 }
@@ -129,13 +116,7 @@ fn format_float_g17(f: f64) -> String {
             "-infinity".to_string()
         };
     }
-    // Format with enough precision, then trim.
-    // Use Rust's default f64 Display which already gives shortest representation,
-    // but we need exactly %.17g behavior (17 significant digits).
-    format!("{:.17e}", f)
-        .parse::<f64>()
-        .map(|_| format_g17(f))
-        .unwrap_or_else(|_| format!("{}", f))
+    format_g17(f)
 }
 
 /// Reproduce `%.17g`: up to 17 significant digits, no trailing zeros,
@@ -198,15 +179,24 @@ fn format_g17(f: f64) -> String {
 // GSI key helpers (node_gsi1pk / sensor_gsi1pk)
 // ---------------------------------------------------------------------------
 
-fn node_gsi1pk(lvl: Level) -> String {
+pub(crate) fn node_gsi1pk(lvl: Level) -> String {
     format!("HN{}", lvl.depth())
 }
 
-const SENSOR_GSI1PK: &str = "S";
+pub(crate) const SENSOR_GSI1PK: &str = "S";
 
 // ---------------------------------------------------------------------------
 // Formula encode/decode (expr_to_attr / formula_to_attr)
 // ---------------------------------------------------------------------------
+
+/// Encode a binary expression node `{t, l, r}`.
+fn binop(tag: &str, l: &Expr, r: &Expr) -> AttributeValue {
+    let mut m: HashMap<String, AttributeValue> = HashMap::new();
+    m.insert("t".to_string(), s(tag));
+    m.insert("l".to_string(), expr_to_av(l));
+    m.insert("r".to_string(), expr_to_av(r));
+    AttributeValue::M(m)
+}
 
 fn expr_to_av(e: &Expr) -> AttributeValue {
     let mut m: HashMap<String, AttributeValue> = HashMap::new();
@@ -230,39 +220,19 @@ fn expr_to_av(e: &Expr) -> AttributeValue {
             m.insert("e".to_string(), expr_to_av(inner));
             AttributeValue::M(m)
         }
-        Expr::Add(a, b) => {
-            m.insert("t".to_string(), s("add"));
-            m.insert("l".to_string(), expr_to_av(a));
-            m.insert("r".to_string(), expr_to_av(b));
-            AttributeValue::M(m)
-        }
-        Expr::Sub(a, b) => {
-            m.insert("t".to_string(), s("sub"));
-            m.insert("l".to_string(), expr_to_av(a));
-            m.insert("r".to_string(), expr_to_av(b));
-            AttributeValue::M(m)
-        }
-        Expr::Mul(a, b) => {
-            m.insert("t".to_string(), s("mul"));
-            m.insert("l".to_string(), expr_to_av(a));
-            m.insert("r".to_string(), expr_to_av(b));
-            AttributeValue::M(m)
-        }
-        Expr::Div(a, b) => {
-            m.insert("t".to_string(), s("div"));
-            m.insert("l".to_string(), expr_to_av(a));
-            m.insert("r".to_string(), expr_to_av(b));
-            AttributeValue::M(m)
-        }
+        Expr::Add(a, b) => binop("add", a, b),
+        Expr::Sub(a, b) => binop("sub", a, b),
+        Expr::Mul(a, b) => binop("mul", a, b),
+        Expr::Div(a, b) => binop("div", a, b),
     }
 }
 
 fn expr_of_av(v: &AttributeValue) -> Result<Expr, RepositoryError> {
     let kvs = as_m(v)?;
-    let tag = as_s(field_map(kvs, "t")?)?;
+    let tag = as_s(field(kvs, "t")?)?;
     match tag {
         "num" => {
-            let nv = field_map(kvs, "v")?;
+            let nv = field(kvs, "v")?;
             match nv {
                 AttributeValue::N(s) => s
                     .parse::<f64>()
@@ -273,22 +243,23 @@ fn expr_of_av(v: &AttributeValue) -> Result<Expr, RepositoryError> {
         }
         "self" => Ok(Expr::SelfRef),
         "ref" => {
-            let a = as_s(field_map(kvs, "a")?)?;
+            let a = as_s(field(kvs, "a")?)?;
             Ok(Expr::Ref(a.to_string()))
         }
         "abs" => {
-            let e = field_map(kvs, "e")?;
+            let e = field(kvs, "e")?;
             Ok(Expr::Abs(Box::new(expr_of_av(e)?)))
         }
         "add" | "sub" | "mul" | "div" => {
-            let l = expr_of_av(field_map(kvs, "l")?)?;
-            let r = expr_of_av(field_map(kvs, "r")?)?;
-            match tag {
-                "add" => Ok(Expr::Add(Box::new(l), Box::new(r))),
-                "sub" => Ok(Expr::Sub(Box::new(l), Box::new(r))),
-                "mul" => Ok(Expr::Mul(Box::new(l), Box::new(r))),
-                _ => Ok(Expr::Div(Box::new(l), Box::new(r))),
-            }
+            let ctor: fn(Box<Expr>, Box<Expr>) -> Expr = match tag {
+                "add" => Expr::Add,
+                "sub" => Expr::Sub,
+                "mul" => Expr::Mul,
+                _ => Expr::Div,
+            };
+            let l = expr_of_av(field(kvs, "l")?)?;
+            let r = expr_of_av(field(kvs, "r")?)?;
+            Ok(ctor(Box::new(l), Box::new(r)))
         }
         other => Err(RepositoryError::Codec(format!("unknown expr tag {:?}", other))),
     }
@@ -320,13 +291,13 @@ fn formula_to_av(f: &Formula) -> AttributeValue {
 
 fn formula_of_av(v: &AttributeValue) -> Result<Formula, RepositoryError> {
     let kvs = as_m(v)?;
-    let kind = as_s(field_map(kvs, "kind")?)?;
+    let kind = as_s(field(kvs, "kind")?)?;
     match kind {
         "identity" => Ok(Formula::Identity),
         "zero" => Ok(Formula::Zero),
         "expr" => {
-            let ast = expr_of_av(field_map(kvs, "ast")?)?;
-            let refs_av = field_map(kvs, "refs")?;
+            let ast = expr_of_av(field(kvs, "ast")?)?;
+            let refs_av = field(kvs, "refs")?;
             let refs_m = as_m(refs_av)?;
             let mut refs: Vec<(String, SensorId)> = Vec::new();
             for (alias, nv) in refs_m {
@@ -470,28 +441,28 @@ pub fn schema_to_av(sch: &Schema) -> AttributeValue {
 
 fn decode_field_spec(v: &AttributeValue) -> Result<FieldSpec, RepositoryError> {
     let kvs = as_m(v)?;
-    let typ_s = as_s(field_map(kvs, "type")?)?;
+    let typ_s = as_s(field(kvs, "type")?)?;
     let required = match kvs.get("required") {
         Some(AttributeValue::Bool(b)) => *b,
         _ => false,
     };
     let typ = match typ_s {
         "string" => FieldType::String {
-            min_len: opt_i64_of_n(kvs.get("min_len")),
-            max_len: opt_i64_of_n(kvs.get("max_len")),
+            min_len: opt_num_of_n::<i64>(kvs.get("min_len")),
+            max_len: opt_num_of_n::<i64>(kvs.get("max_len")),
         },
         "number" => FieldType::Number {
-            min: opt_f64_of_n(kvs.get("min")),
-            max: opt_f64_of_n(kvs.get("max")),
+            min: opt_num_of_n::<f64>(kvs.get("min")),
+            max: opt_num_of_n::<f64>(kvs.get("max")),
         },
         "integer" => FieldType::Integer {
-            min: opt_i64_of_n(kvs.get("min")),
-            max: opt_i64_of_n(kvs.get("max")),
+            min: opt_num_of_n::<i64>(kvs.get("min")),
+            max: opt_num_of_n::<i64>(kvs.get("max")),
         },
         "boolean" => FieldType::Boolean,
         "timestamp" => FieldType::Timestamp,
         "enum" => {
-            let xs = as_l(field_map(kvs, "one_of")?)?;
+            let xs = as_l(field(kvs, "one_of")?)?;
             let vals: Result<Vec<String>, _> = xs.iter().map(|x| as_s(x).map(str::to_string)).collect();
             FieldType::Enum { one_of: vals? }
         }
@@ -508,8 +479,8 @@ fn decode_field_spec(v: &AttributeValue) -> Result<FieldSpec, RepositoryError> {
 fn decode_edge_spec(body: &AttributeValue) -> Result<EdgeSpec, RepositoryError> {
     let kvs = as_m(body)?;
     Ok(EdgeSpec {
-        min: opt_int_of_n(kvs.get("min")),
-        max: opt_int_of_n(kvs.get("max")),
+        min: opt_num_of_n::<i32>(kvs.get("min")),
+        max: opt_num_of_n::<i32>(kvs.get("max")),
     })
 }
 
@@ -518,7 +489,7 @@ fn decode_edge_spec(body: &AttributeValue) -> Result<EdgeSpec, RepositoryError> 
 #[allow(clippy::type_complexity)]
 pub fn schema_of_av(v: &AttributeValue) -> Result<Schema, RepositoryError> {
     let kvs = as_m(v)?;
-    let version = match field_map(kvs, "version")? {
+    let version = match field(kvs, "version")? {
         AttributeValue::N(s) => s.parse::<u32>().map_err(|_| {
             RepositoryError::Codec("bad version N".to_string())
         })?,
@@ -535,7 +506,7 @@ pub fn schema_of_av(v: &AttributeValue) -> Result<Schema, RepositoryError> {
     // randomized per instance, so decode every level and sort by key. This keeps
     // the schema's field/child order stable across decodes (no per-reload
     // shuffling) and matches the deterministic order `schema_of_json` produces.
-    let edges_kvs = as_m(field_map(kvs, "edges")?)?;
+    let edges_kvs = as_m(field(kvs, "edges")?)?;
     let mut edges: Vec<(String, Vec<(String, EdgeSpec)>)> = Vec::new();
     for (parent, inner_v) in edges_kvs {
         let inner_kvs = as_m(inner_v)?;
@@ -598,7 +569,6 @@ pub fn node_to_item(nd: &Node) -> Item {
     item.insert(
         "metadata".to_string(),
         serde_dynamo::to_attribute_value(&nd.metadata)
-            .map_err(|e| RepositoryError::Codec(format!("metadata encode: {}", e)))
             .unwrap_or_else(|_| AttributeValue::M(HashMap::new())),
     );
     item.insert("gsi1pk".to_string(), s(node_gsi1pk(nd.level())));
@@ -632,20 +602,10 @@ pub fn node_of_item(item: &Item) -> Result<Node, RepositoryError> {
         None => None,
         Some(v) => Some(schema_of_av(v)?),
     };
-    let path = match item.get("gsi1sk") {
-        Some(AttributeValue::S(v)) => v.clone(),
-        _ => {
-            return Err(RepositoryError::Codec(format!(
-                "node {} missing gsi1sk/path",
-                id
-            )))
-        }
-    };
+    let path = opt_s(item, "gsi1sk")
+        .ok_or_else(|| RepositoryError::Codec(format!("node {} missing gsi1sk/path", id)))?;
     let parent = parent_from_path(&path);
-    let label = match item.get("label") {
-        Some(AttributeValue::S(v)) => v.clone(),
-        _ => String::new(),
-    };
+    let label = opt_s(item, "label").unwrap_or_default();
     Ok(Node::builder()
         .id(id)
         .name(name)
@@ -773,20 +733,8 @@ pub fn edge_of_item(
     let name = as_s(field(item, "name")?)?.to_string();
     let created_s = as_s(field(item, "created")?)?;
     let created = parse_ts(created_s);
-    let gsi1pk = item.get("gsi1pk").and_then(|v| {
-        if let AttributeValue::S(s) = v {
-            Some(s.clone())
-        } else {
-            None
-        }
-    });
-    let gsi1sk = item.get("gsi1sk").and_then(|v| {
-        if let AttributeValue::S(s) = v {
-            Some(s.clone())
-        } else {
-            None
-        }
-    });
+    let gsi1pk = opt_s(item, "gsi1pk");
+    let gsi1sk = opt_s(item, "gsi1sk");
     Ok((from_, to_, kind, name, created, gsi1pk, gsi1sk))
 }
 
@@ -832,17 +780,14 @@ pub fn sensor_of_item(item: &Item) -> Result<Sensor, RepositoryError> {
     let mt_s = as_s(field(item, "meter_type")?)?;
     let meter_type = mt_s.parse::<MeterType>()
         .map_err(|e| RepositoryError::Codec(format!("bad meter_type {:?}: {}", mt_s, e)))?;
-    let unit = match item.get("unit") {
-        Some(AttributeValue::S(u)) => Some(u.clone()),
-        _ => None,
-    };
+    let unit = opt_s(item, "unit");
     let created_s = as_s(field(item, "created")?)?;
     let created = parse_ts(created_s);
     let formula = match item.get("formula") {
         Some(v) => formula_of_av(v)?,
         None => Formula::Identity,
     };
-    let resample_minutes = opt_int_of_n(item.get("resample_minutes"));
+    let resample_minutes = opt_num_of_n::<i32>(item.get("resample_minutes"));
     Ok(Sensor::builder()
         .id(id)
         .created(created)
@@ -887,14 +832,12 @@ pub fn user_of_item(item: &Item) -> Result<User, RepositoryError> {
     let g_s = as_s(field(item, "cognito_group")?)?;
     let cognito_group = g_s.parse::<CognitoGroup>()
         .map_err(|e| RepositoryError::Codec(format!("bad cognito_group {:?}: {}", g_s, e)))?;
-    let language = match item.get("language") {
-        Some(AttributeValue::S(s)) => s.parse::<Language>().unwrap_or_default(),
-        _ => Language::default(),
-    };
-    let currency = match item.get("currency") {
-        Some(AttributeValue::S(s)) => s.parse::<Currency>().unwrap_or_default(),
-        _ => Currency::default(),
-    };
+    let language = opt_s(item, "language")
+        .and_then(|v| v.parse::<Language>().ok())
+        .unwrap_or_default();
+    let currency = opt_s(item, "currency")
+        .and_then(|v| v.parse::<Currency>().ok())
+        .unwrap_or_default();
     let created_s = as_s(field(item, "created")?)?;
     let created = parse_ts(created_s);
     Ok(User::builder()

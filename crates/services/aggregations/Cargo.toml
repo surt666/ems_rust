@@ -24,3 +24,5 @@ aws-sdk-athena.workspace = true
 # Shared typed response/error layer + OpenAPI schema derives.
 api = { path = "../../api" }
 utoipa.workspace = true
+# Concurrent per-purpose query fan-out (try_join_all).
+futures.workspace = true

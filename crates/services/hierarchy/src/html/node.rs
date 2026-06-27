@@ -23,7 +23,7 @@ fn metadata_rows(j: &serde_json::Value) -> Markup {
                             }
                         }
                         _ => {
-                            @let s = json_scalar_str(v);
+                            @let s = crate::html::scalar_to_string(v);
                             div class="form-row-2col" {
                                 label class="form-label" { (k) ":" }
                                 input type="text" value=(s) readonly class="form-input";
@@ -54,17 +54,6 @@ fn metadata_rows(j: &serde_json::Value) -> Markup {
                 }
             }
         }
-    }
-}
-
-/// Convert a JSON scalar to a display string.
-fn json_scalar_str(v: &serde_json::Value) -> String {
-    match v {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::Bool(b) => b.to_string(),
-        serde_json::Value::Null => String::new(),
-        other => serde_json::to_string(other).unwrap_or_default(),
     }
 }
 
@@ -108,7 +97,7 @@ fn metadata_edit_form(
         form id="metadata-form" class="form"
             data-hx-post="/hierarchy/command"
             data-hx-swap="none"
-            data-hx-request=(r#"{"noHeaders": true}"#)
+            data-hx-request=(crate::html::NO_HEADERS)
             hx-on--after-request=(METADATA_AFTER_REQUEST_JS)
         {
             input type="hidden" name="action" value="update_node";
@@ -156,7 +145,7 @@ fn add_child_dialog(parent_id_str: &str) -> Markup {
                     data-hx-get="/hierarchy/query/add_child_form"
                     data-hx-vals=(format!(r#"{{"parent": "{}"}}"#, parent_id_str))
                     data-hx-trigger="refresh"
-                    data-hx-request=(r#"{"noHeaders": true}"#)
+                    data-hx-request=(crate::html::NO_HEADERS)
                     data-hx-target="#add-child-body"
                     data-hx-swap="innerHTML"
                 {
@@ -232,22 +221,19 @@ pub fn render_node(
         after_delete_url
     );
 
+    // Null and the empty object both mean "no metadata" → one branch.
+    let no_metadata = matches!(&node.metadata, serde_json::Value::Null)
+        || matches!(&node.metadata, serde_json::Value::Object(m) if m.is_empty());
     let metadata_section = if can_write && !metadata_fields.is_empty() {
         metadata_edit_form(&nid_str, metadata_fields, &node.metadata)
-    } else {
-        match &node.metadata {
-            serde_json::Value::Object(m) if m.is_empty() => html! {
-                p style="color: var(--text-muted);" data-i18n="node.no_metadata" {
-                    "No metadata available"
-                }
-            },
-            serde_json::Value::Null => html! {
-                p style="color: var(--text-muted);" data-i18n="node.no_metadata" {
-                    "No metadata available"
-                }
-            },
-            other => html! { div class="form" { (metadata_rows(other)) } },
+    } else if no_metadata {
+        html! {
+            p style="color: var(--text-muted);" data-i18n="node.no_metadata" {
+                "No metadata available"
+            }
         }
+    } else {
+        html! { div class="form" { (metadata_rows(&node.metadata)) } }
     };
 
     html! {
@@ -278,7 +264,7 @@ pub fn render_node(
                         button type="button" class="btn-danger"
                             data-hx-post="/hierarchy/command"
                             data-hx-vals=(delete_vals)
-                            data-hx-request=(r#"{"noHeaders": true}"#)
+                            data-hx-request=(crate::html::NO_HEADERS)
                             data-hx-swap="none"
                             data-hx-confirm="Slet denne node og alt under den?"
                             hx-on--after-request=(after_delete_js)
@@ -523,7 +509,7 @@ fn sensor_dialog(nid_str: &str, parent_str: &str) -> Markup {
                 data-hx-trigger="load"
                 data-hx-target="#ref-sensor-options-src"
                 data-hx-swap="innerHTML"
-                data-hx-request=(r#"{"noHeaders": true}"#)
+                data-hx-request=(crate::html::NO_HEADERS)
             {}
         }
         script { (PreEscaped(FORMULA_DIALOG_JS)) }
@@ -560,7 +546,7 @@ fn sensor_block(nid_str: &str, parent_str: &str) -> Markup {
                 data-hx-trigger="load"
                 data-hx-target="#sensor-list"
                 data-hx-swap="innerHTML"
-                data-hx-request=(r#"{"noHeaders": true}"#)
+                data-hx-request=(crate::html::NO_HEADERS)
                 data-hx-indicator="#loading-indicator"
             {
                 li style="color: var(--text-muted);" data-i18n="node.sensors_loading" {
@@ -672,15 +658,6 @@ mod tests {
     }
 
     #[test]
-    fn render_node_has_add_child_dialog() {
-        let node = make_hn2_node();
-        let html = render_node(&node, false, true, Some(CognitoGroup::Admin), &[]).into_string();
-        assert!(html.contains("add-child-dialog"), "add-child-dialog missing");
-        assert!(html.contains("Add child"), "Add child button missing");
-        assert!(html.contains("ADD CHILD"), "dialog title missing");
-    }
-
-    #[test]
     fn render_node_hx_vals_quot_escaped() {
         let node = make_hn2_node();
         let html = render_node(&node, false, true, Some(CognitoGroup::Admin), &[]).into_string();
@@ -706,6 +683,7 @@ mod tests {
         let html = render_node(&node, false, true, Some(CognitoGroup::Admin), &[]).into_string();
         assert!(html.contains("add-child-dialog"), "Admin should show add-child-dialog");
         assert!(html.contains("Add child"), "Admin should show Add child button");
+        assert!(html.contains("ADD CHILD"), "dialog title missing");
         assert!(html.contains("delete_node"), "Admin should show the delete button");
     }
 

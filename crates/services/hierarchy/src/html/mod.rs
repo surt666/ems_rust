@@ -2,6 +2,24 @@ pub mod forms;
 pub mod node;
 pub mod tree;
 
+/// The `data-hx-request` value that tells HTMX to omit its default request
+/// headers. Shared by every fragment that posts/gets over HTMX (node, forms,
+/// tree) so the literal isn't copy-pasted. Rendered through maud's `(..)`, so the
+/// `"`s come out `&quot;`-escaped (matching the previous inline literals).
+pub(crate) const NO_HEADERS: &str = r#"{"noHeaders": true}"#;
+
+/// Convert a JSON scalar to its display string. Objects/arrays/null collapse to
+/// the empty string — callers only ever pass scalars, so the non-scalar arm is
+/// inert (kept as a catch-all rather than a separate variant per type).
+pub(crate) fn scalar_to_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        _ => String::new(),
+    }
+}
+
 /// Percent-encode a string component for use in URL paths/query values.
 ///
 /// Only unreserved chars (`A-Z a-z 0-9 - _ . ~`) are left as-is; everything

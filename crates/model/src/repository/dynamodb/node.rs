@@ -23,8 +23,8 @@ use crate::repository::dynamodb::codec::{
 // ---------------------------------------------------------------------------
 
 const COUNTER_SK: &str = "count";
-const ACTIVE_SK_PREFIX: &str = "active#";
-const HAS_SENSOR_SK_PREFIX: &str = "has_sensor#";
+pub(crate) const ACTIVE_SK_PREFIX: &str = "active#";
+pub(crate) const HAS_SENSOR_SK_PREFIX: &str = "has_sensor#";
 const MAX_ALLOC_RETRIES: u32 = 5;
 const COUNTER_INITIAL_N: i64 = 10_000;
 const BATCH_DELETE_CHUNK: usize = 25;
@@ -214,85 +214,27 @@ pub struct AllocEdgeSpec {
 }
 
 // ---------------------------------------------------------------------------
-// allocate_and_put_node
+// alloc_loop (shared allocate + put retry loop)
 // ---------------------------------------------------------------------------
 
-/// Allocate a new node id for `level`, call `build(id)` → `(Node, AllocEdgeSpec)`,
-/// write all three atomically, and return the `Node`.
+/// Shared atomic allocate-and-put loop.
 ///
+/// Each attempt reads (or seeds) the `counter_pk`, asks `build` for the
+/// `(result, edge_item)` for the next id, encodes the row to write with
+/// `main_of`, then runs the counter-update + row-put + edge-put transaction.
 /// Retries up to `MAX_ALLOC_RETRIES` on counter contention; returns
 /// `RepositoryError::Conflict` on real id collision or contention exhaustion.
-pub async fn allocate_and_put_node<F>(
+async fn alloc_loop<R, FB, FM>(
     client: &Client,
     table: &str,
-    level: Level,
-    build: F,
-) -> Result<Node, RepositoryError>
+    counter_pk: &str,
+    build: FB,
+    main_of: FM,
+) -> Result<R, RepositoryError>
 where
-    F: Fn(u32) -> (Node, AllocEdgeSpec),
+    FB: Fn(u32) -> (R, Item),
+    FM: Fn(&R) -> Item,
 {
-    let counter_pk = counter_pk_node(level);
-    let mut remaining = MAX_ALLOC_RETRIES;
-
-    loop {
-        if remaining == 0 {
-            return Err(RepositoryError::Conflict(
-                "counter contention exceeded retries".to_string(),
-            ));
-        }
-        remaining -= 1;
-
-        let current_n = match read_counter(client, table, &counter_pk).await {
-            Some((n, _)) => n,
-            None => {
-                seed_counter(client, table, &counter_pk, COUNTER_INITIAL_N).await;
-                COUNTER_INITIAL_N
-            }
-        };
-
-        let next_n = current_n + 1;
-        let (node, edge) = build(next_n as u32);
-        let node_item = codec::node_to_item(&node);
-        let self_path = edge.self_path.unwrap_or_default();
-        let edge_item = codec::anchor_edge_to_item(AnchorEdgeParams {
-            from_: &edge.from_,
-            to_: &edge.to_,
-            kind: &edge.kind,
-            name: &edge.name,
-            created: &edge.created,
-            self_path: &self_path,
-        });
-
-        match try_transact_alloc(
-            client, table, &counter_pk, current_n, next_n, node_item, edge_item,
-        )
-        .await
-        {
-            AllocOutcome::Ok => return Ok(node),
-            AllocOutcome::CounterRace => continue,
-            AllocOutcome::Conflict(m) => return Err(RepositoryError::Conflict(m)),
-            AllocOutcome::Other(m) => return Err(RepositoryError::Aws(m)),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// allocate_and_put_sensor
-// ---------------------------------------------------------------------------
-
-/// Allocate a new sensor id, call `build(id)` → `(Sensor_item, AllocEdgeSpec)`,
-/// write atomically.  Returns the raw item map; callers decode with the codec.
-///
-/// Uses the `count#S` counter, same retry/seed logic as `allocate_and_put_node`.
-pub async fn allocate_and_put_sensor<F>(
-    client: &Client,
-    table: &str,
-    build: F,
-) -> Result<Item, RepositoryError>
-where
-    F: Fn(u32) -> (Item, AllocEdgeSpec),
-{
-    let counter_pk = COUNTER_PK_SENSOR;
     let mut remaining = MAX_ALLOC_RETRIES;
 
     loop {
@@ -312,29 +254,91 @@ where
         };
 
         let next_n = current_n + 1;
-        let (sensor_item, edge) = build(next_n as u32);
-        let self_path = edge.self_path.unwrap_or_default();
-        let edge_item = codec::anchor_edge_to_item(AnchorEdgeParams {
-            from_: &edge.from_,
-            to_: &edge.to_,
-            kind: &edge.kind,
-            name: &edge.name,
-            created: &edge.created,
-            self_path: &self_path,
-        });
+        let (result, edge_item) = build(next_n as u32);
+        let main_item = main_of(&result);
 
-        let sensor_item_clone = sensor_item.clone();
         match try_transact_alloc(
-            client, table, counter_pk, current_n, next_n, sensor_item_clone, edge_item,
+            client, table, counter_pk, current_n, next_n, main_item, edge_item,
         )
         .await
         {
-            AllocOutcome::Ok => return Ok(sensor_item),
+            AllocOutcome::Ok => return Ok(result),
             AllocOutcome::CounterRace => continue,
             AllocOutcome::Conflict(m) => return Err(RepositoryError::Conflict(m)),
             AllocOutcome::Other(m) => return Err(RepositoryError::Aws(m)),
         }
     }
+}
+
+/// Build the anchor edge item from an `AllocEdgeSpec`.
+fn alloc_edge_item(edge: AllocEdgeSpec) -> Item {
+    let self_path = edge.self_path.unwrap_or_default();
+    codec::anchor_edge_to_item(AnchorEdgeParams {
+        from_: &edge.from_,
+        to_: &edge.to_,
+        kind: &edge.kind,
+        name: &edge.name,
+        created: &edge.created,
+        self_path: &self_path,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// allocate_and_put_node
+// ---------------------------------------------------------------------------
+
+/// Allocate a new node id for `level`, call `build(id)` → `(Node, AllocEdgeSpec)`,
+/// write all three atomically, and return the `Node`.
+pub async fn allocate_and_put_node<F>(
+    client: &Client,
+    table: &str,
+    level: Level,
+    build: F,
+) -> Result<Node, RepositoryError>
+where
+    F: Fn(u32) -> (Node, AllocEdgeSpec),
+{
+    let counter_pk = counter_pk_node(level);
+    alloc_loop(
+        client,
+        table,
+        &counter_pk,
+        move |id| {
+            let (node, edge) = build(id);
+            (node, alloc_edge_item(edge))
+        },
+        codec::node_to_item,
+    )
+    .await
+}
+
+// ---------------------------------------------------------------------------
+// allocate_and_put_sensor
+// ---------------------------------------------------------------------------
+
+/// Allocate a new sensor id, call `build(id)` → `(Sensor_item, AllocEdgeSpec)`,
+/// write atomically.  Returns the raw item map; callers decode with the codec.
+///
+/// Uses the `count#S` counter, same retry/seed logic as `allocate_and_put_node`.
+pub async fn allocate_and_put_sensor<F>(
+    client: &Client,
+    table: &str,
+    build: F,
+) -> Result<Item, RepositoryError>
+where
+    F: Fn(u32) -> (Item, AllocEdgeSpec),
+{
+    alloc_loop(
+        client,
+        table,
+        COUNTER_PK_SENSOR,
+        move |id| {
+            let (sensor_item, edge) = build(id);
+            (sensor_item, alloc_edge_item(edge))
+        },
+        |item: &Item| item.clone(),
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +399,7 @@ fn levels_at_or_below(starting_level: Level) -> Vec<Level> {
 
 /// Page through the GSI partition `gsi1pk_v` for rows whose `gsi1sk` begins
 /// with `path_prefix`.
-async fn query_gsi_partition(
+pub(crate) async fn query_gsi_partition(
     client: &Client,
     table: &str,
     gsi1pk_v: &str,
@@ -489,7 +493,7 @@ pub async fn delete_subtree(
     let mut level_node_counts: HashMap<Level, i64> = HashMap::new();
 
     for lvl in &levels {
-        let gsi1pk_v = format!("HN{}", lvl.depth());
+        let gsi1pk_v = codec::node_gsi1pk(*lvl);
         let rows = query_gsi_partition(client, table, &gsi1pk_v, &path_prefix).await;
         let mut node_count: i64 = 0;
         for item in &rows {
@@ -507,7 +511,7 @@ pub async fn delete_subtree(
 
     // Sensor partition
     let sensor_rows =
-        query_gsi_partition(client, table, "S", &path_prefix).await;
+        query_gsi_partition(client, table, codec::SENSOR_GSI1PK, &path_prefix).await;
     let mut sensor_count: i64 = 0;
     for item in &sensor_rows {
         if let (Some(pk_v), Some(sk_v)) = (item.get("pk"), item.get("sk")) {

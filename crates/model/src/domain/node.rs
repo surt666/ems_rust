@@ -105,7 +105,7 @@ impl Node {
 /// Splits `path` on `|` and returns the first segment starting with `HN<depth>#`.
 pub fn segment_at_level(path: &str, lvl: Level) -> Option<String> {
     let prefix = format!("HN{}#", lvl.depth());
-    path.split('|')
+    path.split(PATH_SEP)
         .filter(|s| !s.is_empty())
         .find(|s| s.starts_with(&prefix))
         .map(|s| s.to_owned())

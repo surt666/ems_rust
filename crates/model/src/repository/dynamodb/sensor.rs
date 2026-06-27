@@ -15,11 +15,9 @@ use crate::domain::sensor::Sensor;
 use crate::domain::sensor_sk::SensorSk;
 use crate::errors::RepositoryError;
 use crate::repository::dynamodb::codec;
-use crate::repository::dynamodb::node::bump_live;
-use crate::repository::dynamodb::node::COUNTER_PK_SENSOR;
-
-const ACTIVE_SK_PREFIX: &str = "active#";
-const HAS_SENSOR_SK_PREFIX: &str = "has_sensor#";
+use crate::repository::dynamodb::node::{
+    bump_live, query_gsi_partition, ACTIVE_SK_PREFIX, COUNTER_PK_SENSOR, HAS_SENSOR_SK_PREFIX,
+};
 
 // ---------------------------------------------------------------------------
 // get_active_sensor
@@ -112,50 +110,15 @@ pub async fn list_sensors_under_path(
     table: &str,
     path_prefix: &str,
 ) -> Result<Vec<Sensor>, RepositoryError> {
-    // Page through the GSI sensor partition (same as node.rs query_gsi_partition
-    // but specific to sensors, so inline here to keep the module self-contained).
-    let mut acc: Vec<Sensor> = Vec::new();
-    let mut start_key: Option<HashMap<String, AttributeValue>> = None;
-
-    loop {
-        let mut req = client
-            .query()
-            .table_name(table)
-            .index_name("gsi1")
-            .key_condition_expression("#pk = :pk AND begins_with(#sk, :sk)")
-            .expression_attribute_names("#pk", "gsi1pk")
-            .expression_attribute_names("#sk", "gsi1sk")
-            .expression_attribute_values(":pk", AttributeValue::S("S".to_string()))
-            .expression_attribute_values(
-                ":sk",
-                AttributeValue::S(path_prefix.to_string()),
-            );
-
-        if let Some(ref k) = start_key {
-            req = req.set_exclusive_start_key(Some(k.clone()));
-        }
-
-        match req.send().await {
-            Err(_) => break,
-            Ok(resp) => {
-                for item in resp.items.unwrap_or_default() {
-                    // Only active rows
-                    if matches!(item.get("sk"), Some(AttributeValue::S(sk)) if sk.starts_with(ACTIVE_SK_PREFIX))
-                    {
-                        if let Ok(s) = codec::sensor_of_item(&item) {
-                            acc.push(s);
-                        }
-                    }
-                }
-                let lek = resp.last_evaluated_key;
-                if lek.as_ref().is_none_or(|m| m.is_empty()) {
-                    break;
-                }
-                start_key = lek;
-            }
-        }
-    }
-    Ok(acc)
+    let rows = query_gsi_partition(client, table, codec::SENSOR_GSI1PK, path_prefix).await;
+    let sensors = rows
+        .iter()
+        .filter(|item| {
+            matches!(item.get("sk"), Some(AttributeValue::S(sk)) if sk.starts_with(ACTIVE_SK_PREFIX))
+        })
+        .filter_map(|item| codec::sensor_of_item(item).ok())
+        .collect();
+    Ok(sensors)
 }
 
 // ---------------------------------------------------------------------------

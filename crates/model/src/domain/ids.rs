@@ -45,6 +45,7 @@ impl fmt::Display for SensorId {
 // ---------------------------------------------------------------------------
 
 /// Hierarchy level, Hn0 (root) through Hn9.
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter,
          strum::Display, strum::EnumString)]
 pub enum Level {
@@ -71,20 +72,9 @@ pub enum Level {
 }
 
 impl Level {
-    /// Numeric depth: Hn0 → 0, …, Hn9 → 9.
+    /// Numeric depth: Hn0 → 0, …, Hn9 → 9 (the `#[repr(u8)]` discriminant).
     pub fn depth(&self) -> u8 {
-        match self {
-            Level::Hn0 => 0,
-            Level::Hn1 => 1,
-            Level::Hn2 => 2,
-            Level::Hn3 => 3,
-            Level::Hn4 => 4,
-            Level::Hn5 => 5,
-            Level::Hn6 => 6,
-            Level::Hn7 => 7,
-            Level::Hn8 => 8,
-            Level::Hn9 => 9,
-        }
+        *self as u8
     }
 
     /// Construct from a depth value; returns `None` for depth > 9.

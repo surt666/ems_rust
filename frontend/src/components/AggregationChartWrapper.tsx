@@ -7,6 +7,7 @@ export default function AggregationChartWrapper() {
   const [endDate, setEndDate] = useState(() => new Date().toISOString());
   const [resolution, setResolution] = useState('hourly');
   const [purpose, setPurpose] = useState('Energy');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     const display = document.getElementById('nodeIdDisplay');
@@ -16,7 +17,12 @@ export default function AggregationChartWrapper() {
     const computeLevelId = () => {
       const id = sessionStorage.getItem('selectedNodeId') || '';
       const path = sessionStorage.getItem('selectedNodePath') || '';
-      return path ? `${path}#${id}` : id;
+      const company = sessionStorage.getItem('selectedCompanyId') || '';
+      let level = path ? `${path}#${id}` : id;
+      // The rollup is partitioned by the company (HN2); ensure it's in the path
+      // even when the tree only stored a partial parent path.
+      if (company && level && !level.includes(company)) level = `${company}#${level}`;
+      return level;
     };
     const refreshDisplay = () => {
       const id = sessionStorage.getItem('selectedNodeId') || '';
@@ -43,6 +49,7 @@ export default function AggregationChartWrapper() {
       setResolution(e.detail.resolution);
       setPurpose(e.detail.purpose);
       setLevelId(e.detail.levelId);
+      setRefreshKey((n) => n + 1); // force a re-fetch even if nothing else changed
     }) as EventListener;
 
     window.addEventListener('updateChart', handleUpdate);
@@ -60,6 +67,7 @@ export default function AggregationChartWrapper() {
       levelId={levelId}
       resolution={resolution}
       purpose={purpose}
+      refreshKey={refreshKey}
     />
   );
 }

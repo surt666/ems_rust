@@ -112,13 +112,32 @@ code {
 .app-layout {
   display: grid;
   grid-template-areas:
-    "nav nav"
-    "breadcrumb breadcrumb"
+    "brand   nav"
+    "sidebar breadcrumb"
     "sidebar main";
   grid-template-columns: var(--sidebar-width) 1fr;
   grid-template-rows: var(--nav-height) var(--breadcrumb-height) 1fr;
   min-height: 100vh;
 }
+
+/* --- Brand / logo (top-left, above the hierarchy sidebar) --- */
+.brand {
+  grid-area: brand;
+  background: #16323a;                 /* match the sidebar teal — one continuous left column */
+  border-bottom: 1px solid var(--border-subtle);
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: start;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  text-decoration: none;
+}
+.brand-mark { width: 30px; height: 30px; flex: none; }
+.brand-mark path { fill: #e6edf2; }   /* light peak on the dark teal */
+.brand-text { display: grid; line-height: 1.05; }
+.brand-name { font-weight: 700; font-size: 1.05rem; color: #ffffff; letter-spacing: 0.3px; }
+.brand-sub  { font-size: 0.62rem; color: #7c8a99; letter-spacing: 2.5px; text-transform: uppercase; }
 
 /* --- Top Navigation --- */
 .top-nav {

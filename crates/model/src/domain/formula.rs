@@ -131,11 +131,7 @@ pub fn expr_to_string(e: &Expr) -> String {
     // Wraps only when the parent binds tighter.
     fn go(prec: u8, e: &Expr) -> String {
         match e {
-            Expr::Num(n) => format!("{:.17e}", n)
-                // `%.17g` suppresses trailing zeros and the exponent
-                // for numbers that don't need it; replicate with a manual formatting.
-                .parse::<f64>()
-                .map_or_else(|_| format!("{}", n), |_| format_g(*n)),
+            Expr::Num(n) => format_g(*n),
             Expr::SelfRef => "self".to_string(),
             Expr::Ref(a) => a.clone(),
             Expr::Abs(inner) => format!("abs({})", go(0, inner)),
@@ -464,24 +460,6 @@ mod tests {
             }
             _ => panic!("expected Expr"),
         }
-    }
-
-    #[test]
-    fn deeply_nested_expr() {
-        let id_a = SensorId::make(10001);
-        let id_b = SensorId::make(10002);
-        let ast = Expr::Abs(Box::new(Expr::Sub(
-            Box::new(Expr::Sub(
-                Box::new(Expr::SelfRef),
-                Box::new(Expr::Ref("S4".to_string())),
-            )),
-            Box::new(Expr::Ref("S5".to_string())),
-        )));
-        let _f = Formula::Expr {
-            refs: vec![("S4".to_string(), id_a), ("S5".to_string(), id_b)],
-            expr: ast,
-        };
-        // Just compiles → pass
     }
 
     #[test]

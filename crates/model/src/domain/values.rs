@@ -24,14 +24,11 @@ pub enum EdgeKind {
 
 impl EdgeKind {
     /// The sort-key verb fragment used when writing the edge to DynamoDB.
+    /// Only `HasLabel` deviates from `Display`; the rest equal their `Display`.
     pub fn sk_verb(&self) -> String {
         match self {
-            EdgeKind::HasLabel(l) => format!("has_{}", l),
-            EdgeKind::HasSensor => "has_sensor".to_string(),
-            EdgeKind::Blocked => "blocked".to_string(),
-            EdgeKind::Administrates => "administrates".to_string(),
-            EdgeKind::Reads => "reads".to_string(),
-            EdgeKind::Writes => "writes".to_string(),
+            EdgeKind::HasLabel(l) => format!("has_{l}"),
+            other => other.to_string(),
         }
     }
 
@@ -52,29 +49,19 @@ impl EdgeKind {
         }
     }
 
-    /// Parse the serialised form produced by `kind_string`.
+    /// Parse the serialised form produced by `Display`/`sk_verb`.
     pub fn parse(s: &str) -> Result<EdgeKind, String> {
-        if s == "has_sensor" {
-            return Ok(EdgeKind::HasSensor);
+        match s {
+            "has_sensor" => Ok(EdgeKind::HasSensor),
+            "blocked" => Ok(EdgeKind::Blocked),
+            "administrates" => Ok(EdgeKind::Administrates),
+            "reads" => Ok(EdgeKind::Reads),
+            "writes" => Ok(EdgeKind::Writes),
+            _ => match s.split_once(':') {
+                Some(("has_label", l)) if !l.is_empty() => Ok(EdgeKind::HasLabel(l.to_string())),
+                _ => Err(format!("bad edge_kind {:?}", s)),
+            },
         }
-        if s == "blocked" {
-            return Ok(EdgeKind::Blocked);
-        }
-        if s == "administrates" {
-            return Ok(EdgeKind::Administrates);
-        }
-        if s == "reads" {
-            return Ok(EdgeKind::Reads);
-        }
-        if s == "writes" {
-            return Ok(EdgeKind::Writes);
-        }
-        // Try "has_label:<l>"
-        let parts: Vec<&str> = s.splitn(2, ':').collect();
-        if parts.len() == 2 && parts[0] == "has_label" && !parts[1].is_empty() {
-            return Ok(EdgeKind::HasLabel(parts[1].to_string()));
-        }
-        Err(format!("bad edge_kind {:?}", s))
     }
 
     /// Return the `CognitoGroup` capability this edge kind confers, if any.
@@ -638,49 +625,6 @@ mod tests {
     }
 
     // ---- FieldType ----------------------------------------------------------
-
-    #[test]
-    fn field_type_string_variant() {
-        let ft = FieldType::String {
-            min_len: Some(1),
-            max_len: Some(100),
-        };
-        // Just test it constructs and clones
-        let ft2 = ft.clone();
-        assert_eq!(ft, ft2);
-    }
-
-    #[test]
-    fn field_type_number_variant() {
-        let ft = FieldType::Number {
-            min: Some(0.0),
-            max: Some(100.0),
-        };
-        assert_eq!(ft, ft.clone());
-    }
-
-    #[test]
-    fn field_type_integer_variant() {
-        let ft = FieldType::Integer {
-            min: Some(-100),
-            max: Some(100),
-        };
-        assert_eq!(ft, ft.clone());
-    }
-
-    #[test]
-    fn field_type_simple_variants() {
-        assert_eq!(FieldType::Boolean, FieldType::Boolean);
-        assert_eq!(FieldType::Timestamp, FieldType::Timestamp);
-    }
-
-    #[test]
-    fn field_type_enum_variant() {
-        let ft = FieldType::Enum {
-            one_of: vec!["a".to_string(), "b".to_string()],
-        };
-        assert_eq!(ft, ft.clone());
-    }
 
     #[test]
     fn field_type_serde_roundtrip() {

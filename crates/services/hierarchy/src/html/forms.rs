@@ -122,21 +122,13 @@ pub fn render_add_child_form(
                         data-hx-swap="innerHTML"
                     {
                         @for (val, selected) in level_options {
-                            @if *selected {
-                                option value=(val) selected { (val) }
-                            } @else {
-                                option value=(val) { (val) }
-                            }
+                            option value=(val) selected[*selected] { (val) }
                         }
                     }
                 } @else {
                     select class="form-select" disabled {
                         @for (val, selected) in level_options {
-                            @if *selected {
-                                option value=(val) selected { (val) }
-                            } @else {
-                                option value=(val) { (val) }
-                            }
+                            option value=(val) selected[*selected] { (val) }
                         }
                     }
                     input type="hidden" name="data.level" value=(chosen_level);
@@ -159,11 +151,7 @@ pub fn render_add_child_form(
                     } @else {
                         select name="data.label" class="form-select" {
                             @for (val, selected) in label_options {
-                                @if *selected {
-                                    option value=(val) selected { (val) }
-                                } @else {
-                                    option value=(val) { (val) }
-                                }
+                                option value=(val) selected[*selected] { (val) }
                             }
                         }
                     }
@@ -212,16 +200,9 @@ pub fn metadata_inputs(
     prefill: Option<&serde_json::Map<String, serde_json::Value>>,
     disabled: bool,
 ) -> Markup {
-    // Scalar → display string.
-    fn sval(v: &serde_json::Value) -> String {
-        match v {
-            serde_json::Value::String(s) => s.clone(),
-            serde_json::Value::Number(n) => n.to_string(),
-            serde_json::Value::Bool(b) => b.to_string(),
-            _ => String::new(),
-        }
-    }
-    let cur = |name: &str| -> Option<String> { prefill.and_then(|m| m.get(name)).map(sval) };
+    let cur = |name: &str| -> Option<String> {
+        prefill.and_then(|m| m.get(name)).map(crate::html::scalar_to_string)
+    };
     // For <input type=date>, prefill wants YYYY-MM-DD.
     let date_part = |s: &str| s.get(0..10).unwrap_or(s).to_string();
 

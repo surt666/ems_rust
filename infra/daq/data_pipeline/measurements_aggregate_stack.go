@@ -255,10 +255,17 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 
 	// Public read API on an API Gateway HTTP API (replaces the earlier Function URL,
 	// to match the hierarchy service and gain access logs / throttling / WAF / custom
-	// domains / a future Cognito JWT authorizer). A `/{proxy+}` ANY route forwards
-	// every path to the lambda, whose own router dispatches `/aggregations`,
-	// `/measurements` and `/openapi.json`. CORS is handled here by `CorsPreflight`
-	// (the lambda emits none — `api::Cors::None` — so headers aren't duplicated).
+	// domains / a future Cognito JWT authorizer). CQRS query side only (read-only
+	// lambda — meter data is written by the Flink/Glue pipeline, not here), mirroring
+	// the hierarchy `GET /query/{action}` convention:
+	//   GET /meterdata/query/{action}  (action = get_measurements | get_aggregations)
+	//   GET /meterdata/openapi.json
+	//   GET /meterdata/docs
+	// Explicit routes (not a `/{proxy+}` catch-all) so the gateway owns the surface
+	// (per-route metrics / throttle / authorizers) and rejects unknown paths itself.
+	// All GET, so the gateway auto-answers the OPTIONS CORS preflight (a catch-all
+	// `ANY` would instead hand OPTIONS to the lambda → 404 → preflight fails). The
+	// lambda emits no CORS (`api::Cors::None`); `CorsPreflight` adds it.
 	// `HttpLambdaIntegration` adds the lambda invoke permission automatically.
 	aggApi := awsapigatewayv2.NewHttpApi(stack, jsii.String("AggregationsHttpApi"), &awsapigatewayv2.HttpApiProps{
 		ApiName: jsii.String("measurements-aggregations-api"),
@@ -270,13 +277,16 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 			AllowHeaders: jsii.Strings("*"),
 		},
 	})
-	aggApi.AddRoutes(&awsapigatewayv2.AddRoutesOptions{
-		Path:    jsii.String("/{proxy+}"),
-		Methods: &[]awsapigatewayv2.HttpMethod{awsapigatewayv2.HttpMethod_ANY},
-		Integration: awsapigatewayv2integrations.NewHttpLambdaIntegration(
-			jsii.String("AggregationsIntegration"), aggFn, &awsapigatewayv2integrations.HttpLambdaIntegrationProps{},
-		),
-	})
+	aggInteg := awsapigatewayv2integrations.NewHttpLambdaIntegration(
+		jsii.String("AggregationsIntegration"), aggFn, &awsapigatewayv2integrations.HttpLambdaIntegrationProps{},
+	)
+	for _, p := range []string{"/meterdata/query/{action}", "/meterdata/openapi.json", "/meterdata/docs"} {
+		aggApi.AddRoutes(&awsapigatewayv2.AddRoutesOptions{
+			Path:        jsii.String(p),
+			Methods:     &[]awsapigatewayv2.HttpMethod{awsapigatewayv2.HttpMethod_GET},
+			Integration: aggInteg,
+		})
+	}
 	awscdk.NewCfnOutput(stack, jsii.String("AggregationsApiUrl"), &awscdk.CfnOutputProps{
 		Value:       aggApi.Url(),
 		Description: jsii.String("Public HTTP API base — GET /aggregations (chart JSON) + GET /measurements (Datatilegnelse HTML) + GET /openapi.json"),

@@ -4,6 +4,7 @@ mod html;
 mod json;
 mod openapi;
 mod query;
+mod repo_fns;
 
 use lambda_http::{http::Method, run, service_fn, Body, Error, Request, Response};
 
@@ -98,7 +99,7 @@ fn parse_query_params(query: Option<&str>) -> Vec<(String, String)> {
                         return None;
                     }
                     let v = it.next().unwrap_or("");
-                    Some((url_decode(k), url_decode(v)))
+                    Some((command::url_decode(k), command::url_decode(v)))
                 })
                 .collect()
         })
@@ -112,7 +113,6 @@ async fn run_command(event: &Request) -> ApiResponse {
     let ct_header = event
         .headers()
         .get("content-type")
-        .or_else(|| event.headers().get("Content-Type"))
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_lowercase();
@@ -163,48 +163,6 @@ fn body_string(req: &Request) -> String {
         }
         Body::Empty => String::new(),
     }
-}
-
-/// Percent-decode a URL-encoded string (+ → space, %XX → char).
-fn url_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let len = bytes.len();
-    let mut result = Vec::with_capacity(len);
-    let mut i = 0;
-    while i < len {
-        match bytes[i] {
-            b'+' => {
-                result.push(b' ');
-                i += 1;
-            }
-            b'%' if i + 2 < len => {
-                if let Some(byte) = decode_hex(bytes[i + 1], bytes[i + 2]) {
-                    result.push(byte);
-                    i += 3;
-                } else {
-                    result.push(b'%');
-                    i += 1;
-                }
-            }
-            c => {
-                result.push(c);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8(result).unwrap_or_default()
-}
-
-fn decode_hex(hi: u8, lo: u8) -> Option<u8> {
-    fn hex(b: u8) -> Option<u8> {
-        match b {
-            b'0'..=b'9' => Some(b - b'0'),
-            b'a'..=b'f' => Some(b - b'a' + 10),
-            b'A'..=b'F' => Some(b - b'A' + 10),
-            _ => None,
-        }
-    }
-    Some(hex(hi)? << 4 | hex(lo)?)
 }
 
 // ---------------------------------------------------------------------------

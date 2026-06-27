@@ -66,8 +66,10 @@ import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
 
 <script>
 	function toUTC(dateTimeLocal: string): string {
-		const dt = new Date(dateTimeLocal);
-		return dt.toISOString();
+		// The rollup buckets are UTC, so treat the picked wall-clock as UTC — the
+		// calendar date maps to the same UTC day. (Parsing it as *local* shifted a
+		// midnight pick back a day in +offset zones, e.g. picking 2/6 queried from 1/6.)
+		return new Date(dateTimeLocal + 'Z').toISOString();
 	}
 
 	function updateChart() {
@@ -79,7 +81,11 @@ import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
 		// "<ancestor path>#<node id>" (not just the node id).
 		const nodeId = sessionStorage.getItem('selectedNodeId') || '';
 		const nodePath = sessionStorage.getItem('selectedNodePath') || '';
-		const levelId = nodePath ? `${nodePath}#${nodeId}` : nodeId;
+		const company = sessionStorage.getItem('selectedCompanyId') || '';
+		let levelId = nodePath ? `${nodePath}#${nodeId}` : nodeId;
+		// The rollup is partitioned by the company (HN2); ensure it's present even if
+		// the tree only stored a partial parent path.
+		if (company && levelId && !levelId.includes(company)) levelId = `${company}#${levelId}`;
 
 		const event = new CustomEvent('updateChart', {
 			detail: {
@@ -128,11 +134,11 @@ import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
 		align-items: end;
 	}
 
-	/* Render the native date+time controls (calendar icon + popup) for a dark UI,
-	   so the picker icon is visible against the dark input. */
+	/* Light theme: use the light color-scheme so the native calendar-picker icon
+	   renders dark and stays visible against the light input. */
 	#fromDate,
 	#toDate {
-		color-scheme: dark;
+		color-scheme: light;
 	}
 	/* WebKit/Blink: ensure the calendar-picker icon is light + clickable. */
 	#fromDate::-webkit-calendar-picker-indicator,

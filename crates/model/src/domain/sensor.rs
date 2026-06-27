@@ -3,6 +3,7 @@ use typed_builder::TypedBuilder;
 
 use crate::domain::formula::Formula;
 use crate::domain::ids::{NodeId, SensorId};
+use crate::domain::node::PATH_SEP;
 use crate::domain::values::MeterType;
 
 // ---------------------------------------------------------------------------
@@ -31,19 +32,6 @@ pub struct Sensor {
 }
 
 // ---------------------------------------------------------------------------
-// Path helpers
-// ---------------------------------------------------------------------------
-
-/// Path separator (same as for nodes).
-const PATH_SEP: &str = "|";
-
-/// Build the path of a sensor given the parent node's full path and the
-/// sensor id as a string.
-pub fn child_path(parent_path: &str, sensor_id_str: &str) -> String {
-    format!("{}{}{}", parent_path, PATH_SEP, sensor_id_str)
-}
-
-// ---------------------------------------------------------------------------
 // Accessors
 // ---------------------------------------------------------------------------
 
@@ -55,7 +43,7 @@ impl Sensor {
     pub fn parent_id(&self) -> NodeId {
         let parts: Vec<&str> = self
             .path
-            .split('|')
+            .split(PATH_SEP)
             .filter(|s| !s.is_empty())
             .collect();
 
@@ -80,6 +68,7 @@ impl Sensor {
 mod tests {
     use super::*;
     use crate::domain::ids::Level;
+    use crate::domain::node::child_path;
     use chrono::DateTime;
 
     fn ptime_of(s: &str) -> DateTime<Utc> {
@@ -117,19 +106,6 @@ mod tests {
         assert_eq!(s.daq_id, "daq:adeunis_pu_v1:123:0018b210000191c7:counter_a");
         assert!(matches!(s.meter_type, MeterType::Counter));
         assert_eq!(s.unit, Some("kWh".to_owned()));
-    }
-
-    #[test]
-    fn meter_type_to_string() {
-        assert_eq!(MeterType::Counter.to_string(), "counter");
-        assert_eq!(MeterType::Gauge.to_string(), "gauge");
-    }
-
-    #[test]
-    fn meter_type_of_string() {
-        assert_eq!("counter".parse::<MeterType>(), Ok(MeterType::Counter));
-        assert_eq!("gauge".parse::<MeterType>(), Ok(MeterType::Gauge));
-        assert!("wat".parse::<MeterType>().is_err());
     }
 
     #[test]

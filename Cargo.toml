@@ -30,6 +30,7 @@ regex = "1"
 url = "2"
 aws-sdk-athena = "1"
 utoipa = "5"
+futures = "0.3"
 
 [profile.release]
 opt-level = "z"

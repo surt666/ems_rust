@@ -33,26 +33,29 @@ const rows = [
 // representative rows above render so the page still looks correct. `noHeaders`
 // keeps it a simple CORS GET (no preflight); daq_id comes from the URL, the rest
 // from #m-controls.
-// Two backends for the SAME /measurements contract (identical HTML fragment):
-//   athenaBase    = aggregations lambda (Athena over raw_data) — default
-//   redshiftBase  = Redshift Spectrum VPC lambda via API Gateway (toggle below)
+// Two backends for the SAME readings contract (identical HTML fragment), but at
+// DIFFERENT paths, so each script picks a full URL:
+//   athenaUrl   = aggregations lambda — CQRS query side: /meterdata/query/get_measurements (default)
+//   redshiftUrl = Redshift Spectrum VPC spike lambda (its own API GW, still /measurements)
 const athenaBase = import.meta.env.PUBLIC_AGG_API_BASE_URL || "";
 const redshiftBase = import.meta.env.PUBLIC_REDSHIFT_API_BASE_URL || "";
+const athenaUrl = `${athenaBase}/meterdata/query/get_measurements`;
+const redshiftUrl = `${redshiftBase}/measurements`;
 const live = athenaBase !== "";
-const hxBase = `${athenaBase}/measurements`;
+const hxBase = athenaUrl;
 
 // htmx caches an element's hx-get at process time, so we can't swap backends by
 // mutating the attribute — instead the buttons/checkbox issue an explicit
-// htmx.ajax() to the chosen base. `source:#m-rows` pulls hx-include (#m-controls,
+// htmx.ajax() to the chosen full URL. `source:#m-rows` pulls hx-include (#m-controls,
 // which carries daq_id/from/to/limit/before) so params are identical either way.
-const pickBase = redshiftBase
-  ? `set base to '${athenaBase}'\n set cb to #use-redshift\n if cb then if the checked of cb then set base to '${redshiftBase}' end end`
-  : `set base to '${athenaBase}'`;
-const ajaxReplace = `call window.htmx.ajax('GET', base + '/measurements', {source:'#m-rows', target:'#m-rows', swap:'innerHTML'})`;
-const ajaxAppend = `call window.htmx.ajax('GET', base + '/measurements', {source:'#m-rows', target:'#m-rows', swap:'beforeend'})`;
-const opdaterScript = `on click\n set #m-before.value to ''\n ${pickBase}\n ${ajaxReplace}`;
-const moreScript = `on click\n ${pickBase}\n ${ajaxAppend}`;
-const checkboxScript = `on change\n set #m-before.value to ''\n set base to '${athenaBase}'\n if my checked then set base to '${redshiftBase}' end\n ${ajaxReplace}`;
+const pickUrl = redshiftBase
+  ? `set url to '${athenaUrl}'\n set cb to #use-redshift\n if cb then if the checked of cb then set url to '${redshiftUrl}' end end`
+  : `set url to '${athenaUrl}'`;
+const ajaxReplace = `call window.htmx.ajax('GET', url, {source:'#m-rows', target:'#m-rows', swap:'innerHTML'})`;
+const ajaxAppend = `call window.htmx.ajax('GET', url, {source:'#m-rows', target:'#m-rows', swap:'beforeend'})`;
+const opdaterScript = `on click\n set #m-before.value to ''\n ${pickUrl}\n ${ajaxReplace}`;
+const moreScript = `on click\n ${pickUrl}\n ${ajaxAppend}`;
+const checkboxScript = `on change\n set #m-before.value to ''\n set url to '${athenaUrl}'\n if my checked then set url to '${redshiftUrl}' end\n ${ajaxReplace}`;
 ---
 <Layout title="Datatilegnelse">
   <div class="page-container" x-data="{ q: new URLSearchParams(location.search), to: new Date(Date.now() - new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10), from: new Date(Date.now() - new Date().getTimezoneOffset()*6e4 - 864e5).toISOString().slice(0,10) }">

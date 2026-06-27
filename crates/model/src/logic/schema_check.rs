@@ -11,6 +11,15 @@ use crate::domain::node::{segment_at_level, Node};
 use crate::domain::schema::Schema;
 use crate::errors::RepositoryError;
 
+/// Pair a node's schema with the node's id, or error with
+/// `SchemaMissing(missing_id)` when the node carries no schema.
+fn take_schema(node: Node, missing_id: NodeId) -> Result<(NodeId, Schema), RepositoryError> {
+    match node.schema {
+        Some(s) => Ok((node.id, s)),
+        None => Err(RepositoryError::SchemaMissing(missing_id)),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // find_for
 // ---------------------------------------------------------------------------
@@ -40,27 +49,18 @@ where
         .ok_or_else(|| RepositoryError::NotFound(id.clone()))?;
 
     if node.level() == Level::Hn2 {
-        return match node.schema {
-            Some(s) => Ok((node.id, s)),
-            None => Err(RepositoryError::SchemaMissing(id)),
-        };
+        return take_schema(node, id);
     }
 
     // Walk the path to find the HN2 segment.
-    match segment_at_level(&node.path, Level::Hn2) {
-        None => Err(RepositoryError::SchemaMissing(id)),
-        Some(seg) => {
-            let hn2_id = NodeId::parse(&seg)
-                .map_err(|_| RepositoryError::SchemaMissing(id.clone()))?;
-            let hn2 = get_node(hn2_id.clone())
-                .await?
-                .ok_or_else(|| RepositoryError::NotFound(hn2_id.clone()))?;
-            match hn2.schema {
-                Some(s) => Ok((hn2.id, s)),
-                None => Err(RepositoryError::SchemaMissing(hn2_id)),
-            }
-        }
-    }
+    let seg = segment_at_level(&node.path, Level::Hn2)
+        .ok_or_else(|| RepositoryError::SchemaMissing(id.clone()))?;
+    let hn2_id = NodeId::parse(&seg)
+        .map_err(|_| RepositoryError::SchemaMissing(id.clone()))?;
+    let hn2 = get_node(hn2_id.clone())
+        .await?
+        .ok_or_else(|| RepositoryError::NotFound(hn2_id.clone()))?;
+    take_schema(hn2, hn2_id)
 }
 
 // ---------------------------------------------------------------------------

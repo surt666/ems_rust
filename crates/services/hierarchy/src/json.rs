@@ -15,23 +15,6 @@ use model::domain::user::User;
 use model::domain::values::FieldType;
 
 // ---------------------------------------------------------------------------
-// error_body
-// ---------------------------------------------------------------------------
-
-/// Build a JSON error body `{ "error": { "code": …, "message": … } }` and
-/// serialise to string.  `code` and `message` are caller-supplied.
-#[cfg(test)]
-pub fn error_body(code: &str, message: &str) -> String {
-    let j = json!({
-        "error": {
-            "code":    code,
-            "message": message,
-        }
-    });
-    j.to_string()
-}
-
-// ---------------------------------------------------------------------------
 // node_ref_to_json
 // ---------------------------------------------------------------------------
 
@@ -146,15 +129,10 @@ fn field_spec_to_json(fs: &FieldSpec) -> Value {
 pub fn schema_of_json(v: &Value) -> Result<Schema, String> {
     let kvs = as_object(v)?;
 
-    let version: u32 = match kvs.get("version") {
-        Some(Value::Number(n)) if n.is_u64() => n.as_u64().unwrap() as u32,
-        Some(Value::Number(n)) if n.is_i64() => {
-            let i = n.as_i64().unwrap();
-            if i < 0 { return Err("bad version".to_string()); }
-            i as u32
-        }
-        _ => return Err("missing or non-integer field \"version\"".to_string()),
-    };
+    let version = kvs
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "missing or non-integer field \"version\"".to_string())? as u32;
     if version != 2 {
         return Err(format!(
             "unsupported schema version {}; expected 2 (type-keyed)",
@@ -486,22 +464,6 @@ mod tests {
     use model::domain::sensor::Sensor;
     use model::domain::values::MeterType;
     use serde_json::json;
-
-    // ------------------------------------------------------------------
-    // 1. error_body_has_expected_shape
-    //
-    // Test: build an error body with code "bad_request" and message "boom",
-    // checks code == "bad_request" and message == "boom".
-    // ------------------------------------------------------------------
-    #[test]
-    fn error_body_has_expected_shape() {
-        let body = error_body("bad_request", "boom");
-        let v: Value = serde_json::from_str(&body).unwrap();
-        let code = v["error"]["code"].as_str().expect("code must be string");
-        let msg = v["error"]["message"].as_str().expect("message must be string");
-        assert_eq!(code, "bad_request");
-        assert_eq!(msg, "boom");
-    }
 
     // ------------------------------------------------------------------
     // 2. node_to_json_has_expected_keys

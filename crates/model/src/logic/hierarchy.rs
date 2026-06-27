@@ -23,6 +23,23 @@ fn bad(message: impl Into<String>) -> RepositoryError {
     }])
 }
 
+/// Reject an explicit `label` that names anything other than the reserved type
+/// for this node kind. `None` and the reserved type itself are accepted.
+fn check_reserved_label(
+    label: Option<&str>,
+    reserved: &str,
+    node_kind: &str,
+) -> Result<(), RepositoryError> {
+    match label {
+        None => Ok(()),
+        Some(l) if l == reserved => Ok(()),
+        Some(other) => Err(bad(format!(
+            "{} nodes have reserved type {:?}, got {:?}",
+            node_kind, reserved, other
+        ))),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // get_node
 // ---------------------------------------------------------------------------
@@ -144,25 +161,18 @@ where
             )));
         }
     }
-    let resolved_level = derived_level;
+
+    // A schema may only be supplied when creating an hn2 node (parent is hn1).
+    if parent_level != Level::Hn1 && schema.is_some() {
+        return Err(RepositoryError::BadRequest(
+            "schema only allowed on hn2 nodes".to_string(),
+        ));
+    }
 
     // Determine the node type (edge label) and (optional) node schema.
     let (edge_label, node_schema) = match parent_level {
         Level::Hn0 => {
-            if schema.is_some() {
-                return Err(RepositoryError::BadRequest(
-                    "schema only allowed on hn2 nodes".to_string(),
-                ));
-            }
-            match label.as_deref() {
-                None | Some(crate::domain::schema::PARTNER_TYPE) => {}
-                Some(other) => {
-                    return Err(bad(format!(
-                        "hn1 nodes have reserved type \"partner\", got {:?}",
-                        other
-                    )))
-                }
-            }
+            check_reserved_label(label.as_deref(), crate::domain::schema::PARTNER_TYPE, "hn1")?;
             (crate::domain::schema::PARTNER_TYPE.to_string(), None)
         }
         Level::Hn1 => {
@@ -182,23 +192,10 @@ where
                     }
                 },
             };
-            match label.as_deref() {
-                None | Some(crate::domain::schema::COMPANY_TYPE) => {}
-                Some(other) => {
-                    return Err(bad(format!(
-                        "hn2 nodes have reserved type \"company\", got {:?}",
-                        other
-                    )))
-                }
-            }
+            check_reserved_label(label.as_deref(), crate::domain::schema::COMPANY_TYPE, "hn2")?;
             (crate::domain::schema::COMPANY_TYPE.to_string(), Some(sch))
         }
         _ => {
-            if schema.is_some() {
-                return Err(RepositoryError::BadRequest(
-                    "schema only allowed on hn2 nodes".to_string(),
-                ));
-            }
             let (lbl, coerced_meta) = add_under_schema(
                 &parent,
                 &parent_node.label,
@@ -221,11 +218,11 @@ where
     let parent_clone = parent.clone();
 
     add_node_fn(
-        resolved_level,
+        derived_level,
         Box::new(move |raw_id| {
             let mut child = node::make(
                 raw_id,
-                resolved_level,
+                derived_level,
                 &name.clone(),
                 parent_clone.clone(),
                 &parent_path,
@@ -307,9 +304,7 @@ where
     // Enforce cardinality max.
     if let Some(max) = spec.max {
         let kind = EdgeKind::HasLabel(child_type.clone());
-        let existing = list_children_fn(parent.clone(), Some(kind))
-            .await
-            .unwrap_or_default();
+        let existing = list_children_fn(parent.clone(), Some(kind)).await?;
         if existing.len() >= max as usize {
             return Err(bad(format!(
                 "max {} {} per parent already reached",
@@ -823,23 +818,6 @@ mod tests {
 
         assert_eq!(n.level(), Level::Hn4, "resolved to Hn4 (parent + 1)");
         assert_eq!(n.label, "building");
-    }
-
-    // -----------------------------------------------------------------------
-    // Test: infers level from label
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn infers_level_from_label() {
-        let store = Rc::new(Store::new());
-        let c2 = seed_company(&store);
-
-        let n = add_node_helper(&store, c2, Some("property"), "P", serde_json::json!({}))
-            .await
-            .expect("should succeed");
-
-        assert_eq!(n.level(), Level::Hn3, "resolved to Hn3 via label");
-        assert_eq!(n.label, "property");
     }
 
     // -----------------------------------------------------------------------

@@ -143,15 +143,16 @@ pub fn to_http(resp: ApiResponse, cors: Cors) -> Response<Body> {
         ApiBody::Json(s) => ("application/json", s),
         ApiBody::Html(s) => ("text/html; charset=utf-8", s),
     };
-    let mut builder = Response::builder()
+    let builder = Response::builder()
         .status(resp.status)
         .header("Content-Type", content_type);
-    if let Cors::AllowAll = cors {
-        builder = builder
+    let builder = match cors {
+        Cors::AllowAll => builder
             .header("Access-Control-Allow-Origin", "*")
             .header("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Requested-With")
-            .header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    }
+            .header("Access-Control-Allow-Methods", "GET,POST,OPTIONS"),
+        Cors::None => builder,
+    };
     builder
         .body(Body::from(body))
         .expect("failed to build response")
@@ -184,8 +185,7 @@ pub fn swagger_ui_html(spec_path: &str) -> String {
 window.ui = SwaggerUIBundle({{ url: '{spec_path}', dom_id: '#swagger-ui', deepLinking: true }});
 </script>
 </body>
-</html>"#,
-        spec_path = spec_path
+</html>"#
     )
 }
 

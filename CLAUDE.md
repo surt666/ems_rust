@@ -91,22 +91,25 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
   window (default `1` = today + yesterday). Spec/plan:
   `infra/daq/data_pipeline/docs/superpowers/specs/2026-06-07-measurements-rollup-view-design.md`.
   It also hosts **one Rust/arm64 lambda** (`measurements-aggregations-api`, `crates/services/aggregations`)
-  behind an **API Gateway HTTP API** (`AggregationsHttpApi`, output `AggregationsApiUrl`; a `/{proxy+}`
-  ANY route forwards every path to the lambda, whose own router dispatches by the last path segment).
-  Swapped from a Lambda Function URL → HTTP API 2026-06-27 (access logs / throttling / WAF / future
-  Cognito JWT authorizer; mirrors the hierarchy service). **Routes:** `/aggregations` (JSON,
-  Resource-Insights chart, reads DynamoDB), `/measurements` (Datatilegnelse, reads `all.raw_data` via
-  **Amazon Athena** — `start → poll → get_query_results`, dedup `GROUP BY` + `max_by(value, ingested_time)`
-  server-side, result-reuse caching on; ~4-6s vs ~12s for the abandoned iceberg-rust-direct path),
-  `/openapi.json` (generated OpenAPI 3.1 spec) and `/docs` (self-hosted Swagger UI for the spec).
-  `/aggregations` + `/measurements` accept
-  **`?format=html|json`** (measurements defaults html for HTMX, aggregations defaults json);
-  representations + the typed error envelope live in the shared **`crates/api`** crate (`ApiResponse`/
-  `ApiError`, utoipa `ToSchema`). The lambda emits **no CORS headers** (`api::Cors::None`) — the HTTP API
-  `CorsPreflight` adds them. Kept to one function to limit Datadog-instrumented lambdas. Build with
-  `cargo lambda build --release --arm64 -p aggregations` before `cdk deploy` (the stack reads
-  `target/lambda/aggregations` via `Code.FromAsset`). The frontend uses `PUBLIC_AGG_API_BASE_URL`
-  (the `AggregationsApiUrl` base, no trailing slash) for all routes. The `/measurements` route needs **Athena** IAM
+  behind an **API Gateway HTTP API** (`AggregationsHttpApi`, output `AggregationsApiUrl`). Swapped from a
+  Lambda Function URL → HTTP API 2026-06-27 (access logs / throttling / WAF / future Cognito JWT
+  authorizer; mirrors the hierarchy service). **CQRS query side only** (read-only — meter data is written
+  by the Flink/Glue pipeline, not here), so it follows the hierarchy `GET /query/{action}` convention with
+  **three explicit GET routes** (not a `/{proxy+}` catch-all — the gateway owns the surface and answers the
+  OPTIONS CORS preflight; a catch-all `ANY` would hand OPTIONS to the lambda → 404 → CORS failure):
+  `GET /meterdata/query/{action}` where `action` ∈ {`get_aggregations` (JSON, Resource-Insights chart,
+  reads DynamoDB), `get_measurements` (Datatilegnelse, reads `all.raw_data` via **Amazon Athena** —
+  `start → poll → get_query_results`, dedup `GROUP BY` + `max_by(value, ingested_time)` server-side,
+  result-reuse caching on; ~4-6s vs ~12s for the abandoned iceberg-rust-direct path)}, plus
+  `GET /meterdata/openapi.json` (OpenAPI 3.1 spec) and `GET /meterdata/docs` (self-hosted Swagger UI).
+  Both query actions accept **`?format=html|json`** (get_measurements defaults html for HTMX,
+  get_aggregations defaults json); representations + the typed error envelope live in the shared
+  **`crates/api`** crate (`ApiResponse`/`ApiError`, utoipa `ToSchema`). The lambda emits **no CORS headers**
+  (`api::Cors::None`) — the HTTP API `CorsPreflight` adds them. Kept to one function to limit
+  Datadog-instrumented lambdas. Build with `cargo lambda build --release --arm64 -p aggregations` before
+  `cdk deploy` (the stack reads `target/lambda/aggregations` via `Code.FromAsset`). The frontend uses
+  `PUBLIC_AGG_API_BASE_URL` (the `AggregationsApiUrl` base, no trailing slash) for all routes. The
+  `get_measurements` route needs **Athena** IAM
   (workgroup `daq-workgroup`, Glue catalog read on `s3tablescatalog`, R/W on
   `daq-athena-query-results-<acct>-<region>`, `lakeformation:GetDataAccess`) + Lake Formation SELECT
   on `raw_data` — all wired in the stack.

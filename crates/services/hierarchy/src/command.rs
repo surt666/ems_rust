@@ -126,18 +126,6 @@ pub enum Command {
     },
 }
 
-impl Command {
-    /// Resolve the effective user identifier for `DeleteUser`:
-    /// prefer `email`, fall back to `id`.
-    #[cfg(test)]
-    pub fn delete_user_id(&self) -> Option<&str> {
-        match self {
-            Command::DeleteUser { email, id } => email.as_deref().or(id.as_deref()),
-            _ => None,
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Form → JSON normaliser
 // ---------------------------------------------------------------------------
@@ -170,7 +158,7 @@ fn parse_form(body: &str) -> Vec<(String, String)> {
 }
 
 /// URL-decode a percent-encoded string, treating `+` as space.
-fn url_decode(s: &str) -> String {
+pub(crate) fn url_decode(s: &str) -> String {
     // urlencoding::decode handles %XX; we pre-replace '+' → ' ' first.
     let with_spaces = s.replace('+', " ");
     urlencoding::decode(&with_spaces)
@@ -458,7 +446,6 @@ mod tests {
         let json = json!({ "action": "delete_user", "email": "bob@ex" });
         let cmd: Command = serde_json::from_value(json).unwrap();
         assert!(matches!(&cmd, Command::DeleteUser { email: Some(e), .. } if e == "bob@ex"));
-        assert_eq!(cmd.delete_user_id(), Some("bob@ex"));
     }
 
     /// `delete_user` with `id` fallback (the `"U#..."` form).
@@ -467,17 +454,6 @@ mod tests {
         let json = json!({ "action": "delete_user", "id": "U#bob@ex" });
         let cmd: Command = serde_json::from_value(json).unwrap();
         assert!(matches!(&cmd, Command::DeleteUser { email: None, id: Some(i) } if i == "U#bob@ex"));
-        assert_eq!(cmd.delete_user_id(), Some("U#bob@ex"));
-    }
-
-    /// `email` takes precedence over `id` in `delete_user_id()`.
-    #[test]
-    fn delete_user_email_preferred_over_id() {
-        let cmd = Command::DeleteUser {
-            email: Some("alice@ex".into()),
-            id: Some("U#alice@ex".into()),
-        };
-        assert_eq!(cmd.delete_user_id(), Some("alice@ex"));
     }
 
     /// `add_node` happy path.

@@ -20,9 +20,11 @@ interface ChartProps {
   levelId: string;
   resolution: string;
   purpose: string;
+  /** Bumped on every "Opdater Graf" click so the fetch re-runs even if nothing else changed. */
+  refreshKey: number;
 }
 
-export default function AggregationChart({ startDate, endDate, levelId, resolution, purpose }: ChartProps) {
+export default function AggregationChart({ startDate, endDate, levelId, resolution, purpose, refreshKey }: ChartProps) {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +51,7 @@ export default function AggregationChart({ startDate, endDate, levelId, resoluti
           end: endDate,
         });
         const AGG_API_BASE_URL = import.meta.env.PUBLIC_AGG_API_BASE_URL || '';
-        const url = `${AGG_API_BASE_URL}/aggregations?${params.toString()}`;
+        const url = `${AGG_API_BASE_URL}/meterdata/query/get_aggregations?${params.toString()}`;
         const response = await fetch(url);
         if (!response.ok) {
           setError(`Request failed: ${response.statusText}`);
@@ -85,7 +87,7 @@ export default function AggregationChart({ startDate, endDate, levelId, resoluti
     };
 
     fetchData();
-  }, [startDate, endDate, levelId, resolution, purpose]);
+  }, [startDate, endDate, levelId, resolution, purpose, refreshKey]);
 
   if (loading) {
     return (

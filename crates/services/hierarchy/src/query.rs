@@ -20,11 +20,13 @@ use model::domain::user::User;
 use model::domain::values::{CognitoGroup, EdgeKind};
 use model::errors::RepositoryError;
 use model::logic::{access, hierarchy, schema_check, users};
-#[cfg(test)]
-use model::logic::sensors;
 
 use crate::dispatch::{node_ref_to_json, node_to_json, sensor_to_json, user_to_json};
 use crate::html::{forms, node as html_node, tree};
+use crate::repo_fns::{
+    get_node_fn, get_user_fn, list_access_edges_fn, list_blocked_nodes_fn, list_child_refs_fn,
+    list_children_fn, list_users_fn, repo_parts,
+};
 
 // ---------------------------------------------------------------------------
 // Response helpers — ok_response / error_response
@@ -42,30 +44,20 @@ fn bad_request(msg: &str) -> (u16, String) {
 }
 
 fn repo_error(e: RepositoryError) -> (u16, String) {
-    let (status, code, msg) = match &e {
-        RepositoryError::NotFound(id) => (404u16, "Not_found", format!("{} not found", id)),
-        RepositoryError::NotFoundUser(id) => (404, "Not_found", format!("{} not found", id)),
-        RepositoryError::Conflict(m) => (409, "Conflict", m.clone()),
-        RepositoryError::BadRequest(m) => (400, "Bad_request", m.clone()),
-        RepositoryError::Validation(errs) => {
-            let details: Vec<_> = errs
-                .iter()
-                .map(|e| json!({ "path": e.path, "message": e.message }))
-                .collect();
-            return (
-                400,
-                json!({ "error": { "code": "Validation", "message": "validation failed", "details": details } })
-                    .to_string(),
-            );
-        }
-        RepositoryError::SchemaMissing(id) => (
+    // Validation carries a per-error `details` array (the contract); the rest map
+    // through the shared `repo_parts`.
+    if let RepositoryError::Validation(errs) = &e {
+        let details: Vec<_> = errs
+            .iter()
+            .map(|e| json!({ "path": e.path, "message": e.message }))
+            .collect();
+        return (
             400,
-            "Schema_missing",
-            format!("no hn2 schema found above {}", id),
-        ),
-        RepositoryError::Codec(m) => (500, "Internal", m.clone()),
-        RepositoryError::Aws(m) => (500, "Internal", m.clone()),
-    };
+            json!({ "error": { "code": "Validation", "message": "validation failed", "details": details } })
+                .to_string(),
+        );
+    }
+    let (status, code, msg) = repo_parts(&e);
     (
         status,
         json!({ "error": { "code": code, "message": msg } }).to_string(),
@@ -83,28 +75,8 @@ fn html_error(msg: &str) -> (u16, String) {
 }
 
 fn html_repo_error(e: RepositoryError) -> (u16, String) {
-    let status: u16 = match &e {
-        RepositoryError::NotFound(_) | RepositoryError::NotFoundUser(_) => 404,
-        RepositoryError::Conflict(_) => 409,
-        RepositoryError::BadRequest(_)
-        | RepositoryError::Validation(_)
-        | RepositoryError::SchemaMissing(_) => 400,
-        RepositoryError::Codec(_) | RepositoryError::Aws(_) => 500,
-    };
-    let msg = match &e {
-        RepositoryError::NotFound(id) => format!("{} not found", id),
-        RepositoryError::NotFoundUser(id) => format!("{} not found", id),
-        RepositoryError::Conflict(m)
-        | RepositoryError::BadRequest(m)
-        | RepositoryError::Codec(m)
-        | RepositoryError::Aws(m) => m.clone(),
-        RepositoryError::Validation(errs) => errs
-            .first()
-            .map(|e| e.message.clone())
-            .unwrap_or_else(|| "validation failed".to_string()),
-        RepositoryError::SchemaMissing(id) => format!("no hn2 schema found above {}", id),
-    };
     use maud::html;
+    let (status, _code, msg) = repo_parts(&e);
     (status, html! { div class="error" { (msg) } }.into_string())
 }
 
@@ -132,6 +104,19 @@ where
         .await
         .ok()
         .map(|(_, s)| s)
+}
+
+/// Normalise a user string from the URL into the `U#...` form `UserId::parse`
+/// expects: already-prefixed stays as-is, empty stays empty, a bare email gets a
+/// `U#` prefix.
+fn normalize_user(user_s: &str) -> String {
+    if user_s.starts_with("U#") {
+        user_s.to_string()
+    } else if user_s.is_empty() {
+        String::new()
+    } else {
+        format!("U#{}", user_s)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -185,28 +170,24 @@ where
     }
 }
 
-/// `GET /query/list_sensors?parent=HN4#...`
-#[cfg(test)]
-pub async fn handle_list_sensors<FLS, FLSFut, FGA>(
-    parent_s: &str,
-    list_sensor_ids: FLS,
-    get_active_sensor: FGA,
-) -> (u16, String)
-where
-    FLS: FnOnce(NodeId) -> FLSFut,
-    FLSFut: Future<Output = Result<Vec<SensorId>, RepositoryError>>,
-    FGA: Fn(SensorId) -> Option<Sensor>,
-{
-    let parent = match NodeId::parse(parent_s) {
-        Ok(id) => id,
-        Err(e) => return bad_request(&format!("bad parent: {}", e)),
-    };
-    match sensors::list_active(parent, list_sensor_ids, get_active_sensor).await {
-        Ok(xs) => ok(json!({ "sensors": xs.iter().map(sensor_to_json).collect::<Vec<_>>() })),
-        Err(e) => repo_error(e),
+/// Fetch the active sensors directly attached to a node: list the sensor ids,
+/// then resolve each to its currently-active row (skipping ids with no active
+/// row). Shared by the `list_sensors` (JSON) and `sensors` (HTML) actions.
+async fn active_sensors(
+    ddb: &'static aws_sdk_dynamodb::Client,
+    table: &str,
+    parent: &NodeId,
+) -> Result<Vec<Sensor>, RepositoryError> {
+    use model::repository::dynamodb::sensor as ddb_sensor;
+    let ids = ddb_sensor::list_sensor_ids(ddb, table, parent).await?;
+    let mut result = Vec::new();
+    for sid in ids {
+        if let Some(s) = ddb_sensor::get_active_sensor(ddb, table, &sid).await? {
+            result.push(s);
+        }
     }
+    Ok(result)
 }
-
 
 /// `GET /query/get_user?id=U#email`
 pub async fn handle_get_user<FGU, FGUFut>(id_s: &str, get_user: FGU) -> (u16, String)
@@ -345,13 +326,7 @@ where
     let user_str = user_s;
 
     // Build a "U#..." prefix for UserId::parse.
-    let normalized = if user_s.starts_with("U#") {
-        user_s.to_string()
-    } else if user_s.is_empty() {
-        String::new()
-    } else {
-        format!("U#{}", user_s)
-    };
+    let normalized = normalize_user(user_s);
 
     let uid = match UserId::parse(&normalized) {
         Ok(id) => id,
@@ -466,13 +441,7 @@ where
     };
 
     // Compute capability: normalise user string to "U#..." prefix.
-    let normalized_user = if user_s.starts_with("U#") {
-        user_s.to_string()
-    } else if user_s.is_empty() {
-        String::new()
-    } else {
-        format!("U#{}", user_s)
-    };
+    let normalized_user = normalize_user(user_s);
 
     let capability: Option<CognitoGroup> = match UserId::parse(&normalized_user) {
         Ok(uid) => access::effective_permission(
@@ -794,7 +763,7 @@ pub fn leaf_node_id(nodepath: &str) -> &str {
 /// `params` is the query-string parameter list.
 /// Returns `(status_code, body_string)`.
 pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, String) {
-    use model::repository::dynamodb::{node as ddb_node, sensor as ddb_sensor, user};
+    use model::repository::dynamodb::{sensor as ddb_sensor, user};
 
     let ddb = model::get_dynamodb_client().await;
     let table = model::get_table_name();
@@ -811,11 +780,7 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
                 Some(s) => s,
                 None => return bad_request("missing id"),
             };
-            handle_get_node(id_s, {
-                let t = table.clone();
-                move |nid| async move { ddb_node::get_node(ddb, &t, &nid).await }
-            })
-            .await
+            handle_get_node(id_s, get_node_fn(ddb, table.clone())).await
         }
 
         "list_children" => {
@@ -829,18 +794,8 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
                 parent_s,
                 label,
                 full,
-                {
-                    let t = table.clone();
-                    move |pid, kind| async move {
-                        ddb_node::list_children(ddb, &t, &pid, kind.as_ref()).await
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |pid, kind| async move {
-                        ddb_node::list_child_refs(ddb, &t, &pid, kind.as_ref()).await
-                    }
-                },
+                list_children_fn(ddb, table.clone()),
+                list_child_refs_fn(ddb, table.clone()),
             )
             .await
         }
@@ -850,27 +805,14 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
                 Some(s) => s,
                 None => return bad_request("missing parent"),
             };
-            // DDB: list_sensor_ids is async; get_active_sensor is also async but
-            // sensors::list_active takes a sync Fn. Use a two-step: fetch IDs
-            // asynchronously, then resolve each via async DDB query.
             let parent = match NodeId::parse(parent_s) {
                 Ok(id) => id,
                 Err(e) => return bad_request(&format!("bad parent: {}", e)),
             };
-            let t = table.clone();
-            let ids = match ddb_sensor::list_sensor_ids(ddb, &t, &parent).await {
-                Ok(ids) => ids,
-                Err(e) => return repo_error(e),
-            };
-            let mut result = Vec::new();
-            for sid in ids {
-                match ddb_sensor::get_active_sensor(ddb, &t, &sid).await {
-                    Ok(Some(s)) => result.push(s),
-                    Ok(None) => {}
-                    Err(e) => return repo_error(e),
-                }
+            match active_sensors(ddb, &table, &parent).await {
+                Ok(ss) => ok(json!({ "sensors": ss.iter().map(sensor_to_json).collect::<Vec<_>>() })),
+                Err(e) => repo_error(e),
             }
-            ok(json!({ "sensors": result.iter().map(sensor_to_json).collect::<Vec<_>>() }))
         }
 
         "get_sensor" => {
@@ -898,31 +840,17 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
                 Some(s) => s,
                 None => return bad_request("missing id"),
             };
-            handle_get_user(id_s, {
-                let t = table.clone();
-                move |uid| async move { user::get_user(ddb, &t, &uid).await }
-            })
-            .await
+            handle_get_user(id_s, get_user_fn(ddb, table.clone())).await
         }
 
-        "list_users" => {
-            handle_list_users({
-                let t = table.clone();
-                move || async move { user::list_users(ddb, &t).await }
-            })
-            .await
-        }
+        "list_users" => handle_list_users(list_users_fn(ddb, table.clone())).await,
 
         "list_blocked_nodes" => {
             let user_s = match p(params, "user") {
                 Some(s) => s,
                 None => return bad_request("missing user"),
             };
-            handle_list_blocked_nodes(user_s, {
-                let t = table.clone();
-                move |uid| async move { user::list_blocked_nodes(ddb, &t, &uid).await }
-            })
-            .await
+            handle_list_blocked_nodes(user_s, list_blocked_nodes_fn(ddb, table.clone())).await
         }
 
         "list_blocked_users" => {
@@ -949,22 +877,10 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
             handle_effective_permission(
                 user_s,
                 node_s,
-                {
-                    let t = table.clone();
-                    move |uid| async move { user::get_user(ddb, &t, &uid).await }
-                },
-                {
-                    let t = table.clone();
-                    move |nid| async move { ddb_node::get_node(ddb, &t, &nid).await }
-                },
-                {
-                    let t = table.clone();
-                    move |uid| async move { user::list_blocked_nodes(ddb, &t, &uid).await }
-                },
-                {
-                    let t = table.clone();
-                    move |uid| async move { user::list_access_edges(ddb, &t, &uid).await }
-                },
+                get_user_fn(ddb, table.clone()),
+                get_node_fn(ddb, table.clone()),
+                list_blocked_nodes_fn(ddb, table.clone()),
+                list_access_edges_fn(ddb, table.clone()),
             )
             .await
         }
@@ -982,26 +898,9 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
                 user_s,
                 path_opt,
                 with_perms,
-                {
-                    let t = table.clone();
-                    move |uid| async move { user::list_access_edges(ddb, &t, &uid).await }
-                },
-                {
-                    let t = table.clone();
-                    move |pid, kind: Option<EdgeKind>| {
-                        let t = t.clone();
-                        async move {
-                            ddb_node::list_child_refs(ddb, &t, &pid, kind.as_ref()).await
-                        }
-                    }
-                },
-                {
-                    let t = table.clone();
-                    move |nid| {
-                        let t = t.clone();
-                        async move { ddb_node::get_node(ddb, &t, &nid).await }
-                    }
-                },
+                list_access_edges_fn(ddb, table.clone()),
+                list_child_refs_fn(ddb, table.clone()),
+                get_node_fn(ddb, table.clone()),
             )
             .await
         }
@@ -1015,22 +914,10 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
             handle_node(
                 id_s,
                 user_s,
-                {
-                    let t = table.clone();
-                    move |nid| async move { ddb_node::get_node(ddb, &t, &nid).await }
-                },
-                {
-                    let t = table.clone();
-                    move |uid| async move { user::get_user(ddb, &t, &uid).await }
-                },
-                {
-                    let t = table.clone();
-                    move |uid| async move { user::list_blocked_nodes(ddb, &t, &uid).await }
-                },
-                {
-                    let t = table.clone();
-                    move |uid| async move { user::list_access_edges(ddb, &t, &uid).await }
-                },
+                get_node_fn(ddb, table.clone()),
+                get_user_fn(ddb, table.clone()),
+                list_blocked_nodes_fn(ddb, table.clone()),
+                list_access_edges_fn(ddb, table.clone()),
             )
             .await
         }
@@ -1040,24 +927,15 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
                 Some(s) => s,
                 None => return html_error("missing nodepath"),
             };
-            // Same async two-step as list_sensors above.
             let last = leaf_node_id(nodepath);
             let nid = match NodeId::parse(last) {
                 Ok(id) => id,
                 Err(e) => return html_error(&format!("bad nodepath: {}", e)),
             };
-            let t = table.clone();
-            let ids = match ddb_sensor::list_sensor_ids(ddb, &t, &nid).await {
-                Ok(ids) => ids,
-                Err(e) => return html_repo_error(e),
-            };
-            let mut ss = Vec::new();
-            for sid in ids {
-                if let Ok(Some(s)) = ddb_sensor::get_active_sensor(ddb, &t, &sid).await {
-                    ss.push(s);
-                }
+            match active_sensors(ddb, &table, &nid).await {
+                Ok(ss) => html_ok(html_node::render_sensors(&ss)),
+                Err(e) => html_repo_error(e),
             }
-            html_ok(html_node::render_sensors(&ss))
         }
 
         "company_sensors" => {
@@ -1074,13 +952,7 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
             .await
         }
 
-        "users" => {
-            handle_html_users({
-                let t = table.clone();
-                move || async move { user::list_users(ddb, &t).await }
-            })
-            .await
-        }
+        "users" => handle_html_users(list_users_fn(ddb, table.clone())).await,
 
         "add_child_form" => {
             let parent_s = match p(params, "parent") {
@@ -1088,11 +960,7 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
                 None => return html_error("missing parent"),
             };
             let level_s = p(params, "level");
-            handle_add_child_form(parent_s, level_s, {
-                let t = table.clone();
-                move |nid| async move { ddb_node::get_node(ddb, &t, &nid).await }
-            })
-            .await
+            handle_add_child_form(parent_s, level_s, get_node_fn(ddb, table.clone())).await
         }
 
         "profiles" => handle_profiles(),
@@ -1189,14 +1057,6 @@ mod tests {
     ) -> impl FnOnce() -> std::future::Ready<Result<Vec<model::domain::user::User>, RepositoryError>>
     {
         move || std::future::ready(Ok(s.list_users()))
-    }
-
-    fn make_list_sensor_ids(
-        s: Rc<Store>,
-    ) -> impl FnOnce(NodeId)
-           -> std::future::Ready<Result<Vec<model::domain::ids::SensorId>, RepositoryError>>
-    {
-        move |nid| std::future::ready(Ok(s.list_sensor_ids(&nid)))
     }
 
     fn make_list_children(
@@ -1349,16 +1209,6 @@ mod tests {
         let jval: serde_json::Value = serde_json::from_str(&body).unwrap();
         let children = jval["children"].as_array().expect("children array");
         assert_eq!(children.len(), 1, "one child");
-    }
-
-    // -----------------------------------------------------------------------
-    // test: unknown action → 400
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn unknown_action_is_bad_request() {
-        let (status, _body) = bad_request("unknown query action \"does_not_exist\"");
-        assert_eq!(status, 400, "status 400");
     }
 
     // -----------------------------------------------------------------------
@@ -1592,8 +1442,8 @@ mod tests {
                 let s = store.clone();
                 move |u| std::future::ready(Ok(s.get_user(&u)))
             },
-            make_list_blocked_nodes_once(store.clone()),
-            make_list_access_edges_once(store.clone()),
+            make_list_blocked_nodes_fn(store.clone()),
+            make_list_access_edges(store.clone()),
         )
         .await;
         assert_eq!(status_b, 200, "building status 200");
@@ -1616,8 +1466,8 @@ mod tests {
                 let s = store.clone();
                 move |u| std::future::ready(Ok(s.get_user(&u)))
             },
-            make_list_blocked_nodes_once(store.clone()),
-            make_list_access_edges_once(store.clone()),
+            make_list_blocked_nodes_fn(store.clone()),
+            make_list_access_edges(store.clone()),
         )
         .await;
         assert_eq!(status_a, 200, "area status 200");
@@ -1663,30 +1513,6 @@ mod tests {
             "expected max-depth message; body: {}",
             body
         );
-    }
-
-    // -----------------------------------------------------------------------
-    // test: list_sensors empty
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn list_sensors_empty() {
-        let store = Rc::new(Store::new());
-        let parent = NodeId::make(Level::Hn4, 10042);
-
-        let (status, body) = handle_list_sensors(
-            &parent.to_string(),
-            make_list_sensor_ids(store.clone()),
-            {
-                let s = store.clone();
-                move |sid| s.get_active_sensor(&sid)
-            },
-        )
-        .await;
-
-        assert_eq!(status, 200, "status 200");
-        let jval: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(jval["sensors"].as_array().map(|a| a.len()), Some(0));
     }
 
     // -----------------------------------------------------------------------
@@ -2012,19 +1838,6 @@ mod tests {
     // Helpers for handle_node tests
     // -----------------------------------------------------------------------
 
-    fn make_list_blocked_nodes_once(
-        s: Rc<Store>,
-    ) -> impl FnOnce(UserId) -> std::future::Ready<Result<Vec<NodeId>, RepositoryError>> {
-        move |uid| std::future::ready(Ok(s.list_blocked_nodes(&uid)))
-    }
-
-    fn make_list_access_edges_once(
-        s: Rc<Store>,
-    ) -> impl FnOnce(UserId)
-           -> std::future::Ready<Result<Vec<(NodeId, EdgeKind)>, RepositoryError>> {
-        move |uid| std::future::ready(Ok(s.list_access_edges(&uid)))
-    }
-
     /// Seed a minimal HN2 node and return its NodeId.
     fn make_simple_hn2(store: &Rc<Store>) -> NodeId {
         let nid = NodeId::make(Level::Hn2, 10003);
@@ -2077,8 +1890,8 @@ mod tests {
                 let s = store.clone();
                 move |u| std::future::ready(Ok(s.get_user(&u)))
             },
-            make_list_blocked_nodes_once(store.clone()),
-            make_list_access_edges_once(store.clone()),
+            make_list_blocked_nodes_fn(store.clone()),
+            make_list_access_edges(store.clone()),
         )
         .await;
 
@@ -2115,8 +1928,8 @@ mod tests {
                 let s = store.clone();
                 move |u| std::future::ready(Ok(s.get_user(&u)))
             },
-            make_list_blocked_nodes_once(store.clone()),
-            make_list_access_edges_once(store.clone()),
+            make_list_blocked_nodes_fn(store.clone()),
+            make_list_access_edges(store.clone()),
         )
         .await;
 

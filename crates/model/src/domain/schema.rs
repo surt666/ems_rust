@@ -294,25 +294,9 @@ pub fn validate_one(path: &str, spec: &FieldSpec, v: &serde_json::Value) -> Resu
             Ok(())
         }
 
-        // Number field, JSON floats
-        (FieldType::Number { min, max }, Value::Number(n)) if n.is_f64() => {
+        // Number field — JSON integers and floats both coerce to f64.
+        (FieldType::Number { min, max }, Value::Number(n)) if n.as_f64().is_some() => {
             let f = n.as_f64().unwrap();
-            if let Some(lo) = min {
-                if f < *lo {
-                    return Err(err(format!("value below minimum {}", lo)));
-                }
-            }
-            if let Some(hi) = max {
-                if f > *hi {
-                    return Err(err(format!("value above maximum {}", hi)));
-                }
-            }
-            Ok(())
-        }
-
-        // Number field, JSON integers treated as floats
-        (FieldType::Number { min, max }, Value::Number(n)) if n.is_i64() => {
-            let f = n.as_i64().unwrap() as f64;
             if let Some(lo) = min {
                 if f < *lo {
                     return Err(err(format!("value below minimum {}", lo)));

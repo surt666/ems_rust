@@ -8,6 +8,7 @@
 use anyhow::{anyhow, Result};
 use aws_sdk_dynamodb::{types::AttributeValue, Client};
 use chrono::{DateTime, Utc};
+use futures::future::try_join_all;
 use lambda_http::{http::Method, run, service_fn, Body, Error, Request, Response};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -182,6 +183,25 @@ fn to_rows(items: Vec<AggItem>, level_id: &str, resolution: &str, gran: Gran) ->
 
 // ── DynamoDB query ────────────────────────────────────────────────────────────
 
+/// The purposes a rollup row can carry — the authoritative closed set. The
+/// all-purposes query fans out over exactly `Purpose::ALL`, so adding a purpose
+/// to the system means adding a variant here, and `as_str` must match the value
+/// the Glue rollup writes into the sort key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Purpose {
+    Energy,
+}
+
+impl Purpose {
+    const ALL: &'static [Purpose] = &[Purpose::Energy];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Purpose::Energy => "Energy",
+        }
+    }
+}
+
 struct QueryParams<'a> {
     table: &'a str,
     pk: &'a str,
@@ -189,48 +209,46 @@ struct QueryParams<'a> {
     gran: Gran,
     start_bucket: &'a str,
     end_bucket: &'a str,
+    /// A single requested purpose, or empty for "all purposes".
     purpose: &'a str,
 }
 
+/// Query a node's rollup rows. A specific `purpose` runs one key-range query; an
+/// empty `purpose` ("all") fans out over every `Purpose::ALL` **concurrently** —
+/// each is its own `sk BETWEEN` key-range, so every query reads only its own
+/// window (no `begins_with` + post-read filter, no cross-granularity reads). The
+/// sort key is `<node_path>#<purpose>#<gran>#<date>` with the date last, so once
+/// the purpose is fixed the date window is a pure key-condition range.
 async fn query_node(client: &Client, p: QueryParams<'_>) -> Result<Vec<AggItem>> {
-    let QueryParams {
-        table,
-        pk,
-        sk_path,
-        gran,
-        start_bucket,
-        end_bucket,
-        purpose,
-    } = p;
-    let req = if !purpose.is_empty() {
-        // Efficient range: pk = :pk AND sk BETWEEN prefix+start AND prefix+end
-        let prefix = format!("{}#{}#{}#", sk_path, purpose, gran.code());
-        client
-            .query()
-            .table_name(table)
-            .key_condition_expression("pk = :pk AND sk BETWEEN :sk_start AND :sk_end")
-            .expression_attribute_values(":pk", AttributeValue::S(pk.to_string()))
-            .expression_attribute_values(":sk_start", AttributeValue::S(format!("{prefix}{start_bucket}")))
-            .expression_attribute_values(":sk_end", AttributeValue::S(format!("{prefix}{end_bucket}")))
+    let purposes: Vec<&str> = if p.purpose.is_empty() {
+        Purpose::ALL.iter().map(|p| p.as_str()).collect()
     } else {
-        // All purposes: pk = :pk AND begins_with(sk, sk_path#), filter bucket range
-        client
-            .query()
-            .table_name(table)
-            .key_condition_expression("pk = :pk AND begins_with(sk, :sk_prefix)")
-            // `bucket` is a DynamoDB reserved word — escape it with an attribute name
-            // (the aws-sdk-go expression builder did this automatically in the Go version).
-            .filter_expression("#bk BETWEEN :b_start AND :b_end")
-            .expression_attribute_names("#bk", "bucket")
-            .expression_attribute_values(":pk", AttributeValue::S(pk.to_string()))
-            .expression_attribute_values(":sk_prefix", AttributeValue::S(format!("{sk_path}#")))
-            .expression_attribute_values(":b_start", AttributeValue::S(start_bucket.to_string()))
-            .expression_attribute_values(":b_end", AttributeValue::S(end_bucket.to_string()))
+        vec![p.purpose]
     };
 
+    let per_purpose =
+        try_join_all(purposes.into_iter().map(|purpose| query_one_purpose(client, &p, purpose)))
+            .await?;
+    Ok(per_purpose.into_iter().flatten().collect())
+}
+
+/// One purpose's window: `pk = :pk AND sk BETWEEN prefix+start AND prefix+end`,
+/// where `prefix = <node_path>#<purpose>#<gran>#` — a pure key-condition range.
+async fn query_one_purpose(
+    client: &Client,
+    p: &QueryParams<'_>,
+    purpose: &str,
+) -> Result<Vec<AggItem>> {
+    let prefix = format!("{}#{}#{}#", p.sk_path, purpose, p.gran.code());
     // The `.items()` paginator threads `exclusive_start_key`/`last_evaluated_key`
     // and `.collect()` gathers every page, short-circuiting on the first SDK error.
-    let raw = req
+    let raw = client
+        .query()
+        .table_name(p.table)
+        .key_condition_expression("pk = :pk AND sk BETWEEN :sk_start AND :sk_end")
+        .expression_attribute_values(":pk", AttributeValue::S(p.pk.to_string()))
+        .expression_attribute_values(":sk_start", AttributeValue::S(format!("{prefix}{}", p.start_bucket)))
+        .expression_attribute_values(":sk_end", AttributeValue::S(format!("{prefix}{}", p.end_bucket)))
         .into_paginator()
         .items()
         .send()
@@ -246,18 +264,43 @@ async fn query_node(client: &Client, p: QueryParams<'_>) -> Result<Vec<AggItem>>
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-/// The route action = the final path segment (`/aggregations` → `aggregations`,
-/// `/measurements` → `measurements`; trailing slash tolerated).
-fn path_action(path: &str) -> &str {
-    path.trim_end_matches('/').rsplit('/').next().unwrap_or("")
+/// A resolved route. This lambda is **read-only**, so it's the query side of
+/// CQRS only (mirrors the hierarchy service's `GET /query/{action}`); there is no
+/// command side — meter data is written by the Flink/Glue pipeline, not here.
+enum Route {
+    Query(String),
+    OpenApi,
+    Docs,
+    NotFound,
 }
 
-/// Top-level router. Routes are GET on the one HTTP API; the action is the final
-/// URL path segment, and `?format=html|json` picks the representation:
-///   GET /aggregations  → rollup rows  (json default; html table)   — Resource-Insights chart
-///   GET /measurements  → raw readings (html default; json array)   — Datatilegnelse page
-///   GET /openapi.json  → the OpenAPI 3.1 spec for the JSON surface
-///   GET /docs          → Swagger UI rendering of the spec
+/// Map `(method, path)` to a route. The gateway only forwards `GET` under
+/// `/meterdata/…`, but the bare forms are accepted too (defensive / local):
+///   GET `/meterdata/query/<action>` | `/query/<action>` → `Query(action)`
+///   GET `/meterdata/openapi.json`   | `/openapi.json`    → `OpenApi`
+///   GET `/meterdata/docs`           | `/docs`            → `Docs`
+fn resolve_route(method: &Method, path: &str) -> Route {
+    if *method != Method::GET {
+        return Route::NotFound;
+    }
+    match path {
+        "/meterdata/openapi.json" | "/openapi.json" => Route::OpenApi,
+        "/meterdata/docs" | "/docs" => Route::Docs,
+        _ => match path
+            .strip_prefix("/meterdata/query/")
+            .or_else(|| path.strip_prefix("/query/"))
+        {
+            Some(action) if !action.is_empty() => Route::Query(action.to_string()),
+            _ => Route::NotFound,
+        },
+    }
+}
+
+/// Top-level router (CQRS query side). `?format=html|json` picks the representation:
+///   GET /meterdata/query/get_aggregations → rollup rows  (json default; html table)
+///   GET /meterdata/query/get_measurements → raw readings (html default; json array)
+///   GET /meterdata/openapi.json           → the OpenAPI 3.1 spec for the JSON surface
+///   GET /meterdata/docs                   → Swagger UI rendering of the spec
 ///
 /// CORS is added by the API Gateway `CorsPreflight`, so we emit none here (`Cors::None`).
 async fn handler(
@@ -276,27 +319,35 @@ async fn handler(
         })
         .unwrap_or_default();
 
-    let resp = match (event.method(), path_action(event.uri().path())) {
-        (&Method::GET, "aggregations") => {
-            api::finish(handle_aggregations(client, table, &qs).await, Cors::None)
-        }
-        (&Method::GET, "measurements") => {
-            api::finish(raw::handle_measurements(athena, &qs).await, Cors::None)
-        }
-        (&Method::GET, "openapi.json") => api::to_http(openapi_response(), Cors::None),
-        (&Method::GET, "docs") => {
+    let resp = match resolve_route(event.method(), event.uri().path()) {
+        Route::Query(action) => match action.as_str() {
+            "get_aggregations" => {
+                api::finish(handle_aggregations(client, table, &qs).await, Cors::None)
+            }
+            "get_measurements" => {
+                api::finish(raw::handle_measurements(athena, &qs).await, Cors::None)
+            }
+            other => api::to_http(
+                ApiError::not_found(format!("unknown query action {other:?}")).into_response(),
+                Cors::None,
+            ),
+        },
+        Route::OpenApi => api::to_http(openapi_response(), Cors::None),
+        Route::Docs => {
             api::to_http(ApiResponse::html(200, api::swagger_ui_html("openapi.json")), Cors::None)
         }
-        _ => api::to_http(ApiError::not_found("no matching route").into_response(), Cors::None),
+        Route::NotFound => {
+            api::to_http(ApiError::not_found("no matching route").into_response(), Cors::None)
+        }
     };
     Ok(resp)
 }
 
-/// `GET /aggregations` — query the DynamoDB rollup table. `?format=json` (default)
-/// returns `[Row]`; `?format=html` returns a `<tr>` table fragment.
+/// `GET /meterdata/query/get_aggregations` — query the DynamoDB rollup table.
+/// `?format=json` (default) returns `[Row]`; `?format=html` returns a `<tr>` table fragment.
 #[utoipa::path(
     get,
-    path = "/aggregations",
+    path = "/meterdata/query/get_aggregations",
     tag = "aggregations",
     params(
         ("level_id" = String, Query, description = "Hierarchy node path (…|HN2#..|HN3#..)"),
@@ -449,10 +500,20 @@ mod tests {
         // utoipa wires paths/schemas at call time, so generating the doc is the
         // real validation that the #[utoipa::path] annotations resolve.
         let doc = ApiDoc::openapi().to_json().expect("openapi serializes");
-        assert!(doc.contains("/aggregations"), "missing /aggregations path");
-        assert!(doc.contains("/measurements"), "missing /measurements path");
+        assert!(doc.contains("/meterdata/query/get_aggregations"), "missing get_aggregations path");
+        assert!(doc.contains("/meterdata/query/get_measurements"), "missing get_measurements path");
         assert!(doc.contains("Measurement"), "missing Measurement schema");
         assert!(doc.contains("ErrorResponse"), "missing ErrorResponse schema");
+    }
+
+    // Purpose fan-out ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn purpose_all_is_authoritative() {
+        // The all-purposes query fans out over exactly these — must be non-empty,
+        // and each `as_str` must match what the Glue rollup writes into the SK.
+        assert!(!Purpose::ALL.is_empty(), "fan-out needs at least one purpose");
+        assert_eq!(Purpose::Energy.as_str(), "Energy");
     }
 
     // parse_node_keys ──────────────────────────────────────────────────────────

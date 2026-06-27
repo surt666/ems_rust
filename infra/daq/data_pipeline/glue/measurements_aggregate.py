@@ -87,7 +87,9 @@ def build_rollups(df: DataFrame, run_at_iso: str) -> DataFrame:
     Input columns: hn2..hn9 (int), logical_id (int), purpose (str), unit (str),
     resample_value (double), value (double), timestamp (ts), resample_timestamp (ts).
     Output columns: pk ('HN2#<id>'), sk ('<full hierarchy path>#<purpose>#<gran>#<bucket>'),
-    purpose, bucket, unit, sum, count, min, max, last_value, last_ts, updated_at, ttl.
+    purpose, unit, sum, count, min, max, last_value, last_ts, updated_at, ttl.
+    (`bucket` is intentionally NOT written as its own attribute — the date is the
+    last sort-key segment, so the read side ranges on the SK directly.)
     NOTE: caller must set spark.sql.session.timeZone='UTC' so the bucket labels are UTC.
     """
     with_buckets = df.withColumn(
@@ -120,7 +122,7 @@ def build_rollups(df: DataFrame, run_at_iso: str) -> DataFrame:
     return grouped.select(
         F.concat(F.lit("HN2#"), F.col("hn2").cast("string")).alias("pk"),
         _SK_UDF("node_path", "purpose", "gran", "bucket").alias("sk"),
-        "purpose", "bucket", "unit", "sum", "count", "min", "max",
+        "purpose", "unit", "sum", "count", "min", "max",
         F.col("_last.value").alias("last_value"),
         F.date_format(F.col("_last.timestamp"), "yyyy-MM-dd'T'HH:mm:ssXXX").alias("last_ts"),
         F.lit(run_at_iso).alias("updated_at"),

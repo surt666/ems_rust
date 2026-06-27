@@ -67,7 +67,7 @@ pub struct Measurement {
     pub unit: String,
 }
 
-/// `GET /mggregations/easurements?...` — newest raw readings for one sensor.
+/// `GET /meterdata/query/get_measurements?...` — newest raw readings for one sensor.
 ///
 /// `?format=html` (default) returns the `<tr>` fragment the Datatilegnelse page
 /// swaps in with HTMX; `?format=json` returns the `[Measurement]` array. Errors
@@ -75,7 +75,7 @@ pub struct Measurement {
 /// `json`.
 #[utoipa::path(
     get,
-    path = "/aggregations/measurements",
+    path = "/meterdata/query/get_measurements",
     tag = "measurements",
     params(
         ("daq_id" = String, Query, description = "Sensor DAQ id (required)"),
@@ -103,18 +103,10 @@ pub async fn handle_measurements(
     }
     // Treat empty params (blank date inputs) as absent → default to last 1 day.
     let now = Utc::now();
-    let to = qs
-        .get("to")
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let from = qs
-        .get("from")
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let before = qs
-        .get("before")
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let param = |k: &str| qs.get(k).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let to = param("to");
+    let from = param("from");
+    let before = param("before");
     let limit = qs
         .get("limit")
         .and_then(|s| s.parse::<usize>().ok())

@@ -243,16 +243,12 @@ impl Store {
     pub fn list_children(&self, parent: &NodeId, kind_opt: Option<&EdgeKind>) -> Vec<Node> {
         let inner = self.inner.borrow();
         let parent_s = parent.to_string();
-        let child_ids: Vec<String> = inner
+        inner
             .edges
             .iter()
             .filter(|e| e.from_ == parent_s)
             .filter(|e| kind_opt.map_or(true, |k| &e.kind == k))
-            .filter_map(|e| NodeId::parse(&e.to_).ok().map(|_| e.to_.clone()))
-            .collect();
-        child_ids
-            .iter()
-            .filter_map(|id_s| inner.nodes.get(id_s).cloned())
+            .filter_map(|e| inner.nodes.get(&e.to_).cloned())
             .collect()
     }
 
@@ -818,20 +814,9 @@ mod tests {
 
     #[test]
     fn sensor_put_get_roundtrip() {
-        let store = Store::new();
         let root = make_root();
-        store.put_node(&root);
         let s = make_sensor_for(&root, 20001);
-        store.with_sensor(s.clone());
-        // with_sensor consumes store, rebuild:
-        let store = Store::new();
-        store.put_node(&root);
-        let s = make_sensor_for(&root, 20001);
-        {
-            let mut inner = store.inner.borrow_mut();
-            inner.sensors.entry(s.id.to_string()).or_default()
-                .push(SensorRow::Active(s.clone()));
-        }
+        let store = Store::new().with_node(root).with_sensor(s.clone());
         let got = store.get_active_sensor(&s.id);
         assert!(got.is_some());
         assert_eq!(got.unwrap().id, s.id);

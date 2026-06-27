@@ -8,8 +8,8 @@ use chrono::{DateTime, Utc};
 
 use crate::domain::formula::Formula;
 use crate::domain::ids::{NodeId, SensorId};
-use crate::domain::node::Node;
-use crate::domain::sensor::{self, Sensor};
+use crate::domain::node::{child_path, Node};
+use crate::domain::sensor::Sensor;
 use crate::domain::values::{EdgeKind, MeterType};
 use crate::errors::RepositoryError;
 use crate::logic::schema_check;
@@ -35,36 +35,25 @@ fn sensor_not_found(id: SensorId) -> RepositoryError {
 // Cycle detection
 // ---------------------------------------------------------------------------
 
-enum WalkResult {
-    Ok,
-    Cycle,
-}
-
+/// Return `true` if following the formula references reachable from `id`
+/// revisits an already-seen sensor (i.e. forms a cycle).
 fn walk_refs_sync(
     visited: &[SensorId],
     id: SensorId,
     get_active: &dyn Fn(SensorId) -> Option<Sensor>,
-) -> WalkResult {
+) -> bool {
     if visited.contains(&id) {
-        return WalkResult::Cycle;
+        return true;
     }
     match get_active(id) {
-        None => WalkResult::Ok,
+        None => false,
         Some(s) => {
-            let next = s.formula.referenced_ids();
             let mut new_visited = visited.to_vec();
             new_visited.push(id);
-            let mut result = WalkResult::Ok;
-            for u in next {
-                match walk_refs_sync(&new_visited, u, get_active) {
-                    WalkResult::Cycle => {
-                        result = WalkResult::Cycle;
-                        break;
-                    }
-                    WalkResult::Ok => {}
-                }
-            }
-            result
+            s.formula
+                .referenced_ids()
+                .into_iter()
+                .any(|u| walk_refs_sync(&new_visited, u, get_active))
         }
     }
 }
@@ -76,10 +65,10 @@ fn has_cycle(
     formula: &Formula,
     get_active: &dyn Fn(SensorId) -> Option<Sensor>,
 ) -> bool {
-    let next = formula.referenced_ids();
-    next.iter().any(|u| {
-        *u == self_id || matches!(walk_refs_sync(&[self_id], *u, get_active), WalkResult::Cycle)
-    })
+    formula
+        .referenced_ids()
+        .iter()
+        .any(|u| *u == self_id || walk_refs_sync(&[self_id], *u, get_active))
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +132,7 @@ where
     // Allocate sensor and write edge atomically.
     let s = add_sensor(Box::new(move |raw_id| {
         let sid = SensorId::make(raw_id);
-        let path = sensor::child_path(&parent_path, &sid.to_string());
+        let path = child_path(&parent_path, &sid.to_string());
         let sensor = Sensor::builder()
             .id(sid)
             .created(chrono::Utc::now())
@@ -215,6 +204,16 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// Revision helper
+// ---------------------------------------------------------------------------
+
+/// A fresh copy of `old` with `created` advanced to now; the caller overwrites
+/// the single field it is changing via struct-update syntax.
+fn revised(old: &Sensor) -> Sensor {
+    Sensor { created: chrono::Utc::now(), ..old.clone() }
+}
+
+// ---------------------------------------------------------------------------
 // replace_device
 // ---------------------------------------------------------------------------
 
@@ -232,17 +231,7 @@ where
 {
     let old = get_active_sensor(sensor_id).ok_or_else(|| sensor_not_found(sensor_id))?;
     let old_created = old.created;
-    let new_sensor = Sensor::builder()
-        .id(old.id)
-        .created(chrono::Utc::now())
-        .daq_id(new_daq_id)
-        .path(old.path)
-        .purpose(old.purpose)
-        .meter_type(old.meter_type)
-        .unit(old.unit)
-        .formula(old.formula)
-        .resample_minutes(old.resample_minutes)
-        .build();
+    let new_sensor = Sensor { daq_id: new_daq_id, ..revised(&old) };
     replace_sensor_device(old_created, new_sensor.clone()).await?;
     Ok(new_sensor)
 }
@@ -272,17 +261,7 @@ where
     }
 
     let old_created = old.created;
-    let new_sensor = Sensor::builder()
-        .id(old.id)
-        .created(chrono::Utc::now())
-        .daq_id(old.daq_id)
-        .path(old.path)
-        .purpose(old.purpose)
-        .meter_type(old.meter_type)
-        .unit(old.unit)
-        .formula(formula)
-        .resample_minutes(old.resample_minutes)
-        .build();
+    let new_sensor = Sensor { formula, ..revised(&old) };
     replace_sensor_device(old_created, new_sensor.clone()).await?;
     Ok(new_sensor)
 }
@@ -830,14 +809,14 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: attach_detects_self_cycle
+    // Test: set_formula_detects_self_cycle
     //
     // Attach a sensor normally, then call set_formula with a formula that
     // references its own id (cycle).
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn attach_detects_self_cycle() {
+    async fn set_formula_detects_self_cycle() {
         let store = Rc::new(Store::new());
         let c2 = seed_company(&store);
         let bldg = seed_building(&store, c2).await;
@@ -864,6 +843,46 @@ mod tests {
             Ok(_) => panic!("should reject cycle"),
             Err(e) => panic!("wrong error: {:?}", e),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: attach_rolls_back_on_post_allocation_self_cycle
+    //
+    // attach can only detect a self-cycle AFTER it allocates the sensor's id
+    // (the formula references that not-yet-known id). This exercises the
+    // post-allocation rollback branch: the allocated sensor must be deleted.
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn attach_rolls_back_on_post_allocation_self_cycle() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+        let bldg = seed_building(&store, c2).await;
+
+        // First sensor fixes the id counter; the next allocation is +1.
+        let s0 = do_attach(store.clone(), bldg.clone(), "daq:0", Formula::Identity, Some(15))
+            .await
+            .expect("attach s0");
+        let next_id = SensorId::make(s0.id.id() + 1);
+
+        // Formula references the id the new sensor will be allocated → a
+        // self-cycle only detectable post-allocation.
+        let cyc = Formula::Expr {
+            refs: vec![("me".to_string(), next_id)],
+            expr: Expr::Ref("me".to_string()),
+        };
+
+        let result = do_attach(store.clone(), bldg, "daq:cyc", cyc, Some(15)).await;
+
+        match result {
+            Err(RepositoryError::Validation(_)) => {} // expected: cycle rejected
+            other => panic!("expected Validation cycle error, got {:?}", other),
+        }
+        // Rollback: the allocated sensor must have been deleted.
+        assert!(
+            store.get_active_sensor(&next_id).is_none(),
+            "post-allocation cycle must roll back (delete) the sensor"
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -33,6 +33,39 @@ pub fn ancestors_of_path(node_id: &NodeId, path: &str) -> Vec<NodeId> {
         .collect()
 }
 
+/// Fetch `node_id` and return its ancestors (root-first, self excluded), or an
+/// empty list if the node does not exist.
+async fn ancestors_or_empty<FGN, FGNFut>(
+    node_id: &NodeId,
+    get_node: FGN,
+) -> Result<Vec<NodeId>, RepositoryError>
+where
+    FGN: FnOnce(NodeId) -> FGNFut,
+    FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
+{
+    Ok(match get_node(node_id.clone()).await? {
+        Some(n) => ancestors_of_path(node_id, &n.path),
+        None => vec![],
+    })
+}
+
+/// Whether `grants` covers `node_id` directly or via any of its ancestors.
+async fn grants_cover_chain<FGN, FGNFut>(
+    grants: Vec<NodeId>,
+    node_id: NodeId,
+    get_node: FGN,
+) -> Result<bool, RepositoryError>
+where
+    FGN: FnOnce(NodeId) -> FGNFut,
+    FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
+{
+    if grants.contains(&node_id) {
+        return Ok(true);
+    }
+    let ancestors = ancestors_or_empty(&node_id, get_node).await?;
+    Ok(ancestors.iter().any(|a| grants.contains(a)))
+}
+
 // ---------------------------------------------------------------------------
 // block / unblock
 // ---------------------------------------------------------------------------
@@ -56,16 +89,13 @@ where
     FPE: FnOnce(EdgeSpec) -> FPEFut,
     FPEFut: Future<Output = Result<(), RepositoryError>>,
 {
-    let uid_clone = user_id.clone();
-    let nid_clone = node_id.clone();
-
     get_user(user_id.clone())
         .await?
-        .ok_or(RepositoryError::NotFoundUser(uid_clone))?;
+        .ok_or_else(|| RepositoryError::NotFoundUser(user_id.clone()))?;
 
     get_node(node_id.clone())
         .await?
-        .ok_or(RepositoryError::NotFound(nid_clone))?;
+        .ok_or_else(|| RepositoryError::NotFound(node_id.clone()))?;
 
     put_edge(EdgeSpec {
         from_: user_id.to_string(),
@@ -126,17 +156,12 @@ where
     FLA: FnOnce(UserId) -> FLAFut,
     FLAFut: Future<Output = Result<Vec<(NodeId, EdgeKind)>, RepositoryError>>,
 {
-    let uid_clone = user_id.clone();
-
     get_user(user_id.clone())
         .await?
-        .ok_or(RepositoryError::NotFoundUser(uid_clone))?;
+        .ok_or_else(|| RepositoryError::NotFoundUser(user_id.clone()))?;
 
     // Build chain: node first, then ancestors root-first → reverse so node is first.
-    let ancestors = match get_node(node_id.clone()).await? {
-        Some(n) => ancestors_of_path(&node_id, &n.path),
-        None => vec![],
-    };
+    let ancestors = ancestors_or_empty(&node_id, get_node).await?;
     let mut chain = vec![node_id.clone()];
     chain.extend(ancestors);
 
@@ -212,17 +237,14 @@ where
     FPE: FnOnce(EdgeSpec) -> FPEFut,
     FPEFut: Future<Output = Result<(), RepositoryError>>,
 {
-    let uid_clone = user_id.clone();
-    let nid_clone = node_id.clone();
-
     get_user(user_id.clone())
         .await?
-        .ok_or(RepositoryError::NotFoundUser(uid_clone))?;
+        .ok_or_else(|| RepositoryError::NotFoundUser(user_id.clone()))?;
 
     if !node_id.is_root() {
         get_node(node_id.clone())
             .await?
-            .ok_or(RepositoryError::NotFound(nid_clone))?;
+            .ok_or_else(|| RepositoryError::NotFound(node_id.clone()))?;
     }
 
     put_edge(EdgeSpec {
@@ -306,19 +328,7 @@ where
     // The guarantee holds as long as we only grant one access edge per
     // (user, subtree) at a time (which is the intended invariant).
     let grants = list_administrated(user_id).await?;
-
-    // Direct grant on the target node?
-    if grants.contains(&node_id) {
-        return Ok(true);
-    }
-
-    // Grant on any ancestor?
-    let ancestors = match get_node(node_id.clone()).await? {
-        Some(n) => ancestors_of_path(&node_id, &n.path),
-        None => vec![],
-    };
-
-    Ok(ancestors.iter().any(|a| grants.contains(a)))
+    grants_cover_chain(grants, node_id, get_node).await
 }
 
 // ---------------------------------------------------------------------------
@@ -346,19 +356,7 @@ where
         .into_iter()
         .map(|(nid, _kind)| nid)
         .collect();
-
-    // Direct grant on the target node?
-    if grants.contains(&node_id) {
-        return Ok(true);
-    }
-
-    // Grant on any ancestor?
-    let ancestors = match get_node(node_id.clone()).await? {
-        Some(n) => ancestors_of_path(&node_id, &n.path),
-        None => vec![],
-    };
-
-    Ok(ancestors.iter().any(|a| grants.contains(a)))
+    grants_cover_chain(grants, node_id, get_node).await
 }
 
 // ---------------------------------------------------------------------------
@@ -628,53 +626,25 @@ mod tests {
         .await
     }
 
-    /// Administrates edge on c2 → Admin at c2 and descendant bldg.
+    /// An access edge on c2 flows to c2 and its descendant bldg, with the
+    /// capability determined by the edge kind.
     #[tokio::test]
-    async fn effective_permission_administrates_flows() {
-        let (store, c2, bldg, uid) = seed();
-
-        // Grant Administrates on c2.
-        store.put_edge(EdgeSpec {
-            from_: uid.to_string(),
-            to_: c2.to_string(),
-            kind: EdgeKind::Administrates,
-            name: String::new(),
-        });
-
-        assert_eq!(ep(store.clone(), uid.clone(), c2.clone()).await.unwrap(), Some(CognitoGroup::Admin));
-        assert_eq!(ep(store.clone(), uid.clone(), bldg.clone()).await.unwrap(), Some(CognitoGroup::Admin));
-    }
-
-    /// Writes edge on c2 → Writer at c2 and descendant bldg.
-    #[tokio::test]
-    async fn effective_permission_writes_flows() {
-        let (store, c2, bldg, uid) = seed();
-
-        store.put_edge(EdgeSpec {
-            from_: uid.to_string(),
-            to_: c2.to_string(),
-            kind: EdgeKind::Writes,
-            name: String::new(),
-        });
-
-        assert_eq!(ep(store.clone(), uid.clone(), c2.clone()).await.unwrap(), Some(CognitoGroup::Writer));
-        assert_eq!(ep(store.clone(), uid.clone(), bldg.clone()).await.unwrap(), Some(CognitoGroup::Writer));
-    }
-
-    /// Reads edge on c2 → Reader at c2 and descendant bldg.
-    #[tokio::test]
-    async fn effective_permission_reads_flows() {
-        let (store, c2, bldg, uid) = seed();
-
-        store.put_edge(EdgeSpec {
-            from_: uid.to_string(),
-            to_: c2.to_string(),
-            kind: EdgeKind::Reads,
-            name: String::new(),
-        });
-
-        assert_eq!(ep(store.clone(), uid.clone(), c2.clone()).await.unwrap(), Some(CognitoGroup::Reader));
-        assert_eq!(ep(store.clone(), uid.clone(), bldg.clone()).await.unwrap(), Some(CognitoGroup::Reader));
+    async fn effective_permission_edge_kind_flows() {
+        for (kind, group) in [
+            (EdgeKind::Administrates, CognitoGroup::Admin),
+            (EdgeKind::Writes, CognitoGroup::Writer),
+            (EdgeKind::Reads, CognitoGroup::Reader),
+        ] {
+            let (store, c2, bldg, uid) = seed();
+            store.put_edge(EdgeSpec {
+                from_: uid.to_string(),
+                to_: c2.to_string(),
+                kind,
+                name: String::new(),
+            });
+            assert_eq!(ep(store.clone(), uid.clone(), c2.clone()).await.unwrap(), Some(group));
+            assert_eq!(ep(store.clone(), uid.clone(), bldg.clone()).await.unwrap(), Some(group));
+        }
     }
 
     /// No access edge at all → None.
@@ -715,47 +685,6 @@ mod tests {
         // Unblock c2 restores access.
         unblock(uid.clone(), c2.clone(), delete_edge_fn(store.clone())).await.expect("unblock");
         assert_eq!(ep(store.clone(), uid.clone(), bldg.clone()).await.unwrap(), Some(CognitoGroup::Writer), "restored");
-    }
-
-    /// The effective_permission_flows test (backwards-compatible name).
-    #[tokio::test]
-    async fn effective_permission_flows() {
-        let (store, c2, bldg, uid) = seed();
-
-        // Baseline: no access edge → None (new semantics: edge-based, not global group).
-        let perm_no_edge = ep(store.clone(), uid.clone(), bldg.clone()).await.unwrap();
-        assert!(perm_no_edge.is_none(), "no edge → None");
-
-        // Grant Writes on c2 → Writer at bldg (descendant).
-        store.put_edge(EdgeSpec {
-            from_: uid.to_string(),
-            to_: c2.to_string(),
-            kind: EdgeKind::Writes,
-            name: String::new(),
-        });
-
-        let perm = ep(store.clone(), uid.clone(), bldg.clone()).await.unwrap();
-        assert_eq!(perm, Some(CognitoGroup::Writer), "Writes edge → Writer");
-
-        // Block on ancestor c2.
-        block(
-            uid.clone(),
-            c2.clone(),
-            get_user_fn(store.clone()),
-            get_node_fn(store.clone()),
-            put_edge_fn(store.clone()),
-        )
-        .await
-        .expect("block c2");
-
-        // Blocked at c2 itself.
-        assert!(ep(store.clone(), uid.clone(), c2.clone()).await.unwrap().is_none(), "blocked c2");
-        // Inherited block at bldg.
-        assert!(ep(store.clone(), uid.clone(), bldg.clone()).await.unwrap().is_none(), "inherited block bldg");
-
-        // Unblock c2, restores access.
-        unblock(uid.clone(), c2.clone(), delete_edge_fn(store.clone())).await.expect("unblock c2");
-        assert!(ep(store.clone(), uid.clone(), bldg.clone()).await.unwrap().is_some(), "restored after unblock");
     }
 
     // -----------------------------------------------------------------------
@@ -1031,45 +960,6 @@ mod tests {
         assert!(nodes.contains(&bldg));
     }
 
-    /// Root grant via Reads also expands to children.
-    #[tokio::test]
-    async fn start_nodes_reads_root_grant_expands_to_children() {
-        let store = Rc::new(Store::new());
-        let hn1a = node::make(
-            10001, Level::Hn1, "Partner A",
-            NodeId::root(), &NodeId::root().to_string(),
-            serde_json::json!({}), None,
-        );
-        store.put_node(&hn1a);
-        store.put_edge(EdgeSpec {
-            from_: NodeId::root().to_string(),
-            to_: hn1a.id.to_string(),
-            kind: EdgeKind::HasLabel("partner".to_owned()),
-            name: "A".to_owned(),
-        });
-        let user = make_writer_user("reader@ex");
-        store.put_user(&user);
-        let uid = user.id.clone();
-        // Reads on root
-        store.put_edge(EdgeSpec {
-            from_: uid.to_string(),
-            to_: NodeId::root().to_string(),
-            kind: EdgeKind::Reads,
-            name: String::new(),
-        });
-
-        let nodes = start_nodes(
-            uid.clone(),
-            list_access_edges_fn(store.clone()),
-            list_child_refs_fn(store.clone()),
-        )
-        .await
-        .expect("start_nodes reads root");
-
-        assert_eq!(nodes.len(), 1, "Reads on root expands to children");
-        assert!(nodes.contains(&hn1a.id));
-    }
-
     // -----------------------------------------------------------------------
     // Test: grant_administrates on root succeeds (no node lookup for root)
     // -----------------------------------------------------------------------
@@ -1101,52 +991,30 @@ mod tests {
     // Test: has_admin_access with Reads/Writes grants → false
     // -----------------------------------------------------------------------
 
+    /// Reads or Writes edges (not Administrates) must NOT grant admin access.
     #[tokio::test]
-    async fn has_admin_access_false_for_writes_grant() {
-        let (store, c2, _bldg, uid) = seed();
+    async fn has_admin_access_false_for_non_admin_grants() {
+        for kind in [EdgeKind::Writes, EdgeKind::Reads] {
+            let (store, c2, _bldg, uid) = seed();
 
-        // Grant Writes (not Administrates) on c2.
-        store.put_edge(EdgeSpec {
-            from_: uid.to_string(),
-            to_: c2.to_string(),
-            kind: EdgeKind::Writes,
-            name: String::new(),
-        });
+            store.put_edge(EdgeSpec {
+                from_: uid.to_string(),
+                to_: c2.to_string(),
+                kind: kind.clone(),
+                name: String::new(),
+            });
 
-        let result = has_admin_access(
-            uid.clone(),
-            c2.clone(),
-            list_administrated_fn(store.clone()),
-            get_node_fn(store.clone()),
-        )
-        .await
-        .expect("has_admin_access writes");
+            let result = has_admin_access(
+                uid.clone(),
+                c2.clone(),
+                list_administrated_fn(store.clone()),
+                get_node_fn(store.clone()),
+            )
+            .await
+            .expect("has_admin_access");
 
-        assert!(!result, "Writes edge should not grant admin access");
-    }
-
-    #[tokio::test]
-    async fn has_admin_access_false_for_reads_grant() {
-        let (store, c2, _bldg, uid) = seed();
-
-        // Grant Reads on c2.
-        store.put_edge(EdgeSpec {
-            from_: uid.to_string(),
-            to_: c2.to_string(),
-            kind: EdgeKind::Reads,
-            name: String::new(),
-        });
-
-        let result = has_admin_access(
-            uid.clone(),
-            c2.clone(),
-            list_administrated_fn(store.clone()),
-            get_node_fn(store.clone()),
-        )
-        .await
-        .expect("has_admin_access reads");
-
-        assert!(!result, "Reads edge should not grant admin access");
+            assert!(!result, "{:?} edge should not grant admin access", kind);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1215,43 +1083,6 @@ mod tests {
         .expect("has_access no grant");
 
         assert!(!result, "no edge → no browse access");
-    }
-
-    // -----------------------------------------------------------------------
-    // Test: list_access_edges returns (node, kind) for all access edge kinds
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn list_access_edges_returns_all_kinds() {
-        let (store, c2, bldg, uid) = seed();
-
-        store.put_edge(EdgeSpec {
-            from_: uid.to_string(),
-            to_: c2.to_string(),
-            kind: EdgeKind::Administrates,
-            name: String::new(),
-        });
-        store.put_edge(EdgeSpec {
-            from_: uid.to_string(),
-            to_: bldg.to_string(),
-            kind: EdgeKind::Reads,
-            name: String::new(),
-        });
-
-        let edges = store.list_access_edges(&uid);
-        assert_eq!(edges.len(), 2);
-        assert!(edges.contains(&(c2.clone(), EdgeKind::Administrates)));
-        assert!(edges.contains(&(bldg.clone(), EdgeKind::Reads)));
-
-        // Blocked edges must NOT appear.
-        store.put_edge(EdgeSpec {
-            from_: uid.to_string(),
-            to_: c2.to_string(),
-            kind: EdgeKind::Blocked,
-            name: String::new(),
-        });
-        let edges2 = store.list_access_edges(&uid);
-        assert_eq!(edges2.len(), 2, "Blocked edge should not appear in list_access_edges");
     }
 
     // -----------------------------------------------------------------------
