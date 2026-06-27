@@ -21,3 +21,6 @@ anyhow.workspace = true
 url.workspace = true
 # /measurements route — reads all.raw_data via Amazon Athena (engine v3).
 aws-sdk-athena.workspace = true
+# Shared typed response/error layer + OpenAPI schema derives.
+api = { path = "../../api" }
+utoipa.workspace = true

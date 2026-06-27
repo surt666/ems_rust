@@ -8,9 +8,12 @@
 use anyhow::{anyhow, Result};
 use aws_sdk_dynamodb::{types::AttributeValue, Client};
 use chrono::{DateTime, Utc};
-use lambda_http::{run, service_fn, Body, Error, Request, Response};
+use lambda_http::{http::Method, run, service_fn, Body, Error, Request, Response};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+
+use api::{ApiError, ApiResponse, Cors, Format};
+use utoipa::{OpenApi, ToSchema};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -136,7 +139,7 @@ struct AggItem {
 
 // ── JSON response row (field names match Go json tags exactly) ────────────────
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 struct Row {
     level_id: String,
     purpose: String,
@@ -243,31 +246,28 @@ async fn query_node(client: &Client, p: QueryParams<'_>) -> Result<Vec<AggItem>>
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-fn json_response(status: u16, body: impl Serialize) -> Result<Response<Body>, Error> {
-    // CORS is added by the Function URL config — do NOT set Access-Control-Allow-Origin here
-    // too, or the browser sees duplicate headers.
-    let json = serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string());
-    Ok(Response::builder()
-        .status(status)
-        .header("Content-Type", "application/json")
-        .body(Body::Text(json))
-        .expect("failed to build response"))
+/// The route action = the final path segment (`/aggregations` → `aggregations`,
+/// `/measurements` → `measurements`; trailing slash tolerated).
+fn path_action(path: &str) -> &str {
+    path.trim_end_matches('/').rsplit('/').next().unwrap_or("")
 }
 
-/// A `{"error": "<message>"}` body at the given status (matches the Go contract).
-fn json_error(status: u16, message: impl Into<String>) -> Result<Response<Body>, Error> {
-    json_response(status, HashMap::from([("error", message.into())]))
-}
-
+/// Top-level router. Routes are GET on the one HTTP API; the action is the final
+/// URL path segment, and `?format=html|json` picks the representation:
+///   GET /aggregations  → rollup rows  (json default; html table)   — Resource-Insights chart
+///   GET /measurements  → raw readings (html default; json array)   — Datatilegnelse page
+///   GET /openapi.json  → the OpenAPI 3.1 spec for the JSON surface
+///   GET /docs          → Swagger UI rendering of the spec
+///
+/// CORS is added by the API Gateway `CorsPreflight`, so we emit none here (`Cors::None`).
 async fn handler(
     event: Request,
     client: &Client,
     table: &str,
     athena: &aws_sdk_athena::Client,
 ) -> Result<Response<Body>, Error> {
-    // Parse query params from URI
-    let uri = event.uri();
-    let qs: HashMap<String, String> = uri
+    let qs: HashMap<String, String> = event
+        .uri()
         .query()
         .map(|q| {
             url::form_urlencoded::parse(q.as_bytes())
@@ -276,11 +276,48 @@ async fn handler(
         })
         .unwrap_or_default();
 
-    // Route: /measurements → raw_data viewer (HTML fragment, Datatilegnelse page);
-    // everything else → the aggregations rollup (JSON, Resource-Insights chart).
-    if uri.path().trim_end_matches('/').ends_with("/measurements") {
-        return raw::handle_measurements(athena, &qs).await;
-    }
+    let resp = match (event.method(), path_action(event.uri().path())) {
+        (&Method::GET, "aggregations") => {
+            api::finish(handle_aggregations(client, table, &qs).await, Cors::None)
+        }
+        (&Method::GET, "measurements") => {
+            api::finish(raw::handle_measurements(athena, &qs).await, Cors::None)
+        }
+        (&Method::GET, "openapi.json") => api::to_http(openapi_response(), Cors::None),
+        (&Method::GET, "docs") => {
+            api::to_http(ApiResponse::html(200, api::swagger_ui_html("openapi.json")), Cors::None)
+        }
+        _ => api::to_http(ApiError::not_found("no matching route").into_response(), Cors::None),
+    };
+    Ok(resp)
+}
+
+/// `GET /aggregations` — query the DynamoDB rollup table. `?format=json` (default)
+/// returns `[Row]`; `?format=html` returns a `<tr>` table fragment.
+#[utoipa::path(
+    get,
+    path = "/aggregations",
+    tag = "aggregations",
+    params(
+        ("level_id" = String, Query, description = "Hierarchy node path (…|HN2#..|HN3#..)"),
+        ("resolution" = Option<String>, Query, description = "hourly (default) | daily"),
+        ("purpose" = Option<String>, Query, description = "Filter to a single purpose"),
+        ("start" = String, Query, description = "ISO-8601 start (required)"),
+        ("end" = String, Query, description = "ISO-8601 end (required)"),
+        ("format" = Option<String>, Query, description = "json (default) | html"),
+    ),
+    responses(
+        (status = 200, description = "Rollup rows as [Row] (json) or an HTML table fragment (html)", body = Vec<Row>),
+        (status = 400, description = "Missing/invalid start or end", body = api::ErrorResponse),
+        (status = 500, description = "DynamoDB query failed", body = api::ErrorResponse),
+    ),
+)]
+async fn handle_aggregations(
+    client: &Client,
+    table: &str,
+    qs: &HashMap<String, String>,
+) -> Result<ApiResponse, ApiError> {
+    let format = Format::resolve(qs.get("format").map(String::as_str), Format::Json);
 
     let level_id = qs.get("level_id").cloned().unwrap_or_default();
     let resolution = qs
@@ -292,23 +329,20 @@ async fn handler(
     let end = qs.get("end").cloned().unwrap_or_default();
 
     if start.is_empty() || end.is_empty() {
-        return json_error(400, "start and end are required (ISO-8601)");
+        return Err(ApiError::bad_request("start and end are required (ISO-8601)"));
     }
 
     let gran = Gran::from_resolution(&resolution);
 
     let (pk, sk_path) = match parse_node_keys(&level_id) {
         Ok(keys) => keys,
-        Err(_) => {
-            // node above company level (HN0/HN1) — nothing to aggregate at a single partition
-            let empty: Vec<Row> = vec![];
-            return json_response(200, empty);
-        }
+        // node above company level (HN0/HN1) — nothing to aggregate at a single partition
+        Err(_) => return Ok(rows_response(&[], format)),
     };
 
     let (start_bucket, end_bucket) = match (bucket_label(&start, gran), bucket_label(&end, gran)) {
         (Ok(s), Ok(e)) => (s, e),
-        _ => return json_error(400, "start/end must be ISO-8601 timestamps"),
+        _ => return Err(ApiError::bad_request("start/end must be ISO-8601 timestamps")),
     };
 
     match query_node(
@@ -325,13 +359,74 @@ async fn handler(
     )
     .await
     {
-        Ok(items) => json_response(200, to_rows(items, &level_id, &resolution, gran)),
-        Err(e) => json_error(500, e.to_string()),
+        Ok(items) => Ok(rows_response(&to_rows(items, &level_id, &resolution, gran), format)),
+        Err(e) => Err(ApiError::internal(e.to_string())),
     }
+}
+
+/// Render rollup rows in the requested representation.
+fn rows_response(rows: &[Row], format: Format) -> ApiResponse {
+    match format {
+        Format::Json => ApiResponse::json(&rows),
+        Format::Html => ApiResponse::html(200, rows_to_html(rows)),
+    }
+}
+
+/// A `<tr>` table fragment of rollup rows (purpose / time / value / unit / count).
+fn rows_to_html(rows: &[Row]) -> String {
+    if rows.is_empty() {
+        return "<tr><td colspan=\"5\" class=\"muted\">Ingen data.</td></tr>".to_string();
+    }
+    let mut out = String::new();
+    for r in rows {
+        out.push_str(&format!(
+            "<tr><td>{}</td><td class=\"mono\">{}</td><td class=\"mono\" style=\"text-align:right\">{:.3}</td><td>{}</td><td class=\"mono\">{}</td></tr>",
+            esc(&r.purpose),
+            esc(&r.timestamp),
+            r.value,
+            esc(&r.unit),
+            r.contributor_count,
+        ));
+    }
+    out
+}
+
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// The generated OpenAPI 3.1 document for the JSON surface of this lambda.
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "EMS Measurements & Aggregations API",
+        description = "Hierarchy consumption rollups (Resource-Insights chart, over DynamoDB) and raw \
+                       meter readings (Datatilegnelse, over Athena). Data routes accept ?format=html|json.",
+        version = "0.1.0",
+    ),
+    paths(handle_aggregations, raw::handle_measurements),
+    components(schemas(Row, raw::Measurement, api::ErrorResponse, api::ErrorDetail)),
+    tags(
+        (name = "aggregations", description = "Hierarchy consumption rollup (Resource-Insights chart)"),
+        (name = "measurements", description = "Raw meter readings (Datatilegnelse)"),
+    ),
+)]
+struct ApiDoc;
+
+fn openapi_response() -> ApiResponse {
+    let json = ApiDoc::openapi().to_json().unwrap_or_else(|_| "{}".to_string());
+    ApiResponse::json_raw(200, json)
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    // `cargo run -p aggregations -- --openapi` prints the spec and exits (the
+    // Lambda runtime never passes args, so this is inert in production).
+    if std::env::args().any(|a| a == "--openapi") {
+        println!("{}", ApiDoc::openapi().to_pretty_json().expect("openapi"));
+        return Ok(());
+    }
+
     let cfg = aws_config::load_from_env().await;
     let client = Client::new(&cfg);
     let athena = aws_sdk_athena::Client::new(&cfg);
@@ -346,6 +441,19 @@ async fn main() -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // OpenAPI ───────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn openapi_doc_generates_with_both_paths() {
+        // utoipa wires paths/schemas at call time, so generating the doc is the
+        // real validation that the #[utoipa::path] annotations resolve.
+        let doc = ApiDoc::openapi().to_json().expect("openapi serializes");
+        assert!(doc.contains("/aggregations"), "missing /aggregations path");
+        assert!(doc.contains("/measurements"), "missing /measurements path");
+        assert!(doc.contains("Measurement"), "missing Measurement schema");
+        assert!(doc.contains("ErrorResponse"), "missing ErrorResponse schema");
+    }
 
     // parse_node_keys ──────────────────────────────────────────────────────────
 

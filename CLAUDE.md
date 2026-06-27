@@ -90,15 +90,23 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
   counter consumption per node/purpose/hour|day. `-c LookbackDays=N` sets the day-aligned recompute
   window (default `1` = today + yesterday). Spec/plan:
   `infra/daq/data_pipeline/docs/superpowers/specs/2026-06-07-measurements-rollup-view-design.md`.
-  It also hosts **one Rust/arm64 Function-URL lambda** (`measurements-aggregations-api`,
-  `crates/services/aggregations`) with **two routes** on the single `AggregationsUrl` —
-  `/aggregations` (JSON, Resource-Insights chart, reads DynamoDB) and `/measurements` (HTML fragment,
-  Datatilegnelse page, reads `all.raw_data` via **Amazon Athena** — `start → poll → get_query_results`,
-  dedup `GROUP BY` + `max_by(value, ingested_time)` done server-side, result-reuse caching on; ~4-6s
-  vs ~12s for the abandoned iceberg-rust-direct path). Kept to one function to limit Datadog-
-  instrumented lambdas. Build with `cargo lambda build --release --arm64 -p aggregations` before
-  `cdk deploy` (the stack reads `target/lambda/aggregations` via `Code.FromAsset`). The frontend uses
-  `PUBLIC_AGG_API_BASE_URL` for both routes. The `/measurements` route needs **Athena** IAM
+  It also hosts **one Rust/arm64 lambda** (`measurements-aggregations-api`, `crates/services/aggregations`)
+  behind an **API Gateway HTTP API** (`AggregationsHttpApi`, output `AggregationsApiUrl`; a `/{proxy+}`
+  ANY route forwards every path to the lambda, whose own router dispatches by the last path segment).
+  Swapped from a Lambda Function URL → HTTP API 2026-06-27 (access logs / throttling / WAF / future
+  Cognito JWT authorizer; mirrors the hierarchy service). **Routes:** `/aggregations` (JSON,
+  Resource-Insights chart, reads DynamoDB), `/measurements` (Datatilegnelse, reads `all.raw_data` via
+  **Amazon Athena** — `start → poll → get_query_results`, dedup `GROUP BY` + `max_by(value, ingested_time)`
+  server-side, result-reuse caching on; ~4-6s vs ~12s for the abandoned iceberg-rust-direct path),
+  `/openapi.json` (generated OpenAPI 3.1 spec) and `/docs` (self-hosted Swagger UI for the spec).
+  `/aggregations` + `/measurements` accept
+  **`?format=html|json`** (measurements defaults html for HTMX, aggregations defaults json);
+  representations + the typed error envelope live in the shared **`crates/api`** crate (`ApiResponse`/
+  `ApiError`, utoipa `ToSchema`). The lambda emits **no CORS headers** (`api::Cors::None`) — the HTTP API
+  `CorsPreflight` adds them. Kept to one function to limit Datadog-instrumented lambdas. Build with
+  `cargo lambda build --release --arm64 -p aggregations` before `cdk deploy` (the stack reads
+  `target/lambda/aggregations` via `Code.FromAsset`). The frontend uses `PUBLIC_AGG_API_BASE_URL`
+  (the `AggregationsApiUrl` base, no trailing slash) for all routes. The `/measurements` route needs **Athena** IAM
   (workgroup `daq-workgroup`, Glue catalog read on `s3tablescatalog`, R/W on
   `daq-athena-query-results-<acct>-<region>`, `lakeformation:GetDataAccess`) + Lake Formation SELECT
   on `raw_data` — all wired in the stack.
@@ -134,12 +142,12 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
 Astro static site → S3 + CloudFront (`OcamlFrontendStack`, in `infra/frontend`). CloudFront proxies
 `/command`, `/query/*`, `/hierarchy/*` to the hierarchy API, so those frontend calls are **relative**
 (`PUBLIC_API_BASE_URL` stays **empty** by design). Cross-account endpoints (e.g. the daq
-aggregations Function URL) need an **absolute** URL baked in at build time.
+aggregations HTTP API) need an **absolute** URL baked in at build time.
 
 ```bash
 # 1. Set frontend/.env — Astro inlines PUBLIC_* vars into the build:
 #    PUBLIC_API_BASE_URL=                     # EMPTY — CloudFront proxies the hierarchy API
-#    PUBLIC_AGG_API_BASE_URL=https://<fn-id>.lambda-url.eu-central-1.on.aws   # no trailing slash
+#    PUBLIC_AGG_API_BASE_URL=https://<api-id>.execute-api.eu-central-1.amazonaws.com   # AggregationsApiUrl, no trailing slash
 #    PUBLIC_USER_POOL_ID / PUBLIC_USER_POOL_CLIENT_ID   (Cognito)
 cd frontend && npm run build          # -> frontend/dist (env baked in; REBUILD after any .env change)
 
@@ -154,7 +162,7 @@ cdk deploy OcamlFrontendStack --require-approval never
 - Live URL = the `DistributionDomainName` output (currently `https://d24beiqs2cj89y.cloudfront.net`).
 - **Rebuild before deploying** — `PUBLIC_*` values are compiled into the static JS, so a `.env`
   change only takes effect after `npm run build`.
-- Verify a value is baked in: `curl -s https://<cf-domain>/_astro/AggregationChartWrapper.*.js | grep lambda-url`.
+- Verify a value is baked in: `curl -s https://<cf-domain>/_astro/AggregationChartWrapper.*.js | grep execute-api`.
 
 ### Cross-account ordering (important)
 
@@ -172,7 +180,9 @@ See `memory/cross_account_bridge.md` for the full field contract.
 
 ## Build & test (local)
 
-- Hierarchy service (Rust): `cargo test` from the repo root (`cargo test -p model` + `-p hierarchy`);
-  `cargo build` + `cargo clippy` should be warning-free. Model layer is `crates/model`, the lambda
-  is `crates/services/hierarchy`.
+- Hierarchy service (Rust): `cargo test` from the repo root (`cargo test -p model` + `-p hierarchy`
+  + `-p aggregations` + `-p api`); `cargo build` + `cargo clippy` should be warning-free. Model layer
+  is `crates/model`, the lambdas are `crates/services/hierarchy` + `crates/services/aggregations`, and
+  `crates/api` is the shared HTTP layer (typed `ApiResponse`/`ApiError`, `?format` negotiation, utoipa
+  schema). Dump either lambda's OpenAPI spec locally with `cargo run -p <aggregations|hierarchy> -- --openapi`.
 - Flink app: `cd infra/daq/data_pipeline/flink_app_scala && sbt test`.

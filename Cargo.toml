@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/model", "crates/services/hierarchy", "crates/services/aggregations"]
+members = ["crates/api", "crates/model", "crates/services/hierarchy", "crates/services/aggregations"]
 
 [workspace.package]
 edition = "2021"
@@ -29,6 +29,7 @@ rand = "0.8"
 regex = "1"
 url = "2"
 aws-sdk-athena = "1"
+utoipa = "5"
 
 [profile.release]
 opt-level = "z"

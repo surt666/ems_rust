@@ -15,6 +15,9 @@ strum.workspace = true
 chrono.workspace = true
 model = { path = "../../model" }
 urlencoding.workspace = true
+# Shared typed response/error layer + OpenAPI schema derives.
+api = { path = "../../api" }
+utoipa.workspace = true
 
 [dev-dependencies]
 model = { path = "../../model", features = ["testing"] }

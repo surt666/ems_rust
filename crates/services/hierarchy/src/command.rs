@@ -2,6 +2,7 @@
 
 use serde::Deserialize;
 use serde_json::{Value, Map};
+use utoipa::ToSchema;
 
 // ---------------------------------------------------------------------------
 // Command ADT
@@ -10,7 +11,7 @@ use serde_json::{Value, Map};
 /// Every command accepted by `POST /hierarchy/command`.
 ///
 /// Serde-tagged on `"action"` (snake_case).
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, ToSchema)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Command {
     /// `add_node` — add a child node under `parent_id`.

@@ -2,9 +2,12 @@ mod command;
 mod dispatch;
 mod html;
 mod json;
+mod openapi;
 mod query;
 
 use lambda_http::{http::Method, run, service_fn, Body, Error, Request, Response};
+
+use api::{ApiError, ApiResponse, Cors};
 
 // ---------------------------------------------------------------------------
 // Lambda HTTP handler — routing
@@ -14,17 +17,78 @@ use lambda_http::{http::Method, run, service_fn, Body, Error, Request, Response}
 //   GET  /hierarchy/query/<action> → query::run_query (HTML)
 //   POST /command                 → dispatch::run (command)
 //   POST /hierarchy/command       → dispatch::run (command)
+//   GET  /openapi.json            → the OpenAPI 3.1 spec
+//   GET  /docs                    → Swagger UI rendering of the spec
 //   _                             → 400 Bad_request
 // ---------------------------------------------------------------------------
 
 async fn handler(event: Request) -> Result<Response<Body>, Error> {
-    let method = event.method().clone();
-    let path = event.uri().path().to_string();
+    let params = parse_query_params(event.uri().query());
 
-    // Extract query-string params into a Vec<(String, String)>.
-    let params: Vec<(String, String)> = event
-        .uri()
-        .query()
+    // One match, one arm per route, each producing a typed ApiResponse. The query
+    // action comes from the URL path (json vs html by `is_html_action`); the
+    // command action comes from the request body (resolved in run_command).
+    let resp: ApiResponse = match resolve_route(event.method(), event.uri().path()) {
+        Route::Query(action) => {
+            let (status, body) = query::run_query(&action, &params).await;
+            if is_html_action(&action) {
+                ApiResponse::html(status, body)
+            } else {
+                ApiResponse::json_raw(status, body)
+            }
+        }
+        Route::Command => run_command(&event).await,
+        Route::OpenApi => ApiResponse::json_raw(200, openapi::openapi_json()),
+        Route::Docs => ApiResponse::html(200, api::swagger_ui_html("openapi.json")),
+        // Preserve the prior contract: unmatched route → 400 Bad_request.
+        Route::NotFound => ApiError::bad_request("no matching route").into_response(),
+    };
+
+    // Single transport step: status + Content-Type + permissive CORS headers.
+    Ok(api::to_http(resp, Cors::AllowAll))
+}
+
+// ---------------------------------------------------------------------------
+// Routing
+// ---------------------------------------------------------------------------
+
+/// A resolved route. `Query` carries the action parsed from the URL path; for
+/// `Command` the action lives in the request body (the serde `"action"` tag) and
+/// is matched later by `dispatch::run`.
+enum Route {
+    Query(String),
+    Command,
+    OpenApi,
+    Docs,
+    NotFound,
+}
+
+/// Map `(method, path)` to a route:
+///   GET  `/query/<action>`  | `/hierarchy/query/<action>`  → `Query(action)`
+///   POST `/command`         | `/hierarchy/command`         → `Command`
+///   GET  `/openapi.json`    | `/hierarchy/openapi.json`    → `OpenApi`
+///   _                                                      → `NotFound`
+fn resolve_route(method: &Method, path: &str) -> Route {
+    match *method {
+        Method::GET if matches!(path, "/openapi.json" | "/hierarchy/openapi.json") => {
+            Route::OpenApi
+        }
+        Method::GET if matches!(path, "/docs" | "/hierarchy/docs") => Route::Docs,
+        Method::GET => match path
+            .strip_prefix("/hierarchy/query/")
+            .or_else(|| path.strip_prefix("/query/"))
+        {
+            Some(action) if !action.is_empty() => Route::Query(action.to_string()),
+            _ => Route::NotFound,
+        },
+        Method::POST if matches!(path, "/command" | "/hierarchy/command") => Route::Command,
+        _ => Route::NotFound,
+    }
+}
+
+/// Parse the URL query string into decoded `(key, value)` pairs (empty keys skipped).
+fn parse_query_params(query: Option<&str>) -> Vec<(String, String)> {
+    query
         .map(|q| {
             q.split('&')
                 .filter_map(|pair| {
@@ -38,106 +102,33 @@ async fn handler(event: Request) -> Result<Response<Body>, Error> {
                 })
                 .collect()
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
 
-    // ---------------------------------------------------------------------------
-    // Routing
-    // ---------------------------------------------------------------------------
+/// Parse the request body as a command and dispatch it. The command's `"action"`
+/// tag selects the concrete handler inside `dispatch::run`.
+async fn run_command(event: &Request) -> ApiResponse {
+    let raw_body = body_string(event);
+    let ct_header = event
+        .headers()
+        .get("content-type")
+        .or_else(|| event.headers().get("Content-Type"))
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+    let ct_opt = (!ct_header.is_empty()).then_some(ct_header.as_str());
 
-    fn strip(prefix: &str, path: &str) -> Option<String> {
-        path.strip_prefix(prefix).map(|s| s.to_string())
+    match command::parse_command(ct_opt, &raw_body) {
+        Ok(cmd) => {
+            // dispatch::run returns the Lambda V2 envelope { statusCode, body } —
+            // body is an already-serialized JSON string.
+            let resp = dispatch::run(cmd).await;
+            let status = resp["statusCode"].as_u64().unwrap_or(200) as u16;
+            let body = resp["body"].as_str().unwrap_or("{}").to_string();
+            ApiResponse::json_raw(status, body)
+        }
+        Err(e) => ApiError::bad_request(e.to_string()).into_response(),
     }
-
-    let (status, body, content_type) = match method {
-        Method::GET => {
-            if let Some(action) = strip("/query/", &path)
-                .or_else(|| strip("/hierarchy/query/", &path))
-            {
-                let (s, b) = query::run_query(&action, &params).await;
-                // Determine content-type: HTML actions vs JSON actions.
-                let ct = if is_html_action(&action) {
-                    "text/html; charset=utf-8"
-                } else {
-                    "application/json"
-                };
-                (s, b, ct)
-            } else {
-                (
-                    400u16,
-                    r#"{"error":{"code":"Bad_request","message":"no matching route"}}"#
-                        .to_string(),
-                    "application/json",
-                )
-            }
-        }
-
-        Method::POST
-            if path == "/command" || path == "/hierarchy/command" =>
-        {
-            // Parse the raw body as a command.
-            let raw_body = body_string(&event);
-            let ct_header = event
-                .headers()
-                .get("content-type")
-                .or_else(|| event.headers().get("Content-Type"))
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("")
-                .to_lowercase();
-
-            let ct_opt: Option<&str> = if ct_header.is_empty() {
-                None
-            } else {
-                Some(&ct_header)
-            };
-
-            match command::parse_command(ct_opt, &raw_body) {
-                Ok(cmd) => {
-                    let resp = dispatch::run(cmd).await;
-                    // dispatch::run returns a serde_json::Value with statusCode +
-                    // body fields (the Lambda V2 envelope).
-                    let status = resp["statusCode"]
-                        .as_u64()
-                        .unwrap_or(200) as u16;
-                    let b = resp["body"]
-                        .as_str()
-                        .unwrap_or("{}")
-                        .to_string();
-                    (status, b, "application/json")
-                }
-                Err(e) => (
-                    400u16,
-                    format!(
-                        r#"{{"error":{{"code":"Bad_request","message":"{}"}}}}"#,
-                        e.to_string().replace('"', "\\\"")
-                    ),
-                    "application/json",
-                ),
-            }
-        }
-
-        _ => (
-            400u16,
-            r#"{"error":{"code":"Bad_request","message":"no matching route"}}"#.to_string(),
-            "application/json",
-        ),
-    };
-
-    // Build the HTTP response with CORS headers.
-    let response = Response::builder()
-        .status(status)
-        .header("Content-Type", content_type)
-        .header("Access-Control-Allow-Origin", "*")
-        .header(
-            "Access-Control-Allow-Headers",
-            "Content-Type,Authorization,X-Requested-With",
-        )
-        .header(
-            "Access-Control-Allow-Methods",
-            "GET,POST,OPTIONS",
-        )
-        .body(Body::from(body))?;
-
-    Ok(response)
 }
 
 // ---------------------------------------------------------------------------
@@ -222,5 +213,12 @@ fn decode_hex(hi: u8, lo: u8) -> Option<u8> {
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    // `cargo run -p hierarchy -- --openapi` prints the spec and exits (the Lambda
+    // runtime never passes args, so this is inert in production).
+    if std::env::args().any(|a| a == "--openapi") {
+        println!("{}", openapi::openapi_pretty());
+        return Ok(());
+    }
+
     run(service_fn(handler)).await
 }

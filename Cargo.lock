@@ -13,6 +13,7 @@ name = "aggregations"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "api",
  "aws-config",
  "aws-sdk-athena",
  "aws-sdk-dynamodb",
@@ -24,6 +25,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "url",
+ "utoipa",
 ]
 
 [[package]]
@@ -49,6 +51,16 @@ name = "anyhow"
 version = "1.0.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+
+[[package]]
+name = "api"
+version = "0.1.0"
+dependencies = [
+ "lambda_http",
+ "serde",
+ "serde_json",
+ "utoipa",
+]
 
 [[package]]
 name = "arc-swap"
@@ -1194,6 +1206,7 @@ name = "hierarchy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "api",
  "aws_lambda_events",
  "chrono",
  "lambda_http",
@@ -1204,6 +1217,7 @@ dependencies = [
  "strum",
  "tokio",
  "urlencoding",
+ "utoipa",
 ]
 
 [[package]]
@@ -3070,6 +3084,29 @@ name = "utf8_iter"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
+
+[[package]]
+name = "utoipa"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bde15df68e80b16c7d16b9616e80770ad158988daa56a27dccd1e55558b0160"
+dependencies = [
+ "indexmap 2.14.0",
+ "serde",
+ "serde_json",
+ "utoipa-gen",
+]
+
+[[package]]
+name = "utoipa-gen"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ba0b99ee52df3028635d93840c797102da61f8a7bb3cf751032455895b52ef8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "uuid"
