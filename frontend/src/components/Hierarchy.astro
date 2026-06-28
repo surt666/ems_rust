@@ -29,7 +29,14 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
      node's /node view (same as clicking a node name) AND drives the dropdowns below. -->
 <div class="hier-selectors">
   <select id="partner-select" class="hier-select" aria-label="Partner"
-    _="on change
+    _="on mousedown
+         set @data-keep to my value
+         set my value to ''
+       end
+       on blur
+         if my value is '' then set my value to @data-keep end
+       end
+       on change
          if my value is '' then exit end
          set sessionStorage.selectedPartnerId to my value
          call sessionStorage.removeItem('selectedCompanyId')
@@ -42,7 +49,14 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
          if window.emsNavigate then call window.emsNavigate(u) else set window.location.href to u end">
   </select>
   <select id="company-select" class="hier-select" aria-label="Virksomhed"
-    _="on change
+    _="on mousedown
+         set @data-keep to my value
+         set my value to ''
+       end
+       on blur
+         if my value is '' then set my value to @data-keep end
+       end
+       on change
          if my value is '' then exit end
          set sopt to the first of my selectedOptions
          set sessionStorage.selectedCompanyId to my value
