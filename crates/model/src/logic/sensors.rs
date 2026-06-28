@@ -77,7 +77,7 @@ fn has_cycle(
 
 /// Attach a new sensor to `parent`.
 #[allow(clippy::too_many_arguments)]
-pub async fn attach<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut>(
+pub async fn attach<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut, FFD>(
     parent: NodeId,
     daq_id: String,
     purpose: String,
@@ -89,6 +89,7 @@ pub async fn attach<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut>(
     add_sensor: FAS,
     get_active_sensor: FGA,
     delete_sensor: FDS,
+    find_active_by_daq: FFD,
 ) -> Result<Sensor, RepositoryError>
 where
     FGN: Fn(NodeId) -> FGNFut,
@@ -98,11 +99,20 @@ where
     FGA: Fn(SensorId) -> Option<Sensor> + Clone + 'static,
     FDS: FnOnce(SensorId, NodeId) -> FDSFut,
     FDSFut: Future<Output = Result<(), RepositoryError>>,
+    FFD: Fn(&str) -> Option<Sensor>,
 {
     // Validate parent exists.
     let parent_node = get_node(parent.clone())
         .await?
         .ok_or_else(|| RepositoryError::NotFound(parent.clone()))?;
+
+    // Business rule: a physical device (`daq_id`) feeds at most ONE active logical
+    // meter. Attaching a daq_id that's already active on another logical is a
+    // conflict — the device must be moved (its old attachment replaced/removed)
+    // first. (A daq_id is movable; a logical_id is fixed to its node.)
+    if let Some(existing) = find_active_by_daq(&daq_id) {
+        return Err(daq_already_attached(&daq_id, &existing));
+    }
 
     // Validate resample_minutes if set.
     if let Some(b) = resample_minutes {
@@ -218,22 +228,43 @@ fn revised(old: &Sensor) -> Sensor {
 // ---------------------------------------------------------------------------
 
 /// Replace the daq device on a sensor (bumps `created`).
-pub async fn replace_device<FGA, FRD, FRDFut>(
+pub async fn replace_device<FGA, FFD, FRD, FRDFut>(
     sensor_id: SensorId,
     new_daq_id: String,
     get_active_sensor: FGA,
+    find_active_by_daq: FFD,
     replace_sensor_device: FRD,
 ) -> Result<Sensor, RepositoryError>
 where
     FGA: FnOnce(SensorId) -> Option<Sensor>,
+    FFD: FnOnce(&str) -> Option<Sensor>,
     FRD: FnOnce(DateTime<Utc>, Sensor) -> FRDFut,
     FRDFut: Future<Output = Result<(), RepositoryError>>,
 {
     let old = get_active_sensor(sensor_id).ok_or_else(|| sensor_not_found(sensor_id))?;
+
+    // Same one-active-logical-per-daq rule as `attach`: the *new* device must not
+    // already feed a different logical meter. (Re-applying this logical's own daq
+    // is a no-op and allowed.)
+    if let Some(existing) = find_active_by_daq(&new_daq_id) {
+        if existing.id != sensor_id {
+            return Err(daq_already_attached(&new_daq_id, &existing));
+        }
+    }
+
     let old_created = old.created;
     let new_sensor = Sensor { daq_id: new_daq_id, ..revised(&old) };
     replace_sensor_device(old_created, new_sensor.clone()).await?;
     Ok(new_sensor)
+}
+
+/// The conflict raised when a `daq_id` is already attached to another active
+/// logical meter — shared by `attach` and `replace_device`.
+fn daq_already_attached(daq_id: &str, existing: &Sensor) -> RepositoryError {
+    RepositoryError::Conflict(format!(
+        "daq_id {:?} is already attached to logical meter {} at {}; move it first",
+        daq_id, existing.id, existing.path
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -534,8 +565,70 @@ mod tests {
             add_sensor_fn(store.clone()),
             get_active_fn(store.clone()),
             delete_sensor_fn(store.clone()),
+            {
+                let s = store.clone();
+                move |daq: &str| s.find_active_by_daq(daq)
+            },
         )
         .await
+    }
+
+    /// A daq_id already active on one logical can't be attached to a second.
+    #[tokio::test]
+    async fn rejects_daq_already_active_elsewhere() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+        let b1 = seed_building(&store, c2.clone()).await;
+        let b2 = seed_building(&store, c2).await;
+
+        do_attach(store.clone(), b1, "daq:dup", Formula::Identity, Some(15))
+            .await
+            .expect("first attach ok");
+
+        let err = do_attach(store.clone(), b2, "daq:dup", Formula::Identity, Some(15))
+            .await
+            .expect_err("second attach of the same daq must conflict");
+        assert!(matches!(err, RepositoryError::Conflict(_)), "got {err:?}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: replace_device_rejects_daq_owned_elsewhere
+    //
+    // Same one-active-logical-per-daq rule on the *replace* path: moving a
+    // sensor's device onto a daq that already feeds another logical conflicts.
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn replace_device_rejects_daq_owned_elsewhere() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+        let b1 = seed_building(&store, c2.clone()).await;
+        let b2 = seed_building(&store, c2).await;
+
+        let s1 = do_attach(store.clone(), b1, "daq:A", Formula::Identity, Some(15))
+            .await
+            .expect("attach s1");
+        do_attach(store.clone(), b2, "daq:B", Formula::Identity, Some(15))
+            .await
+            .expect("attach s2");
+
+        // Re-point s1 onto daq:B (owned by s2) → conflict.
+        let err = replace_device(
+            s1.id,
+            "daq:B".to_string(),
+            {
+                let st = store.clone();
+                move |sid| st.get_active_sensor(&sid)
+            },
+            {
+                let st = store.clone();
+                move |daq: &str| st.find_active_by_daq(daq)
+            },
+            replace_sensor_fn(store.clone()),
+        )
+        .await
+        .expect_err("replace onto an owned daq must conflict");
+        assert!(matches!(err, RepositoryError::Conflict(_)), "got {err:?}");
     }
 
     // -----------------------------------------------------------------------
@@ -768,6 +861,10 @@ mod tests {
                 let st = store.clone();
                 move |sid| st.get_active_sensor(&sid)
             },
+            {
+                let st = store.clone();
+                move |daq: &str| st.find_active_by_daq(daq)
+            },
             replace_sensor_fn(store.clone()),
         )
         .await
@@ -796,6 +893,10 @@ mod tests {
             {
                 let s = store.clone();
                 move |sid| s.get_active_sensor(&sid)
+            },
+            {
+                let s = store.clone();
+                move |daq: &str| s.find_active_by_daq(daq)
             },
             replace_sensor_fn(store.clone()),
         )

@@ -66,6 +66,14 @@ pub enum Command {
         daq_id: String,
     },
 
+    /// `delete_sensor` — remove a sensor by its `sensor_id`. Deletes the
+    /// `hierarchy_new` rows (active + history, the parent `has_sensor` edge, and
+    /// the `DAQ#` lock); the stream REMOVE of the active row cascades through the
+    /// bridge to delete the matching `meter-identity` row (both accounts).
+    DeleteSensor {
+        sensor_id: String,
+    },
+
     /// `create_user` — create a Cognito user and apply hierarchy access.
     CreateUser {
         email: String,
@@ -557,6 +565,22 @@ mod tests {
             matches!(&cmd, Command::ReplaceSensorDevice { sensor_id, daq_id }
                 if sensor_id == "S#old" && daq_id == "daq:new")
         );
+    }
+
+    /// `delete_sensor` parses `sensor_id`.
+    #[test]
+    fn parse_delete_sensor() {
+        let json = json!({ "action": "delete_sensor", "sensor_id": "S#10010" });
+        let cmd: Command = serde_json::from_value(json).unwrap();
+        assert!(matches!(&cmd, Command::DeleteSensor { sensor_id } if sensor_id == "S#10010"));
+    }
+
+    /// `delete_sensor` from a form body (the kebab-menu delete posts form-encoded).
+    #[test]
+    fn parse_delete_sensor_form() {
+        let body = "action=delete_sensor&data.sensor_id=S%2310010";
+        let cmd = parse_command(Some("application/x-www-form-urlencoded"), body).unwrap();
+        assert!(matches!(&cmd, Command::DeleteSensor { sensor_id } if sensor_id == "S#10010"));
     }
 
     /// `update_user` with optional fields absent defaults to `None`.

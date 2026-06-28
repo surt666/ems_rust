@@ -181,23 +181,82 @@ fn to_rows(items: Vec<AggItem>, level_id: &str, resolution: &str, gran: Gran) ->
         .collect()
 }
 
-// ── DynamoDB query ────────────────────────────────────────────────────────────
+/// Sum a dimension's rows across resources into one series — one `Row` per bucket,
+/// `purpose` = the dimension (energy / volume). `BTreeMap` keeps buckets in order.
+fn to_rows_dimension(
+    items: Vec<AggItem>,
+    level_id: &str,
+    resolution: &str,
+    gran: Gran,
+    dimension: &str,
+) -> Vec<Row> {
+    use std::collections::BTreeMap;
+    // bucket -> (summed value, summed count, unit-of-the-dimension)
+    let mut by_bucket: BTreeMap<String, (f64, i64, String)> = BTreeMap::new();
+    for it in items {
+        let (_, _resource, g, bucket) = parse_sk(&it.sk);
+        if g != gran.code() {
+            continue;
+        }
+        let slot = by_bucket
+            .entry(bucket.to_string())
+            .or_insert((0.0, 0, String::new()));
+        slot.0 += it.sum;
+        slot.1 += it.count;
+        if slot.2.is_empty() {
+            slot.2 = it.unit;
+        }
+    }
 
-/// The purposes a rollup row can carry — the authoritative closed set. The
-/// all-purposes query fans out over exactly `Purpose::ALL`, so adding a purpose
-/// to the system means adding a variant here, and `as_str` must match the value
-/// the Glue rollup writes into the sort key.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Purpose {
-    Energy,
+    by_bucket
+        .into_iter()
+        .map(|(bucket, (sum, count, unit))| Row {
+            level_id: level_id.to_string(),
+            purpose: dimension.to_string(),
+            unit,
+            resolution: resolution.to_string(),
+            timestamp: gran.label_to_iso(&bucket),
+            value: sum,
+            contributor_count: count,
+        })
+        .collect()
 }
 
-impl Purpose {
-    const ALL: &'static [Purpose] = &[Purpose::Energy];
+// ── DynamoDB query ────────────────────────────────────────────────────────────
+
+/// The meter type / energy form a sensor measures (the EMS "Målertype"), keyed
+/// into the rollup sort key. A node's "all" query fans out over `Resource::ALL`,
+/// so adding a resource means adding a variant here; `as_str` must match the value
+/// the Glue rollup writes into the sort key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Resource {
+    Electricity,
+    DistrictHeating,
+    DistrictCooling,
+    Gas,
+    Water,
+    Heat,
+}
+
+impl Resource {
+    /// Every resource — the per-resource fan-out for a node's series.
+    const ALL: &'static [Resource] = &[
+        Resource::Electricity,
+        Resource::DistrictHeating,
+        Resource::DistrictCooling,
+        Resource::Gas,
+        Resource::Water,
+        Resource::Heat,
+    ];
 
     fn as_str(self) -> &'static str {
         match self {
-            Purpose::Energy => "Energy",
+            Resource::Electricity => "electricity",
+            Resource::DistrictHeating => "district_heating",
+            Resource::DistrictCooling => "district_cooling",
+            Resource::Gas => "gas",
+            Resource::Water => "water",
+            Resource::Heat => "heat",
         }
     }
 }
@@ -209,37 +268,37 @@ struct QueryParams<'a> {
     gran: Gran,
     start_bucket: &'a str,
     end_bucket: &'a str,
-    /// A single requested purpose, or empty for "all purposes".
-    purpose: &'a str,
+    /// A single requested resource, or empty for "all resources".
+    resource: &'a str,
 }
 
-/// Query a node's rollup rows. A specific `purpose` runs one key-range query; an
-/// empty `purpose` ("all") fans out over every `Purpose::ALL` **concurrently** —
+/// Query a node's rollup rows. A specific `resource` runs one key-range query; an
+/// empty `resource` ("all") fans out over every `Resource::ALL` **concurrently** —
 /// each is its own `sk BETWEEN` key-range, so every query reads only its own
 /// window (no `begins_with` + post-read filter, no cross-granularity reads). The
-/// sort key is `<node_path>#<purpose>#<gran>#<date>` with the date last, so once
-/// the purpose is fixed the date window is a pure key-condition range.
+/// sort key is `<node_path>#<resource>#<gran>#<date>` with the date last, so once
+/// the resource is fixed the date window is a pure key-condition range.
 async fn query_node(client: &Client, p: QueryParams<'_>) -> Result<Vec<AggItem>> {
-    let purposes: Vec<&str> = if p.purpose.is_empty() {
-        Purpose::ALL.iter().map(|p| p.as_str()).collect()
+    let resources: Vec<&str> = if p.resource.is_empty() {
+        Resource::ALL.iter().map(|r| r.as_str()).collect()
     } else {
-        vec![p.purpose]
+        vec![p.resource]
     };
 
-    let per_purpose =
-        try_join_all(purposes.into_iter().map(|purpose| query_one_purpose(client, &p, purpose)))
+    let per_resource =
+        try_join_all(resources.into_iter().map(|resource| query_one_resource(client, &p, resource)))
             .await?;
-    Ok(per_purpose.into_iter().flatten().collect())
+    Ok(per_resource.into_iter().flatten().collect())
 }
 
-/// One purpose's window: `pk = :pk AND sk BETWEEN prefix+start AND prefix+end`,
-/// where `prefix = <node_path>#<purpose>#<gran>#` — a pure key-condition range.
-async fn query_one_purpose(
+/// One resource's window: `pk = :pk AND sk BETWEEN prefix+start AND prefix+end`,
+/// where `prefix = <node_path>#<resource>#<gran>#` — a pure key-condition range.
+async fn query_one_resource(
     client: &Client,
     p: &QueryParams<'_>,
-    purpose: &str,
+    resource: &str,
 ) -> Result<Vec<AggItem>> {
-    let prefix = format!("{}#{}#{}#", p.sk_path, purpose, p.gran.code());
+    let prefix = format!("{}#{}#{}#", p.sk_path, resource, p.gran.code());
     // The `.items()` paginator threads `exclusive_start_key`/`last_evaluated_key`
     // and `.collect()` gathers every page, short-circuiting on the first SDK error.
     let raw = client
@@ -255,6 +314,39 @@ async fn query_one_purpose(
         .collect::<Result<Vec<_>, _>>()
         .await
         .map_err(|e| anyhow!("DynamoDB query: {:?}", e))?;
+
+    Ok(raw
+        .into_iter()
+        .filter_map(|it| serde_dynamo::from_item(it).ok())
+        .collect())
+}
+
+/// A node's rows for one aggregation dimension (energy / volume), across every
+/// resource, via `gsi1`: `gsi1pk = "<pk>#<dimension>"` and
+/// `gsi1sk BETWEEN prefix+start AND prefix+end` where `prefix = <node_path>#<gran>#`
+/// (the GSI sort key omits the resource, so this single range spans electricity +
+/// heat + gas …). The caller sums per bucket.
+async fn query_dimension(
+    client: &Client,
+    p: &QueryParams<'_>,
+    dimension: &str,
+) -> Result<Vec<AggItem>> {
+    let gsi1pk = format!("{}#{}", p.pk, dimension);
+    let prefix = format!("{}#{}#", p.sk_path, p.gran.code());
+    let raw = client
+        .query()
+        .table_name(p.table)
+        .index_name("gsi1")
+        .key_condition_expression("gsi1pk = :pk AND gsi1sk BETWEEN :sk_start AND :sk_end")
+        .expression_attribute_values(":pk", AttributeValue::S(gsi1pk))
+        .expression_attribute_values(":sk_start", AttributeValue::S(format!("{prefix}{}", p.start_bucket)))
+        .expression_attribute_values(":sk_end", AttributeValue::S(format!("{prefix}{}", p.end_bucket)))
+        .into_paginator()
+        .items()
+        .send()
+        .collect::<Result<Vec<_>, _>>()
+        .await
+        .map_err(|e| anyhow!("DynamoDB gsi1 query: {:?}", e))?;
 
     Ok(raw
         .into_iter()
@@ -352,7 +444,8 @@ async fn handler(
     params(
         ("level_id" = String, Query, description = "Hierarchy node path (…|HN2#..|HN3#..)"),
         ("resolution" = Option<String>, Query, description = "hourly (default) | daily"),
-        ("purpose" = Option<String>, Query, description = "Filter to a single purpose"),
+        ("resource" = Option<String>, Query, description = "Filter to one resource (electricity, water, …); empty = all"),
+        ("dimension" = Option<String>, Query, description = "Aggregate across resources in a dimension (energy | volume) → one summed series; overrides resource"),
         ("start" = String, Query, description = "ISO-8601 start (required)"),
         ("end" = String, Query, description = "ISO-8601 end (required)"),
         ("format" = Option<String>, Query, description = "json (default) | html"),
@@ -375,7 +468,17 @@ async fn handle_aggregations(
         .get("resolution")
         .cloned()
         .unwrap_or_else(|| "hourly".to_string());
-    let purpose = qs.get("purpose").cloned().unwrap_or_default();
+    // A single resource filter (electricity / water / …); empty = all resources.
+    // Accept `resource=` (new) or `purpose=` (legacy) during the transition.
+    let resource = qs
+        .get("resource")
+        .or_else(|| qs.get("purpose"))
+        .cloned()
+        .unwrap_or_default();
+    // An aggregation *dimension* (energy / volume): when set, sum across every
+    // resource in that dimension via the GSI → one series (a node's total energy).
+    // Mutually exclusive with `resource`; `dimension` wins.
+    let dimension = qs.get("dimension").cloned().unwrap_or_default();
     let start = qs.get("start").cloned().unwrap_or_default();
     let end = qs.get("end").cloned().unwrap_or_default();
 
@@ -396,23 +499,28 @@ async fn handle_aggregations(
         _ => return Err(ApiError::bad_request("start/end must be ISO-8601 timestamps")),
     };
 
-    match query_node(
-        client,
-        QueryParams {
-            table,
-            pk: &pk,
-            sk_path: &sk_path,
-            gran,
-            start_bucket: &start_bucket,
-            end_bucket: &end_bucket,
-            purpose: &purpose,
-        },
-    )
-    .await
-    {
-        Ok(items) => Ok(rows_response(&to_rows(items, &level_id, &resolution, gran), format)),
-        Err(e) => Err(ApiError::internal(e.to_string())),
-    }
+    let params = QueryParams {
+        table,
+        pk: &pk,
+        sk_path: &sk_path,
+        gran,
+        start_bucket: &start_bucket,
+        end_bucket: &end_bucket,
+        resource: &resource,
+    };
+
+    let rows = if dimension.is_empty() {
+        match query_node(client, params).await {
+            Ok(items) => to_rows(items, &level_id, &resolution, gran),
+            Err(e) => return Err(ApiError::internal(e.to_string())),
+        }
+    } else {
+        match query_dimension(client, &params, &dimension).await {
+            Ok(items) => to_rows_dimension(items, &level_id, &resolution, gran, &dimension),
+            Err(e) => return Err(ApiError::internal(e.to_string())),
+        }
+    };
+    Ok(rows_response(&rows, format))
 }
 
 /// Render rollup rows in the requested representation.
@@ -509,11 +617,12 @@ mod tests {
     // Purpose fan-out ────────────────────────────────────────────────────────────
 
     #[test]
-    fn purpose_all_is_authoritative() {
-        // The all-purposes query fans out over exactly these — must be non-empty,
+    fn resource_all_is_authoritative() {
+        // The all-resources query fans out over exactly these — must be non-empty,
         // and each `as_str` must match what the Glue rollup writes into the SK.
-        assert!(!Purpose::ALL.is_empty(), "fan-out needs at least one purpose");
-        assert_eq!(Purpose::Energy.as_str(), "Energy");
+        assert!(!Resource::ALL.is_empty(), "fan-out needs at least one resource");
+        assert_eq!(Resource::Electricity.as_str(), "electricity");
+        assert_eq!(Resource::Water.as_str(), "water");
     }
 
     // parse_node_keys ──────────────────────────────────────────────────────────
@@ -650,6 +759,26 @@ mod tests {
         // sorted by purpose: electricity < gas
         assert_eq!(rows[0].purpose, "electricity");
         assert_eq!(rows[1].purpose, "gas");
+    }
+
+    #[test]
+    fn test_to_rows_dimension_sums_across_resources_per_bucket() {
+        // Two resources in the same bucket sum into one energy row; a second
+        // bucket stays separate; wrong-granularity rows are dropped.
+        let items = vec![
+            make_item("HN2#1#electricity#h#2024-01-01T10", 100.0, 5, "kWh"),
+            make_item("HN2#1#heat#h#2024-01-01T10", 40.0, 2, "kWh"),
+            make_item("HN2#1#electricity#h#2024-01-01T11", 20.0, 1, "kWh"),
+            make_item("HN2#1#electricity#d#2024-01-01", 999.0, 9, "kWh"), // wrong gran
+        ];
+        let rows = to_rows_dimension(items, "HN2#1", "hourly", Gran::Hour, "energy");
+        assert_eq!(rows.len(), 2, "two hourly buckets");
+        assert!(rows.iter().all(|r| r.purpose == "energy"));
+        // sorted by bucket; first bucket = electricity + heat
+        assert_eq!(rows[0].timestamp, "2024-01-01T10:00:00Z");
+        assert_eq!(rows[0].value, 140.0);
+        assert_eq!(rows[0].contributor_count, 7);
+        assert_eq!(rows[1].value, 20.0);
     }
 
     #[test]

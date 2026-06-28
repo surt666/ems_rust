@@ -57,6 +57,15 @@ fn bad_request(msg: &str) -> Value {
     })
 }
 
+fn not_found(msg: &str) -> Value {
+    json!({
+        "statusCode": 404,
+        "body": json!({
+            "error": { "code": "Not_found", "message": msg }
+        }).to_string()
+    })
+}
+
 /// Parse an optional string field into `Option<T>`. `None` stays `None`; a present
 /// value is `FromStr`-parsed, and a parse failure short-circuits as a
 /// `bad_request` envelope (returned via the `Err` arm at the call site).
@@ -652,7 +661,7 @@ where
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
-pub async fn handle_attach_sensor<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut>(
+pub async fn handle_attach_sensor<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut, FFD>(
     parent_id: String,
     daq_id: String,
     purpose: String,
@@ -664,6 +673,7 @@ pub async fn handle_attach_sensor<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut>(
     add_sensor: FAS,
     get_active_sensor: FGA,
     delete_sensor: FDS,
+    find_active_by_daq: FFD,
 ) -> Value
 where
     FGN: Fn(NodeId) -> FGNFut,
@@ -673,6 +683,7 @@ where
     FGA: Fn(SensorId) -> Option<Sensor> + Clone + 'static,
     FDS: FnOnce(SensorId, NodeId) -> FDSFut,
     FDSFut: Future<Output = Result<(), RepositoryError>>,
+    FFD: Fn(&str) -> Option<Sensor>,
 {
     let parent = match NodeId::parse(&parent_id) {
         Ok(id) => id,
@@ -714,6 +725,7 @@ where
         add_sensor,
         get_active_sensor,
         delete_sensor,
+        find_active_by_daq,
     )
     .await
     {
@@ -726,14 +738,16 @@ where
 // replace_sensor_device handler
 // ---------------------------------------------------------------------------
 
-pub async fn handle_replace_sensor_device<FGA, FRD, FRDFut>(
+pub async fn handle_replace_sensor_device<FGA, FFD, FRD, FRDFut>(
     sensor_id_s: String,
     new_daq_id: String,
     get_active_sensor: FGA,
+    find_active_by_daq: FFD,
     replace_sensor_device: FRD,
 ) -> Value
 where
     FGA: FnOnce(SensorId) -> Option<Sensor>,
+    FFD: FnOnce(&str) -> Option<Sensor>,
     FRD: FnOnce(chrono::DateTime<chrono::Utc>, Sensor) -> FRDFut,
     FRDFut: Future<Output = Result<(), RepositoryError>>,
 {
@@ -742,9 +756,60 @@ where
         Err(e) => return bad_request(&format!("bad sensor_id: {}", e)),
     };
 
-    match sensors::replace_device(sid, new_daq_id, get_active_sensor, replace_sensor_device).await
+    match sensors::replace_device(
+        sid,
+        new_daq_id,
+        get_active_sensor,
+        find_active_by_daq,
+        replace_sensor_device,
+    )
+    .await
     {
         Ok(s) => ok(sensor_to_json(&s)),
+        Err(e) => repo_error_response(e),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// delete_sensor handler
+// ---------------------------------------------------------------------------
+
+/// Handler for `delete_sensor`.
+///
+/// 1. Look up the active sensor row to learn its parent node (the `has_sensor`
+///    edge lives under the parent's partition).
+/// 2. `delete_sensor` removes every `hierarchy_new` row for the sensor (active +
+///    history), the parent edge, and the `DAQ#` lock.
+///
+/// The cross-account propagation is implicit: removing the active row emits a
+/// DynamoDB stream REMOVE that the bridge turns into a `meter-identity`
+/// `delete_item`, so the sensor disappears from both accounts.
+pub async fn handle_delete_sensor<FGA, FGAFut, FDS, FDSFut>(
+    sensor_id_s: String,
+    get_active_sensor: FGA,
+    delete_sensor: FDS,
+) -> Value
+where
+    FGA: FnOnce(SensorId) -> FGAFut,
+    FGAFut: Future<Output = Result<Option<Sensor>, RepositoryError>>,
+    FDS: FnOnce(SensorId, NodeId) -> FDSFut,
+    FDSFut: Future<Output = Result<(), RepositoryError>>,
+{
+    let sid = match SensorId::parse(&sensor_id_s) {
+        Ok(id) => id,
+        Err(e) => return bad_request(&format!("bad sensor_id: {}", e)),
+    };
+
+    // Resolve the parent node from the active row's path (the edge to delete
+    // hangs off the parent). A missing active row ⇒ nothing to delete ⇒ 404.
+    let parent = match get_active_sensor(sid).await {
+        Ok(Some(sensor)) => sensor.parent_id(),
+        Ok(None) => return not_found(&format!("{} not found", sid)),
+        Err(e) => return repo_error_response(e),
+    };
+
+    match delete_sensor(sid, parent).await {
+        Ok(()) => ok(json!({ "deleted": sid.to_string() })),
         Err(e) => repo_error_response(e),
     }
 }
@@ -841,6 +906,15 @@ pub async fn run(cmd: Command) -> Value {
             resample_minutes,
             formula,
         } => {
+            // Pre-fetch the daq's current owner so the synchronous guard inside
+            // handle_attach_sensor can enforce one-active-logical-per-daq (the
+            // async DDB read can't run inside that sync closure). Reads the daq
+            // lock partition (`Query pk="DAQ#<daq>"`, Limit 1 ⇒ ≤ 1 by the
+            // invariant). A transient lookup error degrades to "no owner" — the
+            // attach transaction itself would surface any real DB failure.
+            let daq_owner = ddb_sensor::find_active_by_daq(ddb, &table, &daq_id)
+                .await
+                .unwrap_or(None);
             handle_attach_sensor(
                 parent_id,
                 daq_id,
@@ -885,15 +959,33 @@ pub async fn run(cmd: Command) -> Value {
                         async move { ddb_sensor::delete_sensor(ddb, &t, &sid, &parent).await }
                     }
                 },
+                // One-active-logical-per-daq guard, backed by the prefetched
+                // owner above (the `DAQ#<daq>` lock partition). Some(_) ⇒ the daq
+                // is already attached elsewhere ⇒ Conflict.
+                move |_daq: &str| daq_owner.clone(),
             )
             .await
         }
 
         Command::ReplaceSensorDevice { sensor_id, daq_id } => {
+            // Prefetch (async) what the synchronous closures below can't read: the
+            // current active sensor (so replace_device can locate it) and the new
+            // daq's current owner (the one-active-logical-per-daq guard). Transient
+            // lookup errors degrade to None — the transaction surfaces real faults.
+            let current = match SensorId::parse(&sensor_id) {
+                Ok(sid) => ddb_sensor::get_active_sensor(ddb, &table, &sid)
+                    .await
+                    .unwrap_or(None),
+                Err(_) => None,
+            };
+            let new_daq_owner = ddb_sensor::find_active_by_daq(ddb, &table, &daq_id)
+                .await
+                .unwrap_or(None);
             handle_replace_sensor_device(
                 sensor_id,
                 daq_id,
-                |_sid| None,
+                move |_sid| current.clone(),
+                move |_daq: &str| new_daq_owner.clone(),
                 {
                     let t = table.clone();
                     move |old_created, new_sensor| {
@@ -901,6 +993,28 @@ pub async fn run(cmd: Command) -> Value {
                         async move {
                             ddb_sensor::transact_replace(ddb, &t, old_created, &new_sensor).await
                         }
+                    }
+                },
+            )
+            .await
+        }
+
+        Command::DeleteSensor { sensor_id } => {
+            handle_delete_sensor(
+                sensor_id,
+                // Async active-row lookup (resolves the parent for the edge delete).
+                {
+                    let t = table.clone();
+                    move |sid| {
+                        let t = t.clone();
+                        async move { ddb_sensor::get_active_sensor(ddb, &t, &sid).await }
+                    }
+                },
+                {
+                    let t = table.clone();
+                    move |sid, parent| {
+                        let t = t.clone();
+                        async move { ddb_sensor::delete_sensor(ddb, &t, &sid, &parent).await }
                     }
                 },
             )
@@ -1121,6 +1235,17 @@ mod tests {
             s.delete_sensor(&sid, &parent);
             std::future::ready(Ok(()))
         }
+    }
+
+    /// Async active-row lookup (matches handle_delete_sensor's `FGA` contract).
+    fn make_get_active_async(
+        s: Rc<Store>,
+    ) -> impl FnOnce(
+        SensorId,
+    ) -> std::future::Ready<
+        Result<Option<model::domain::sensor::Sensor>, RepositoryError>,
+    > {
+        move |sid| std::future::ready(Ok(s.get_active_sensor(&sid)))
     }
 
     fn make_add_node(
@@ -1804,6 +1929,7 @@ mod tests {
             make_add_sensor(store.clone()),
             make_get_active(store.clone()),
             make_delete_sensor(store.clone()),
+            |_daq: &str| None,
         )
         .await;
 
@@ -1833,6 +1959,7 @@ mod tests {
             make_add_sensor(store.clone()),
             make_get_active(store.clone()),
             make_delete_sensor(store.clone()),
+            |_daq: &str| None,
         )
         .await;
 
@@ -1856,6 +1983,7 @@ mod tests {
             make_add_sensor(store.clone()),
             make_get_active(store.clone()),
             make_delete_sensor(store.clone()),
+            |_daq: &str| None,
         )
         .await;
 
@@ -1886,6 +2014,7 @@ mod tests {
             make_add_sensor(store.clone()),
             make_get_active(store.clone()),
             make_delete_sensor(store.clone()),
+            |_daq: &str| None,
         )
         .await;
         assert_eq!(status(&s1), 200);
@@ -1909,11 +2038,73 @@ mod tests {
             make_add_sensor(store.clone()),
             make_get_active(store.clone()),
             make_delete_sensor(store.clone()),
+            |_daq: &str| None,
         )
         .await;
 
         assert_eq!(status(&resp), 200, "attach with formula; got {resp:?}");
         assert_eq!(body(&resp)["formula"]["kind"].as_str().unwrap_or(""), "expr");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: delete_sensor roundtrip — attach then delete, sensor is gone
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn delete_sensor_roundtrip() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_building_company(&store);
+        let bldg = seed_building(&store, c2).await;
+
+        let add = handle_attach_sensor(
+            bldg.to_string(),
+            "daq:del".to_string(),
+            "Electricity".to_string(),
+            "counter".to_string(),
+            Some("kWh".to_string()),
+            None,
+            None,
+            make_get_node(store.clone()),
+            make_add_sensor(store.clone()),
+            make_get_active(store.clone()),
+            make_delete_sensor(store.clone()),
+            |_daq: &str| None,
+        )
+        .await;
+        assert_eq!(status(&add), 200, "attach for delete; got {add:?}");
+        let sid = body(&add)["id"].as_str().expect("sensor id").to_string();
+
+        let del = handle_delete_sensor(
+            sid.clone(),
+            make_get_active_async(store.clone()),
+            make_delete_sensor(store.clone()),
+        )
+        .await;
+
+        assert_eq!(status(&del), 200, "delete_sensor should 200; got {del:?}");
+        assert_eq!(body(&del)["deleted"].as_str().unwrap_or(""), sid);
+        assert!(
+            store
+                .get_active_sensor(&SensorId::parse(&sid).unwrap())
+                .is_none(),
+            "sensor must be gone after delete"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: delete_sensor on a missing sensor → 404
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn delete_sensor_missing_404() {
+        let store = Rc::new(Store::new());
+        let del = handle_delete_sensor(
+            "S#9999999".to_string(),
+            make_get_active_async(store.clone()),
+            make_delete_sensor(store.clone()),
+        )
+        .await;
+        assert_eq!(status(&del), 404, "missing sensor should 404; got {del:?}");
     }
 
     // -----------------------------------------------------------------------
@@ -1944,6 +2135,7 @@ mod tests {
             make_add_sensor(store.clone()),
             make_get_active(store.clone()),
             make_delete_sensor(store.clone()),
+            |_daq: &str| None,
         )
         .await;
 

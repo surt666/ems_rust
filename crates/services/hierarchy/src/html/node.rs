@@ -415,8 +415,19 @@ fn sensor_dialog(nid_str: &str, parent_str: &str) -> Markup {
                         span class="required" { "*" }
                     }
                     div class="form-row" {
-                        label class="form-label" { "Purpose" }
-                        input type="text" name="data.purpose" required class="form-input";
+                        label class="form-label" { "Resource" }
+                        // The per-meter resource (EMS "Målertype" / energy form). The
+                        // value is written to the sensor's `purpose` field and keyed into
+                        // the rollup sort key, so option values MUST match the aggregations
+                        // lambda's `Resource::as_str` exactly.
+                        select name="data.purpose" required class="form-select" {
+                            option value="electricity" { "El" }
+                            option value="district_heating" { "Fjernvarme" }
+                            option value="district_cooling" { "Fjernkøling" }
+                            option value="gas" { "Gas" }
+                            option value="water" { "Vand" }
+                            option value="heat" { "Varme" }
+                        }
                         span class="required" { "*" }
                     }
                     div class="form-row" {

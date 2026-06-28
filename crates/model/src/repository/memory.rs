@@ -320,6 +320,16 @@ impl Store {
         })
     }
 
+    /// The single ACTIVE sensor (logical) currently fed by `daq_id`, if any —
+    /// backs the "one active logical per physical device" rule in `logic::sensors`.
+    pub fn find_active_by_daq(&self, daq_id: &str) -> Option<Sensor> {
+        let inner = self.inner.borrow();
+        inner
+            .sensors
+            .values()
+            .find_map(|rows| Self::active_of_rows(rows).filter(|s| s.daq_id == daq_id))
+    }
+
     /// List all sensor ids directly attached to `parent` via `Has_sensor`
     /// edges.
     pub fn list_sensor_ids(&self, parent: &NodeId) -> Vec<SensorId> {

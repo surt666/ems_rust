@@ -183,7 +183,29 @@ pub(crate) fn node_gsi1pk(lvl: Level) -> String {
     format!("HN{}", lvl.depth())
 }
 
-pub(crate) const SENSOR_GSI1PK: &str = "S";
+/// GSI1 partition key for a sensor (and its `has_sensor` edge), scoped to the
+/// owning company (the HN2 segment of `path`) so the sensor index shards per
+/// company instead of piling every sensor in the system into one hot `"S"`
+/// partition. A company-wide listing (formula picker / Målere) is then a single
+/// `gsi1pk = "S#HN2#<id>"` query rather than a `begins_with` over the world.
+///
+/// `"HN0#root|HN1#10|HN2#200|HN3#1|S#1"` -> `"S#HN2#200"`. A well-formed sensor
+/// always sits under a company; if no HN2 segment is present we fall back to a
+/// bare `"S"` so a malformed row is never silently unindexed.
+pub(crate) fn sensor_gsi1pk(path: &str) -> String {
+    match hn2_segment(path) {
+        Some(seg) => format!("S#{seg}"),
+        None => "S".to_string(),
+    }
+}
+
+/// The `HN2#<id>` (company) segment of a hierarchy path, if present.
+pub(crate) fn hn2_segment(path: &str) -> Option<String> {
+    path.split('|')
+        .filter(|s| !s.is_empty())
+        .find(|seg| matches!(NodeId::parse(seg), Ok(nid) if nid.level() == Level::Hn2))
+        .map(str::to_string)
+}
 
 // ---------------------------------------------------------------------------
 // Formula encode/decode (expr_to_attr / formula_to_attr)
@@ -677,7 +699,7 @@ pub struct AnchorEdgeParams<'a> {
 /// Encode a HN-side edge (`has_<label>` / `has_sensor`).
 pub fn anchor_edge_to_item(p: AnchorEdgeParams<'_>) -> Item {
     let gsi1pk_v: String = match p.kind {
-        EdgeKind::HasSensor => SENSOR_GSI1PK.to_string(),
+        EdgeKind::HasSensor => sensor_gsi1pk(p.self_path),
         EdgeKind::HasLabel(_) => {
             // gsi1pk is derived from the child's level
             if let Ok(child_id) = NodeId::parse(p.to_) {
@@ -751,7 +773,7 @@ pub fn sensor_to_item(sn: &Sensor) -> Item {
     item.insert("sk".to_string(), s(sk));
     item.insert("type".to_string(), s("sensor"));
     item.insert("daq_id".to_string(), s(sn.daq_id.clone()));
-    item.insert("gsi1pk".to_string(), s(SENSOR_GSI1PK));
+    item.insert("gsi1pk".to_string(), s(sensor_gsi1pk(&sn.path)));
     item.insert("gsi1sk".to_string(), s(sn.path.clone()));
     item.insert("purpose".to_string(), s(sn.purpose.clone()));
     item.insert(
@@ -767,6 +789,57 @@ pub fn sensor_to_item(sn: &Sensor) -> Item {
         item.insert("unit".to_string(), s(u.clone()));
     }
     item
+}
+
+// ---------------------------------------------------------------------------
+// Daq lock — a physical daq feeds at most one *active* logical meter.
+//
+// Stored as an overloaded base-table row keyed by the daq:
+//   pk = "DAQ#<daq_id>"   sk = "belongs_to#S#<logical_id>"   path = <full path>
+// One row per daq partition, so `Query pk="DAQ#<daq>"` returns ≤ 1 — that count
+// is the uniqueness invariant. Enforced by a pre-fetch guard (not a conditional
+// write), so the row is written unconditionally alongside the sensor.
+// ---------------------------------------------------------------------------
+
+/// Partition key for a daq lock row: `"DAQ#<daq_id>"`.
+pub(crate) fn daq_lock_pk(daq_id: &str) -> String {
+    format!("DAQ#{daq_id}")
+}
+
+/// Sort key naming the owning logical sensor: `"belongs_to#S#<id>"`.
+fn daq_lock_sk(sensor_id: SensorId) -> String {
+    format!("belongs_to#{sensor_id}")
+}
+
+/// The full `{pk, sk}` key of the daq lock row — for `Delete`.
+pub(crate) fn daq_lock_key(daq_id: &str, sensor_id: SensorId) -> Item {
+    let mut key: Item = HashMap::new();
+    key.insert("pk".to_string(), s(daq_lock_pk(daq_id)));
+    key.insert("sk".to_string(), s(daq_lock_sk(sensor_id)));
+    key
+}
+
+/// Build the daq lock row asserting `daq_id` belongs to `sensor_id` at `path`.
+pub(crate) fn daq_lock_item(daq_id: &str, sensor_id: SensorId, path: &str) -> Item {
+    let mut item = daq_lock_key(daq_id, sensor_id);
+    item.insert("type".to_string(), s("daq_lock"));
+    item.insert("path".to_string(), s(path));
+    item
+}
+
+/// The daq lock row for a freshly-encoded sensor item (the active row carries
+/// `daq_id`, `pk` = `S#<id>`, `gsi1sk` = path). `None` if it has no daq.
+pub(crate) fn daq_lock_of_sensor_item(item: &Item) -> Option<Item> {
+    let daq = opt_s(item, "daq_id")?;
+    let sensor_id = SensorId::parse(&opt_s(item, "pk")?).ok()?;
+    let path = opt_s(item, "gsi1sk").unwrap_or_default();
+    Some(daq_lock_item(&daq, sensor_id, &path))
+}
+
+/// Decode a daq lock row into its owning `(logical id, path)`.
+pub(crate) fn daq_lock_owner(item: &Item) -> Option<(SensorId, String)> {
+    let id = SensorId::parse(opt_s(item, "sk")?.strip_prefix("belongs_to#")?).ok()?;
+    Some((id, opt_s(item, "path").unwrap_or_default()))
 }
 
 /// Decode a `Sensor` from a DynamoDB `Item`.

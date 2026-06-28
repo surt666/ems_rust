@@ -58,10 +58,32 @@ def ancestor_keys(hns, logical_id):
     return result
 
 
-def build_sk(node_path: str, purpose: str, gran: str, bucket: str) -> str:
-    """sk = '<node_path>#<purpose>#<gran>#<bucket>'. The '#' after node_path is the delimiter
-    that keeps a node's own rows sorting before its descendants' ('|' > '#')."""
-    return "%s#%s#%s#%s" % (node_path, purpose, gran, bucket)
+def build_sk(node_path: str, resource: str, gran: str, bucket: str) -> str:
+    """sk = '<node_path>#<resource>#<gran>#<bucket>'. The `purpose` column carries the
+    per-meter *resource* (electricity / water / district_heating / …) — that's the
+    read side's series dimension. The '#' after node_path is the delimiter that keeps
+    a node's own rows sorting before its descendants' ('|' > '#')."""
+    return "%s#%s#%s#%s" % (node_path, resource, gran, bucket)
+
+
+# Energy carriers roll up together (Wh/J), volumes together (m³/L). The GSI
+# partitions by this dimension so a company-wide "all energy" view is one query
+# that sums across electricity + heat + gas. Unknown units get their own bucket
+# rather than being silently folded into energy.
+def dimension_of_unit(unit: str) -> str:
+    """Aggregation dimension from a unit: 'energy' | 'volume' | 'other'."""
+    u = (unit or "").strip().lower()
+    if "wh" in u or u in ("j", "kj", "mj", "gj"):
+        return "energy"
+    if "m3" in u or "m³" in u or u in ("l", "liter", "litre", "litres"):
+        return "volume"
+    return "other"
+
+
+def build_gsi1sk(node_path: str, gran: str, bucket: str) -> str:
+    """gsi1sk = '<node_path>#<gran>#<bucket>' — resource omitted, so a dimension
+    partition ranges across every resource (and node) by time."""
+    return "%s#%s#%s" % (node_path, gran, bucket)
 
 
 # ── Spark transform ──
@@ -79,6 +101,8 @@ def _ancestor_keys_udf(hn2, hn3, hn4, hn5, hn6, hn7, hn8, hn9, logical_id):
 
 _TTL_UDF = F.udf(ttl_for, T.LongType())
 _SK_UDF = F.udf(build_sk, T.StringType())
+_DIM_UDF = F.udf(dimension_of_unit, T.StringType())
+_GSI1SK_UDF = F.udf(build_gsi1sk, T.StringType())
 
 
 def build_rollups(df: DataFrame, run_at_iso: str) -> DataFrame:
@@ -86,10 +110,13 @@ def build_rollups(df: DataFrame, run_at_iso: str) -> DataFrame:
 
     Input columns: hn2..hn9 (int), logical_id (int), purpose (str), unit (str),
     resample_value (double), value (double), timestamp (ts), resample_timestamp (ts).
-    Output columns: pk ('HN2#<id>'), sk ('<full hierarchy path>#<purpose>#<gran>#<bucket>'),
-    purpose, unit, sum, count, min, max, last_value, last_ts, updated_at, ttl.
-    (`bucket` is intentionally NOT written as its own attribute — the date is the
-    last sort-key segment, so the read side ranges on the SK directly.)
+    Output columns: pk ('HN2#<id>'), sk ('<full hierarchy path>#<resource>#<gran>#<bucket>'),
+    gsi1pk ('HN2#<id>#<dimension>'), gsi1sk ('<path>#<gran>#<bucket>'),
+    purpose (the per-meter resource), unit, sum, count, min, max, last_value, last_ts,
+    updated_at, ttl. (`bucket` is intentionally NOT written as its own attribute — the
+    date is the last sort-key segment, so the read side ranges on the SK directly.)
+    The GSI keys a company's rollups by aggregation dimension (energy / volume) so a
+    cross-resource company view is a single partition query.
     NOTE: caller must set spark.sql.session.timeZone='UTC' so the bucket labels are UTC.
     """
     with_buckets = df.withColumn(
@@ -122,6 +149,9 @@ def build_rollups(df: DataFrame, run_at_iso: str) -> DataFrame:
     return grouped.select(
         F.concat(F.lit("HN2#"), F.col("hn2").cast("string")).alias("pk"),
         _SK_UDF("node_path", "purpose", "gran", "bucket").alias("sk"),
+        F.concat(F.lit("HN2#"), F.col("hn2").cast("string"),
+                 F.lit("#"), _DIM_UDF("unit")).alias("gsi1pk"),
+        _GSI1SK_UDF("node_path", "gran", "bucket").alias("gsi1sk"),
         "purpose", "unit", "sum", "count", "min", "max",
         F.col("_last.value").alias("last_value"),
         F.date_format(F.col("_last.timestamp"), "yyyy-MM-dd'T'HH:mm:ssXXX").alias("last_ts"),

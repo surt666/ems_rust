@@ -37,6 +37,17 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		RemovalPolicy:       awscdk.RemovalPolicy_RETAIN,
 	})
 
+	// gsi1: company rollups keyed by aggregation dimension, so a cross-resource
+	// company view ("all energy") is one partition query. gsi1pk = "HN2#<id>#<energy|volume>",
+	// gsi1sk = "<node_path>#<gran>#<bucket>" (resource omitted ⇒ spans resources, date last
+	// for clean time ranges). Adding a GSI is an online UpdateTable — non-destructive.
+	table.AddGlobalSecondaryIndex(&awsdynamodb.GlobalSecondaryIndexProps{
+		IndexName:      jsii.String("gsi1"),
+		PartitionKey:   &awsdynamodb.Attribute{Name: jsii.String("gsi1pk"), Type: awsdynamodb.AttributeType_STRING},
+		SortKey:        &awsdynamodb.Attribute{Name: jsii.String("gsi1sk"), Type: awsdynamodb.AttributeType_STRING},
+		ProjectionType: awsdynamodb.ProjectionType_ALL,
+	})
+
 	// ── Glue script bucket + deploy ./glue under measurements-aggregate/ ──
 	scriptBucket := awss3.NewBucket(stack, jsii.String("AggScriptBucket"), &awss3.BucketProps{
 		BucketName:        jsii.String("glue-agg-scripts-" + account + "-" + region),

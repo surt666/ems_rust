@@ -59,3 +59,18 @@ def test_window_start_is_day_aligned_utc():
     now = datetime(2026, 6, 7, 9, 30, tzinfo=timezone.utc)
     assert m.window_start_iso(now, 1) == "2026-06-06T00:00:00+00:00"
     assert m.window_start_iso(now, 0) == "2026-06-07T00:00:00+00:00"
+
+
+def test_dimension_of_unit_energy_volume_other():
+    for u in ("Wh", "kWh", "MWh", "J", "GJ"):
+        assert m.dimension_of_unit(u) == "energy", u
+    for u in ("m3", "m³", "L", "liter"):
+        assert m.dimension_of_unit(u) == "volume", u
+    for u in ("", "pcs", "°C"):
+        assert m.dimension_of_unit(u) == "other", u
+
+
+def test_build_gsi1sk_omits_resource():
+    # gsi1sk drops the resource so a dimension partition ranges across resources.
+    assert m.build_gsi1sk("HN2#2|HN3#9|L#10009", "h", "2026-06-07T08") == \
+        "HN2#2|HN3#9|L#10009#h#2026-06-07T08"

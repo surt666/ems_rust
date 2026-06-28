@@ -19,7 +19,7 @@ use model::domain::sensor::Sensor;
 use model::domain::user::User;
 use model::domain::values::{CognitoGroup, EdgeKind};
 use model::errors::RepositoryError;
-use model::logic::{access, hierarchy, schema_check, users};
+use model::logic::{access, hierarchy, schema_check, sensors, users};
 
 use crate::dispatch::{node_ref_to_json, node_to_json, sensor_to_json, user_to_json};
 use crate::html::{forms, node as html_node, tree};
@@ -492,13 +492,19 @@ where
 
 /// `GET /hierarchy/query/company_sensors?nodepath=...`
 ///
-/// Returns `<option>` elements for active sensors under the given node's
-/// path prefix.
-pub async fn handle_company_sensors<FLS, FLSFut>(
+/// Returns `<option>` elements for active sensors across the node's **HN2
+/// company** — the broadest sensible scope for formula references (a formula may
+/// reference any meter in the company, "or lower"). `list_under_company`
+/// resolves the node's full path → company prefix → the `gsi1pk = "S#HN2#<id>"`
+/// partition query, so this is one direct partition read, never a global scan.
+pub async fn handle_company_sensors<FGN, FGNFut, FLS, FLSFut>(
     nodepath: &str,
+    get_node: FGN,
     list_under_path: FLS,
 ) -> (u16, String)
 where
+    FGN: FnOnce(NodeId) -> FGNFut,
+    FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
     FLS: FnOnce(String) -> FLSFut,
     FLSFut: Future<Output = Result<Vec<Sensor>, RepositoryError>>,
 {
@@ -507,8 +513,7 @@ where
         Ok(id) => id,
         Err(e) => return html_error(&format!("bad nodepath: {}", e)),
     };
-    let path_prefix = nid.to_string();
-    match list_under_path(path_prefix).await {
+    match sensors::list_under_company(nid, get_node, list_under_path).await {
         Ok(ss) => {
             use maud::html;
             let markup = html! {
@@ -763,7 +768,7 @@ pub fn leaf_node_id(nodepath: &str) -> &str {
 /// `params` is the query-string parameter list.
 /// Returns `(status_code, body_string)`.
 pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, String) {
-    use model::repository::dynamodb::{sensor as ddb_sensor, user};
+    use model::repository::dynamodb::{node as ddb_node, sensor as ddb_sensor, user};
 
     let ddb = model::get_dynamodb_client().await;
     let table = model::get_table_name();
@@ -943,12 +948,19 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
                 Some(s) => s,
                 None => return html_error("missing nodepath"),
             };
-            handle_company_sensors(nodepath, {
-                let t = table.clone();
-                move |prefix| async move {
-                    ddb_sensor::list_sensors_under_path(ddb, &t, &prefix).await
-                }
-            })
+            handle_company_sensors(
+                nodepath,
+                {
+                    let t = table.clone();
+                    move |nid: NodeId| async move { ddb_node::get_node(ddb, &t, &nid).await }
+                },
+                {
+                    let t = table.clone();
+                    move |prefix| async move {
+                        ddb_sensor::list_sensors_under_path(ddb, &t, &prefix).await
+                    }
+                },
+            )
             .await
         }
 

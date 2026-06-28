@@ -125,10 +125,11 @@ async fn try_transact_alloc(
     table: &str,
     counter_pk: &str,
     current_n: i64,
-    next_n: i64,
     node_item: Item,
     edge_item: Item,
+    extra_item: Option<Item>,
 ) -> AllocOutcome {
+    let next_n = current_n + 1;
     // 1. Counter update: SET n = :next ADD live :one WHERE n = :current
     let upd = Update::builder()
         .table_name(table)
@@ -159,11 +160,23 @@ async fn try_transact_alloc(
         .build()
         .expect("put_edge builder");
 
-    let items = vec![
+    let mut items = vec![
         TransactWriteItem::builder().update(upd).build(),
         TransactWriteItem::builder().put(put_node).build(),
         TransactWriteItem::builder().put(put_edge).build(),
     ];
+
+    // 4. Optional extra row (sensors: the daq lock). Unconditional — uniqueness
+    //    is enforced by the pre-fetch guard, so this never adds a failure mode,
+    //    leaving the positional cancellation parsing above (0/1/2) untouched.
+    if let Some(extra) = extra_item {
+        let put_extra = Put::builder()
+            .table_name(table)
+            .set_item(Some(extra))
+            .build()
+            .expect("put_extra builder");
+        items.push(TransactWriteItem::builder().put(put_extra).build());
+    }
 
     match client
         .transact_write_items()
@@ -224,16 +237,18 @@ pub struct AllocEdgeSpec {
 /// `main_of`, then runs the counter-update + row-put + edge-put transaction.
 /// Retries up to `MAX_ALLOC_RETRIES` on counter contention; returns
 /// `RepositoryError::Conflict` on real id collision or contention exhaustion.
-async fn alloc_loop<R, FB, FM>(
+async fn alloc_loop<R, FB, FM, FE>(
     client: &Client,
     table: &str,
     counter_pk: &str,
     build: FB,
     main_of: FM,
+    extra_of: FE,
 ) -> Result<R, RepositoryError>
 where
     FB: Fn(u32) -> (R, Item),
     FM: Fn(&R) -> Item,
+    FE: Fn(&R) -> Option<Item>,
 {
     let mut remaining = MAX_ALLOC_RETRIES;
 
@@ -256,9 +271,10 @@ where
         let next_n = current_n + 1;
         let (result, edge_item) = build(next_n as u32);
         let main_item = main_of(&result);
+        let extra_item = extra_of(&result);
 
         match try_transact_alloc(
-            client, table, counter_pk, current_n, next_n, main_item, edge_item,
+            client, table, counter_pk, current_n, main_item, edge_item, extra_item,
         )
         .await
         {
@@ -308,6 +324,8 @@ where
             (node, alloc_edge_item(edge))
         },
         codec::node_to_item,
+        // Nodes have no daq lock.
+        |_node: &Node| None,
     )
     .await
 }
@@ -337,6 +355,8 @@ where
             (sensor_item, alloc_edge_item(edge))
         },
         |item: &Item| item.clone(),
+        // Sensors carry a daq lock row (`DAQ#<daq>/belongs_to#S#<id>`).
+        codec::daq_lock_of_sensor_item,
     )
     .await
 }
@@ -491,6 +511,9 @@ pub async fn delete_subtree(
 
     let mut all_keys: Vec<(AttributeValue, AttributeValue)> = Vec::new();
     let mut level_node_counts: HashMap<Level, i64> = HashMap::new();
+    // Companies (HN2 node pks) discovered in the subtree — drives the sensor
+    // scan, since sensors shard per company (`gsi1pk = "S#HN2#<id>"`).
+    let mut company_pks: Vec<String> = Vec::new();
 
     for lvl in &levels {
         let gsi1pk_v = codec::node_gsi1pk(*lvl);
@@ -502,6 +525,11 @@ pub async fn delete_subtree(
             }
             if matches!(item.get("type"), Some(AttributeValue::S(t)) if t == "node") {
                 node_count += 1;
+                if *lvl == Level::Hn2 {
+                    if let Some(AttributeValue::S(pk)) = item.get("pk") {
+                        company_pks.push(pk.clone());
+                    }
+                }
             }
         }
         if node_count > 0 {
@@ -509,18 +537,29 @@ pub async fn delete_subtree(
         }
     }
 
-    // Sensor partition
-    let sensor_rows =
-        query_gsi_partition(client, table, codec::SENSOR_GSI1PK, &path_prefix).await;
+    // Sensor partitions: one per company under the subtree. When deleting at
+    // HN2-or-above the level loop surfaced the companies; when deleting below
+    // HN2 (HN3/HN4) the single company lives in the path itself.
+    let sensor_partitions: Vec<String> = if company_pks.is_empty() {
+        codec::hn2_segment(&path_prefix)
+            .map(|seg| format!("S#{seg}"))
+            .into_iter()
+            .collect()
+    } else {
+        company_pks.iter().map(|pk| format!("S#{pk}")).collect()
+    };
     let mut sensor_count: i64 = 0;
-    for item in &sensor_rows {
-        if let (Some(pk_v), Some(sk_v)) = (item.get("pk"), item.get("sk")) {
-            all_keys.push((pk_v.clone(), sk_v.clone()));
-        }
-        if matches!(item.get("type"), Some(AttributeValue::S(t)) if t == "sensor")
-            && matches!(item.get("sk"), Some(AttributeValue::S(sk)) if sk.starts_with(ACTIVE_SK_PREFIX))
-        {
-            sensor_count += 1;
+    for partition in &sensor_partitions {
+        let sensor_rows = query_gsi_partition(client, table, partition, &path_prefix).await;
+        for item in &sensor_rows {
+            if let (Some(pk_v), Some(sk_v)) = (item.get("pk"), item.get("sk")) {
+                all_keys.push((pk_v.clone(), sk_v.clone()));
+            }
+            if matches!(item.get("type"), Some(AttributeValue::S(t)) if t == "sensor")
+                && matches!(item.get("sk"), Some(AttributeValue::S(sk)) if sk.starts_with(ACTIVE_SK_PREFIX))
+            {
+                sensor_count += 1;
+            }
         }
     }
 
