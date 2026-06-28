@@ -43,13 +43,16 @@ export default function CostCard({ levelId, resolution = "daily", days = 30, hei
       const base = import.meta.env.PUBLIC_AGG_API_BASE_URL || "";
       const end = new Date();
       const start = new Date(end.getTime() - days * 86400000);
+      const prevStart = new Date(start.getTime() - days * 86400000); // preceding equal window
       const q = (s: Date, e: Date) =>
         new URLSearchParams({ level_id: lvl, resolution, start: s.toISOString(), end: e.toISOString() });
+      const sum = (rows: Row[]) => rows.reduce((a, r) => a + r.value, 0);
       try {
         setState("loading");
-        const [res, bench] = await Promise.all([
+        // Current + previous window, both via the cheap get_cost (no slow benchmark).
+        const [res, prevRes] = await Promise.all([
           fetch(`${base}/meterdata/query/get_cost?${q(start, end)}`),
-          fetch(`${base}/meterdata/query/get_benchmark?${q(start, end)}`),
+          fetch(`${base}/meterdata/query/get_cost?${q(prevStart, start)}`),
         ]);
         if (!res.ok) { if (!cancelled) { setState("error"); setMsg(`Fejl: ${res.statusText}`); } return; }
         const rows = (await res.json()) as Row[];
@@ -63,9 +66,9 @@ export default function CostCard({ levelId, resolution = "daily", days = 30, hei
         setCats(sortedTs.map((t) => t.replace("T", " ").slice(0, 16)));
         setData(sortedTs.map((t) => Math.round(byBucket.get(t)!)));
         setTotal(Array.from(byBucket.values()).reduce((a, b) => a + b, 0));
-        if (bench.ok) {
-          const b = await bench.json();
-          if (!cancelled && typeof b.cost_prev_dkk === "number") setPrevTotal(b.cost_prev_dkk);
+        if (prevRes.ok) {
+          const prev = sum((await prevRes.json()) as Row[]);
+          if (!cancelled && prev > 0) setPrevTotal(prev);
         }
         setState("ok");
       } catch (e) {

@@ -789,14 +789,22 @@ fn building_of_leaf(node_path: &str) -> Option<String> {
     node_path.rfind("|L#").map(|i| node_path[..i].to_string())
 }
 
-/// All rollup rows for a company partition (`pk = "HN2#<id>"`) — every descendant
-/// node_path / resource / bucket. A benchmark is company-wide by nature, so this
-/// single-partition read is the natural unit.
+/// Rollup rows for a company partition (`pk = "HN2#<id>"`) — every descendant
+/// node_path / resource / gran / bucket. A benchmark is company-wide by nature,
+/// so this single-partition read is the natural unit. The gran/bucket live inside
+/// the sort key (so they can't be filtered server-side — `sk` is a key attribute),
+/// but a ProjectionExpression to the 4 fields actually used shrinks each item,
+/// so pages hold more rows → fewer round trips and far less deserialisation than
+/// fetching every attribute. `building_stats` does the gran/window filtering.
 async fn query_company(client: &Client, table: &str, pk: &str) -> Result<Vec<AggItem>> {
     let raw = client
         .query()
         .table_name(table)
         .key_condition_expression("pk = :pk")
+        .projection_expression("sk, #s, #c, #u")
+        .expression_attribute_names("#s", "sum")
+        .expression_attribute_names("#c", "count")
+        .expression_attribute_names("#u", "unit")
         .expression_attribute_values(":pk", AttributeValue::S(pk.to_string()))
         .into_paginator()
         .items()
