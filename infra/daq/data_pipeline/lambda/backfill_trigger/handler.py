@@ -71,20 +71,28 @@ def handler(event, context):
         cutoff_time = datetime.now(timezone.utc)
 
     cutoff_iso = cutoff_time.strftime("%Y-%m-%dT%H:%M:%S.000000Z")
-    daq_ids_csv = ",".join(daq_ids)
 
-    logger.info(
-        "New meter mapping(s): daq_ids=%s, cutoff=%s",
-        daq_ids_csv, cutoff_iso,
-    )
+    # Per-daq de-dup: only skip the daq_ids that are *already* being backfilled —
+    # NOT the whole batch. (The old code skipped every daq in the batch if any one
+    # of them was running, silently dropping the others.) Idempotent on retry.
+    running = running_daq_ids()
+    todo = [d for d in daq_ids if d not in running]
+    if not todo:
+        logger.info("All %d daq_id(s) already being backfilled; nothing to start", len(daq_ids))
+        return {"statusCode": 200, "body": "All already running"}
 
-    # Check if a job for these daq_ids is already running
-    if is_already_running(daq_ids):
-        logger.info("Glue job already running for %s, skipping", daq_ids_csv)
-        return {"statusCode": 200, "body": "Already running"}
+    daq_ids_csv = ",".join(todo)
+    logger.info("New meter mapping(s): daq_ids=%s, cutoff=%s", daq_ids_csv, cutoff_iso)
 
     try:
         start_glue_job(daq_ids_csv, cutoff_iso)
+    except glue_client.exceptions.ConcurrentRunsExceededException:
+        # Transient: every Glue concurrency slot is busy. Re-raise so the stream
+        # redelivers this batch; on retry the already-running daqs are filtered
+        # out, so a slot freeing up lets the rest through. Nothing is dropped
+        # (the event source mapping retries with backoff + a DLQ backstop).
+        logger.warning("Glue at max concurrent runs; will retry batch for %s", daq_ids_csv)
+        raise
     except Exception as e:
         logger.error("Failed to start Glue job for %s: %s", daq_ids_csv, e)
         raise
@@ -92,24 +100,23 @@ def handler(event, context):
     return {"statusCode": 200, "body": f"Started backfill for {daq_ids_csv}"}
 
 
-def is_already_running(daq_ids: list[str]) -> bool:
-    """Check if a Glue job is already running for any of the given daq_ids."""
+def running_daq_ids() -> set:
+    """The set of daq_ids currently being backfilled (active Glue runs).
+
+    Used to skip re-triggering a daq that's already in flight, per-daq (so other
+    daq_ids in the same stream batch still get started)."""
+    out: set = set()
     try:
-        response = glue_client.get_job_runs(
-            JobName=GLUE_JOB_NAME,
-            MaxResults=20,
-        )
+        response = glue_client.get_job_runs(JobName=GLUE_JOB_NAME, MaxResults=50)
         for run in response.get("JobRuns", []):
             if run.get("JobRunState") not in ("STARTING", "RUNNING", "STOPPING"):
                 continue
-            job_daq_ids = run.get("Arguments", {}).get("--daq_ids", "")
-            for daq_id in daq_ids:
-                if daq_id in job_daq_ids.split(","):
-                    return True
-        return False
+            for daq_id in run.get("Arguments", {}).get("--daq_ids", "").split(","):
+                if daq_id:
+                    out.add(daq_id)
     except Exception as e:
-        logger.warning("Failed to check running jobs: %s", e)
-        return False
+        logger.warning("Failed to list running jobs: %s", e)
+    return out
 
 
 def start_glue_job(daq_ids_csv: str, cutoff_iso: str):

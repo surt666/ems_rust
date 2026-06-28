@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3deployment"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awssqs"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 )
@@ -157,6 +158,13 @@ func NewLateRecomputationStack(scope constructs.Construct, id string, props *Lat
 		WorkerType:      jsii.String("G.1X"),
 		NumberOfWorkers: jsii.Number(2),
 		Timeout:         jsii.Number(60),
+		// Targeted backfills run on disjoint daq_ids and logical_meter_data is
+		// event-sourced (newest ingested_time wins), so concurrent runs are safe.
+		// Default is 1 → rapid attaches collided with ConcurrentRunsExceeded and
+		// were dropped; allow several at once so every attach backfills.
+		ExecutionProperty: &awsglue.CfnJob_ExecutionPropertyProperty{
+			MaxConcurrentRuns: jsii.Number(10),
+		},
 		DefaultArguments: &map[string]string{
 			"--region":                              region,
 			"--meter_identity_table":                props.MeterIdentityName,
@@ -226,11 +234,25 @@ func NewLateRecomputationStack(scope constructs.Construct, id string, props *Lat
 			TableName:      jsii.String(props.MeterIdentityName),
 			TableStreamArn: jsii.String(props.MeterIdentityStreamArn),
 		})
+
+	// DLQ backstop: anything that still can't be backfilled after the retry
+	// window lands here (visible, not silently lost) instead of being discarded.
+	backfillDlq := awssqs.NewQueue(stack, jsii.String("BackfillTriggerDlq"), &awssqs.QueueProps{
+		QueueName:       jsii.String("backfill-trigger-dlq"),
+		RetentionPeriod: awscdk.Duration_Days(jsii.Number(14)),
+	})
+
 	backfillFn.AddEventSource(awslambdaeventsources.NewDynamoEventSource(meterIdTable, &awslambdaeventsources.DynamoEventSourceProps{
 		StartingPosition:  awslambda.StartingPosition_LATEST,
 		BatchSize:         jsii.Number(10),
 		MaxBatchingWindow: awscdk.Duration_Seconds(jsii.Number(30)),
-		RetryAttempts:     jsii.Number(3),
+		// ConcurrentRunsExceeded is transient (a slot frees when a ~2 min Glue run
+		// ends), so retry well past that window before giving up; bisect isolates a
+		// genuinely-poison record; survivors go to the DLQ rather than vanishing.
+		RetryAttempts:      jsii.Number(10),
+		BisectBatchOnError: jsii.Bool(true),
+		MaxRecordAge:       awscdk.Duration_Hours(jsii.Number(6)),
+		OnFailure:          awslambdaeventsources.NewSqsDlq(backfillDlq),
 		Filters: &[]*map[string]interface{}{
 			{"pattern": `{"eventName":["INSERT"]}`},
 		},

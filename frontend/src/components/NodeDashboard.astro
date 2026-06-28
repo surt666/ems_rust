@@ -6,24 +6,14 @@
 // contract. Becomes the node view's default tab once backend-integrated; will
 // eventually vary by hierarchy level via the company schema (see spec
 // 2026-06-24-node-dashboard-schema-driven.md).
-import EChartsChartWrapper from "./EChartsChartWrapper.tsx";
 import ResourceChart from "./ResourceChart.tsx";
 import ResourceCards from "./ResourceCards.tsx";
+import CostCard from "./CostCard.tsx";
+import BenchmarkCard from "./BenchmarkCard.tsx";
+import AlarmsCard from "./AlarmsCard.tsx";
 
-const months = ["Jan", "Feb", "Mar", "Apr", "Maj", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dec"];
-
-// Semicircle gauge needle endpoint for a value p in 0..1 (left=0 → right=1).
-const needle = (p: number) => {
-  const a = Math.PI * (1 - p);
-  return `${(80 + 56 * Math.cos(a)).toFixed(1)},${(80 - 56 * Math.sin(a)).toFixed(1)}`;
-};
-const gauges = [
-  { label: "Performance (omk. vs. gnm.)", val: "−14,8 %", p: 0.72 },
-  { label: "Performance (CO₂e vs. gnm.)", val: "−8,0 t", p: 0.63 },
-];
-
-const combinedCost = months.map((_, i) => Math.round(430000 - 300000 * Math.cos((i / 11) * Math.PI * 2)));
-
+// Call to action (biggest energy-waste) has no dedicated backend yet — kept
+// representative until an anomaly/waste-detection service exists.
 const ctaRows = [
   ["Administrationsbygning A", "EL — natforbrug", "42.300 kr"],
   ["Kalmar", "Ventilation standby", "28.900 kr"],
@@ -38,28 +28,9 @@ const ctaRows = [
       <div class="section-header">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>
         <h2 class="section-title" style="margin-bottom:0">Bygningsbenchmark</h2>
-        <span class="muted" style="margin-left:auto">repræsentativ</span>
+        <span class="muted" style="margin-left:auto">seneste 30 dage</span>
       </div>
-      <div class="nd-gauges">
-        {gauges.map((g) => (
-          <div class="nd-gauge">
-            <svg viewBox="0 0 160 92">
-              <path d="M16,80 A64,64 0 0 1 144,80" fill="none" stroke="#22c55e" stroke-width="12" stroke-dasharray="67 201" stroke-dashoffset="0" />
-              <path d="M16,80 A64,64 0 0 1 144,80" fill="none" stroke="#f97316" stroke-width="12" stroke-dasharray="67 201" stroke-dashoffset="-67" />
-              <path d="M16,80 A64,64 0 0 1 144,80" fill="none" stroke="#ef4444" stroke-width="12" stroke-dasharray="67 201" stroke-dashoffset="-134" />
-              <line x1="80" y1="80" x2={needle(g.p)} stroke="var(--text-primary)" stroke-width="2.5" />
-              <circle cx="80" cy="80" r="4" fill="var(--text-primary)" />
-            </svg>
-            <div class="nd-gauge__val">{g.val}</div>
-            <div class="nd-gauge__label">{g.label}</div>
-          </div>
-        ))}
-      </div>
-      <div class="nd-metrics">
-        <div><span>Afvigelse (alle)</span><strong>+7,2 %</strong></div>
-        <div><span>Potentielle besparelser</span><strong>742.000 kr</strong></div>
-        <div><span>Opnåede besparelser</span><strong class="nd-pos">256.000 kr</strong></div>
-      </div>
+      <BenchmarkCard client:only="react" days={30} />
     </div>
 
     <!-- Call to action -->
@@ -85,11 +56,7 @@ const ctaRows = [
         <h2 class="section-title" style="margin-bottom:0">Alarmer</h2>
         <a href="/alarms" class="btn-secondary" style="margin-left:auto">Gå til alarmoversigt</a>
       </div>
-      <div class="nd-alarmcounts">
-        <div class="nd-alarmcount"><span class="nd-alarmcount__n">0</span><span class="muted">Alarmopsætninger</span></div>
-        <div class="nd-alarmcount"><span class="nd-alarmcount__n">0</span><span class="muted">Ukvit. alarmer</span></div>
-      </div>
-      <p class="muted" style="margin:8px 0 0">5 seneste alarmer — ingen udløste alarmer for denne node.</p>
+      <AlarmsCard client:only="react" days={30} />
     </div>
   </div>
 
@@ -108,20 +75,13 @@ const ctaRows = [
       <ResourceChart client:only="react" resolution="daily" days={30} height={280} />
     </div>
 
-    <!-- Combined cost card -->
+    <!-- Combined cost card — real, fed by get_cost (consumption × tariff). -->
     <div class="card nd-energy">
       <div class="section-header">
         <h2 class="section-title" style="margin-bottom:0">Samlet omkostning</h2>
-        <span class="muted">repræsentativ (ingen prismodel)</span>
-        <span class="chart-kpi__val" style="margin-left:auto">5.147.411 kr.</span>
+        <span class="muted" style="margin-left:auto">tariffbaseret · seneste 30 dage</span>
       </div>
-      <div class="nd-energy__totals">
-        <div><span>I år</span><strong>5.147.411 kr.</strong></div>
-        <div><span>Sidste år</span><strong>4.940.118 kr.</strong></div>
-        <div><span>Afvigelse</span><strong class="nd-neg">+4,2 %</strong></div>
-      </div>
-      <EChartsChartWrapper client:only="react" height={200} unit="kr." categories={months}
-        series={[{ name: "Omkostning", data: combinedCost, color: "#38bdf8", type: "bar" }]} />
+      <CostCard client:only="react" resolution="daily" days={30} height={200} />
     </div>
 
     {/* Live per-resource consumption cards (ECharts), fed by the aggregations API —

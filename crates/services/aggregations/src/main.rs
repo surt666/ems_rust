@@ -419,6 +419,9 @@ async fn handler(
             "get_measurements" => {
                 api::finish(raw::handle_measurements(athena, &qs).await, Cors::None)
             }
+            "get_cost" => api::finish(handle_cost(client, table, &qs).await, Cors::None),
+            "get_benchmark" => api::finish(handle_benchmark(client, table, &qs).await, Cors::None),
+            "get_alarms" => api::finish(handle_alarms(client, table, &qs).await, Cors::None),
             other => api::to_http(
                 ApiError::not_found(format!("unknown query action {other:?}")).into_response(),
                 Cors::None,
@@ -554,6 +557,332 @@ fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
+// ── Derived read models (cost / benchmark / alarms) ────────────────────────────
+//
+// All three are pure functions of the existing rollup (`measurements_aggregate`)
+// plus a small config (tariffs, spike factor). No new data source, no new lambda
+// — they ride the same CQRS query surface as get_aggregations. Defaults are
+// representative Danish unit prices; override per deploy if a real price model
+// lands.
+
+/// Fetch per-(resource, bucket) consumption rows for a node window — the shared
+/// core of get_aggregations, reused by the derived models. A `level_id` above
+/// company level (no HN2) yields no rows rather than an error.
+async fn fetch_node_rows(
+    client: &Client,
+    table: &str,
+    level_id: &str,
+    resolution: &str,
+    start: &str,
+    end: &str,
+) -> Result<Vec<Row>, ApiError> {
+    let gran = Gran::from_resolution(resolution);
+    let (pk, sk_path) = match parse_node_keys(level_id) {
+        Ok(keys) => keys,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let (start_bucket, end_bucket) = match (bucket_label(start, gran), bucket_label(end, gran)) {
+        (Ok(s), Ok(e)) => (s, e),
+        _ => return Err(ApiError::bad_request("start/end must be ISO-8601 timestamps")),
+    };
+    let params = QueryParams {
+        table,
+        pk: &pk,
+        sk_path: &sk_path,
+        gran,
+        start_bucket: &start_bucket,
+        end_bucket: &end_bucket,
+        resource: "",
+    };
+    let items = query_node(client, params)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(to_rows(items, level_id, resolution, gran))
+}
+
+/// Representative unit price (DKK) for a resource, given the rollup's stored unit.
+/// Energy rolls up in Wh (tariff is quoted per kWh → divide by 1000); volumes in m³.
+fn tariff_dkk_per_unit(resource: &str, unit: &str) -> f64 {
+    let u = unit.to_ascii_lowercase();
+    let (per_kwh, per_m3) = match resource {
+        "electricity" => (2.50, 0.0),
+        "district_heating" | "heat" => (0.90, 0.0),
+        "district_cooling" => (0.50, 0.0),
+        "gas" => (0.0, 8.0),
+        "water" => (0.0, 50.0),
+        _ => (0.0, 0.0),
+    };
+    if u.contains("kwh") {
+        per_kwh
+    } else if u.contains("wh") {
+        per_kwh / 1000.0
+    } else if is_cubic_metre(&u) {
+        per_m3
+    } else {
+        0.0
+    }
+}
+
+/// True for the various ways a cubic-metre unit is written in the data
+/// (`m3`, `m³`, `m^3`). The rollup carries whatever the raw meter reported.
+fn is_cubic_metre(u: &str) -> bool {
+    u.contains("m3") || u.contains("m³") || u.contains("m^3")
+}
+
+/// Energy expressed in kWh (rollup stores Wh); non-energy units contribute 0.
+fn energy_kwh(value: f64, unit: &str) -> f64 {
+    let u = unit.to_ascii_lowercase();
+    if u.contains("kwh") {
+        value
+    } else if u.contains("wh") {
+        value / 1000.0
+    } else {
+        0.0
+    }
+}
+
+fn round2(x: f64) -> f64 {
+    (x * 100.0).round() / 100.0
+}
+
+/// `GET /meterdata/query/get_cost` — consumption × per-resource tariff, one row
+/// per (resource, bucket) with the value in DKK. Same shape as get_aggregations;
+/// the client sums across resources for a node total.
+#[utoipa::path(
+    get,
+    path = "/meterdata/query/get_cost",
+    tag = "aggregations",
+    params(
+        ("level_id" = String, Query, description = "Hierarchy node path (…|HN2#..)"),
+        ("resolution" = Option<String>, Query, description = "hourly | daily (default daily)"),
+        ("start" = String, Query, description = "ISO-8601 start (required)"),
+        ("end" = String, Query, description = "ISO-8601 end (required)"),
+        ("format" = Option<String>, Query, description = "json (default) | html"),
+    ),
+    responses(
+        (status = 200, description = "Cost rows ([Row], value in DKK)", body = Vec<Row>),
+        (status = 400, description = "Missing/invalid start or end", body = api::ErrorResponse),
+    ),
+)]
+async fn handle_cost(
+    client: &Client,
+    table: &str,
+    qs: &HashMap<String, String>,
+) -> Result<ApiResponse, ApiError> {
+    let format = Format::resolve(qs.get("format").map(String::as_str), Format::Json);
+    let level_id = qs.get("level_id").cloned().unwrap_or_default();
+    let resolution = qs.get("resolution").cloned().unwrap_or_else(|| "daily".to_string());
+    let start = qs.get("start").cloned().unwrap_or_default();
+    let end = qs.get("end").cloned().unwrap_or_default();
+    if start.is_empty() || end.is_empty() {
+        return Err(ApiError::bad_request("start and end are required (ISO-8601)"));
+    }
+
+    let rows = fetch_node_rows(client, table, &level_id, &resolution, &start, &end).await?;
+    let cost_rows: Vec<Row> = rows
+        .into_iter()
+        .map(|r| {
+            let cost = round2(r.value * tariff_dkk_per_unit(&r.purpose, &r.unit));
+            Row { unit: "DKK".to_string(), value: cost, ..r }
+        })
+        .collect();
+    Ok(rows_response(&cost_rows, format))
+}
+
+/// A node's consumption + cost this period vs the preceding equal-length period.
+#[derive(Debug, Serialize, ToSchema)]
+struct Benchmark {
+    level_id: String,
+    period_days: f64,
+    energy_kwh: f64,
+    energy_prev_kwh: f64,
+    energy_deviation_pct: f64,
+    cost_dkk: f64,
+    cost_prev_dkk: f64,
+    cost_deviation_pct: f64,
+}
+
+fn pct_change(cur: f64, prev: f64) -> f64 {
+    if prev.abs() < f64::EPSILON {
+        0.0
+    } else {
+        round2((cur - prev) / prev * 100.0)
+    }
+}
+
+/// Sum a window's rows into (energy kWh, cost DKK).
+fn energy_and_cost(rows: &[Row]) -> (f64, f64) {
+    let mut e = 0.0;
+    let mut c = 0.0;
+    for r in rows {
+        e += energy_kwh(r.value, &r.unit);
+        c += r.value * tariff_dkk_per_unit(&r.purpose, &r.unit);
+    }
+    (e, c)
+}
+
+/// `GET /meterdata/query/get_benchmark` — this node vs its own preceding period.
+/// Returns current/previous energy + cost and the % deviation (lower = better).
+#[utoipa::path(
+    get,
+    path = "/meterdata/query/get_benchmark",
+    tag = "aggregations",
+    params(
+        ("level_id" = String, Query, description = "Hierarchy node path (…|HN2#..)"),
+        ("resolution" = Option<String>, Query, description = "hourly | daily (default daily)"),
+        ("start" = String, Query, description = "ISO-8601 start (required)"),
+        ("end" = String, Query, description = "ISO-8601 end (required)"),
+    ),
+    responses(
+        (status = 200, description = "Benchmark vs the preceding equal period", body = Benchmark),
+        (status = 400, description = "Missing/invalid start or end", body = api::ErrorResponse),
+    ),
+)]
+async fn handle_benchmark(
+    client: &Client,
+    table: &str,
+    qs: &HashMap<String, String>,
+) -> Result<ApiResponse, ApiError> {
+    let level_id = qs.get("level_id").cloned().unwrap_or_default();
+    let resolution = qs.get("resolution").cloned().unwrap_or_else(|| "daily".to_string());
+    let start = qs.get("start").cloned().unwrap_or_default();
+    let end = qs.get("end").cloned().unwrap_or_default();
+    if start.is_empty() || end.is_empty() {
+        return Err(ApiError::bad_request("start and end are required (ISO-8601)"));
+    }
+    let s = parse_iso(&start).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let e = parse_iso(&end).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let dur = e - s;
+    let prev_start = (s - dur).to_rfc3339();
+    let prev_end = s.to_rfc3339();
+
+    let cur = fetch_node_rows(client, table, &level_id, &resolution, &start, &end).await?;
+    let prev = fetch_node_rows(client, table, &level_id, &resolution, &prev_start, &prev_end).await?;
+    let (e_cur, c_cur) = energy_and_cost(&cur);
+    let (e_prev, c_prev) = energy_and_cost(&prev);
+
+    let bench = Benchmark {
+        level_id,
+        period_days: round2(dur.num_seconds() as f64 / 86_400.0),
+        energy_kwh: round2(e_cur),
+        energy_prev_kwh: round2(e_prev),
+        energy_deviation_pct: pct_change(e_cur, e_prev),
+        cost_dkk: round2(c_cur),
+        cost_prev_dkk: round2(c_prev),
+        cost_deviation_pct: pct_change(c_cur, c_prev),
+    };
+    Ok(ApiResponse::json(&bench))
+}
+
+/// One flagged consumption anomaly (a bucket far above the resource's median).
+#[derive(Debug, Serialize, ToSchema)]
+struct Alarm {
+    resource: String,
+    timestamp: String,
+    value: f64,
+    median: f64,
+    ratio: f64,
+    unit: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct AlarmsResponse {
+    level_id: String,
+    count: usize,
+    alarms: Vec<Alarm>,
+}
+
+fn median(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut v = values.to_vec();
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let n = v.len();
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    }
+}
+
+/// Spike-detection over per-resource daily series: flag buckets above
+/// `spike_factor × median` (median > 0). Pure given the rows + factor.
+fn detect_spikes(rows: &[Row], spike_factor: f64) -> Vec<Alarm> {
+    use std::collections::BTreeMap;
+    let mut by_resource: BTreeMap<String, Vec<&Row>> = BTreeMap::new();
+    for r in rows {
+        by_resource.entry(r.purpose.clone()).or_default().push(r);
+    }
+    let mut alarms = Vec::new();
+    for (resource, rs) in by_resource {
+        let med = median(&rs.iter().map(|r| r.value).collect::<Vec<_>>());
+        if med <= 0.0 {
+            continue;
+        }
+        for r in rs {
+            if r.value > spike_factor * med {
+                alarms.push(Alarm {
+                    resource: resource.clone(),
+                    timestamp: r.timestamp.clone(),
+                    value: round2(r.value),
+                    median: round2(med),
+                    ratio: round2(r.value / med),
+                    unit: r.unit.clone(),
+                });
+            }
+        }
+    }
+    alarms.sort_by(|a, b| b.ratio.partial_cmp(&a.ratio).unwrap_or(std::cmp::Ordering::Equal));
+    alarms
+}
+
+/// `GET /meterdata/query/get_alarms` — derived consumption-spike alarms for a node
+/// (buckets above `spike_factor × resource median`). A real, config-driven v1 over
+/// the rollup until a dedicated alarm engine exists.
+#[utoipa::path(
+    get,
+    path = "/meterdata/query/get_alarms",
+    tag = "aggregations",
+    params(
+        ("level_id" = String, Query, description = "Hierarchy node path (…|HN2#..)"),
+        ("resolution" = Option<String>, Query, description = "hourly | daily (default daily)"),
+        ("start" = String, Query, description = "ISO-8601 start (required)"),
+        ("end" = String, Query, description = "ISO-8601 end (required)"),
+        ("spike_factor" = Option<f64>, Query, description = "Multiple of the median that counts as a spike (default 2.0)"),
+    ),
+    responses(
+        (status = 200, description = "Triggered spike alarms", body = AlarmsResponse),
+        (status = 400, description = "Missing/invalid start or end", body = api::ErrorResponse),
+    ),
+)]
+async fn handle_alarms(
+    client: &Client,
+    table: &str,
+    qs: &HashMap<String, String>,
+) -> Result<ApiResponse, ApiError> {
+    let level_id = qs.get("level_id").cloned().unwrap_or_default();
+    let resolution = qs.get("resolution").cloned().unwrap_or_else(|| "daily".to_string());
+    let start = qs.get("start").cloned().unwrap_or_default();
+    let end = qs.get("end").cloned().unwrap_or_default();
+    if start.is_empty() || end.is_empty() {
+        return Err(ApiError::bad_request("start and end are required (ISO-8601)"));
+    }
+    let spike_factor = qs
+        .get("spike_factor")
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|f| *f > 1.0)
+        .unwrap_or(2.0);
+
+    let rows = fetch_node_rows(client, table, &level_id, &resolution, &start, &end).await?;
+    let alarms = detect_spikes(&rows, spike_factor);
+    Ok(ApiResponse::json(&AlarmsResponse {
+        level_id,
+        count: alarms.len(),
+        alarms,
+    }))
+}
+
 /// The generated OpenAPI 3.1 document for the JSON surface of this lambda.
 #[derive(OpenApi)]
 #[openapi(
@@ -563,8 +892,8 @@ fn esc(s: &str) -> String {
                        meter readings (Datatilegnelse, over Athena). Data routes accept ?format=html|json.",
         version = "0.1.0",
     ),
-    paths(handle_aggregations, raw::handle_measurements),
-    components(schemas(Row, raw::Measurement, api::ErrorResponse, api::ErrorDetail)),
+    paths(handle_aggregations, handle_cost, handle_benchmark, handle_alarms, raw::handle_measurements),
+    components(schemas(Row, Benchmark, Alarm, AlarmsResponse, raw::Measurement, api::ErrorResponse, api::ErrorDetail)),
     tags(
         (name = "aggregations", description = "Hierarchy consumption rollup (Resource-Insights chart)"),
         (name = "measurements", description = "Raw meter readings (Datatilegnelse)"),
@@ -610,8 +939,91 @@ mod tests {
         let doc = ApiDoc::openapi().to_json().expect("openapi serializes");
         assert!(doc.contains("/meterdata/query/get_aggregations"), "missing get_aggregations path");
         assert!(doc.contains("/meterdata/query/get_measurements"), "missing get_measurements path");
+        assert!(doc.contains("/meterdata/query/get_cost"), "missing get_cost path");
+        assert!(doc.contains("/meterdata/query/get_benchmark"), "missing get_benchmark path");
+        assert!(doc.contains("/meterdata/query/get_alarms"), "missing get_alarms path");
         assert!(doc.contains("Measurement"), "missing Measurement schema");
         assert!(doc.contains("ErrorResponse"), "missing ErrorResponse schema");
+    }
+
+    // Derived models ─────────────────────────────────────────────────────────────
+
+    fn row(purpose: &str, unit: &str, value: f64, ts: &str) -> Row {
+        Row {
+            level_id: "HN2#1".into(),
+            purpose: purpose.into(),
+            unit: unit.into(),
+            resolution: "daily".into(),
+            timestamp: ts.into(),
+            value,
+            contributor_count: 1,
+        }
+    }
+
+    #[test]
+    fn tariff_is_unit_aware() {
+        // electricity quoted per kWh; rollup stores Wh → 1/1000 of the kWh price.
+        assert!((tariff_dkk_per_unit("electricity", "kWh") - 2.50).abs() < 1e-9);
+        assert!((tariff_dkk_per_unit("electricity", "Wh") - 0.0025).abs() < 1e-9);
+        assert!((tariff_dkk_per_unit("water", "m3") - 50.0).abs() < 1e-9);
+        // The rollup writes volumes as "m^3" — must price the same as "m3"/"m³".
+        assert!((tariff_dkk_per_unit("water", "m^3") - 50.0).abs() < 1e-9);
+        assert!((tariff_dkk_per_unit("water", "m³") - 50.0).abs() < 1e-9);
+        assert_eq!(tariff_dkk_per_unit("electricity", "°C"), 0.0, "non-priced unit → 0");
+        assert_eq!(tariff_dkk_per_unit("unknown", "kWh"), 0.0, "unknown resource → 0");
+    }
+
+    #[test]
+    fn energy_kwh_normalizes_wh() {
+        assert!((energy_kwh(1500.0, "Wh") - 1.5).abs() < 1e-9);
+        assert!((energy_kwh(2.0, "kWh") - 2.0).abs() < 1e-9);
+        assert_eq!(energy_kwh(10.0, "m3"), 0.0, "volume isn't energy");
+    }
+
+    #[test]
+    fn pct_change_guards_zero_baseline() {
+        assert_eq!(pct_change(10.0, 0.0), 0.0);
+        assert_eq!(pct_change(110.0, 100.0), 10.0);
+        assert_eq!(pct_change(90.0, 100.0), -10.0);
+    }
+
+    #[test]
+    fn median_odd_even() {
+        assert_eq!(median(&[3.0, 1.0, 2.0]), 2.0);
+        assert_eq!(median(&[1.0, 2.0, 3.0, 4.0]), 2.5);
+        assert_eq!(median(&[]), 0.0);
+    }
+
+    #[test]
+    fn detect_spikes_flags_only_above_factor() {
+        // electricity: median of [10,10,10,40] = 10; 40 > 2×10 → one spike.
+        // water: flat 5,5,5 → median 5, nothing above 2×.
+        let rows = vec![
+            row("electricity", "Wh", 10.0, "d1"),
+            row("electricity", "Wh", 10.0, "d2"),
+            row("electricity", "Wh", 10.0, "d3"),
+            row("electricity", "Wh", 40.0, "d4"),
+            row("water", "m3", 5.0, "d1"),
+            row("water", "m3", 5.0, "d2"),
+            row("water", "m3", 5.0, "d3"),
+        ];
+        let alarms = detect_spikes(&rows, 2.0);
+        assert_eq!(alarms.len(), 1, "only the 40 electricity bucket spikes");
+        assert_eq!(alarms[0].resource, "electricity");
+        assert_eq!(alarms[0].timestamp, "d4");
+        assert!((alarms[0].ratio - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn detect_spikes_ignores_zero_median_resource() {
+        // median([0,0,0,1]) = 0 → resource skipped despite the non-zero bucket.
+        let rows = vec![
+            row("gas", "m3", 0.0, "d1"),
+            row("gas", "m3", 0.0, "d2"),
+            row("gas", "m3", 0.0, "d3"),
+            row("gas", "m3", 1.0, "d4"),
+        ];
+        assert!(detect_spikes(&rows, 2.0).is_empty(), "median 0 → skip resource");
     }
 
     // Purpose fan-out ────────────────────────────────────────────────────────────
