@@ -9,9 +9,9 @@ import NodeDashboard from "../components/NodeDashboard.astro";
 ---
 
 <Layout title="Node">
-  <!-- TODO: once the node dashboard is backend-integrated, make 'dashboard' the
-       default tab (x-data="{ tab: 'dashboard' }"). Kept on 'data' for now. -->
-  <div class="page-container" x-data="{ tab: 'data' }">
+  <!-- Dashboard is the default tab now that it's backend-integrated (live
+       consumption / cost / benchmark / alarms from the aggregations API). -->
+  <div class="page-container" x-data="{ tab: 'dashboard' }">
     <!-- Tab bar (pure HTML; adding a tab is pure HTML) -->
     <div class="tab-bar">
       <button class="tab-btn" :class="tab === 'dashboard' ? 'active' : ''" @click="tab = 'dashboard'">Dashboard</button>
@@ -29,7 +29,7 @@ import NodeDashboard from "../components/NodeDashboard.astro";
 
     <!-- Data panel: the server-rendered node detail (render_node), loaded on
          page load using the id from the URL query string. -->
-    <div x-show="tab === 'data'"
+    <div x-show="tab === 'data'" x-cloak
       hx-get="/hierarchy/query/node"
       hx-request='{"noHeaders": true}'
       hx-vals="js:{id: (new URLSearchParams(location.search).get('id') || sessionStorage.getItem('selectedNodeId')), user: localStorage.getItem('loginId'), path: sessionStorage.getItem('selectedNodePath')}"

@@ -61,11 +61,14 @@ export default function AlarmsCard({ levelId, days = 30 }: Props) {
   }
 
   const top = resp.alarms.slice(0, 5);
+  const counts: React.CSSProperties = { display: "grid", gridAutoFlow: "column", justifyContent: "start", gap: "28px" };
+  const count: React.CSSProperties = { display: "grid", gap: "2px" };
+  const num: React.CSSProperties = { fontSize: "var(--text-2xl)", fontWeight: 700, color: "var(--text-primary)", fontVariantNumeric: "tabular-nums" };
   return (
     <>
-      <div className="nd-alarmcounts">
-        <div className="nd-alarmcount"><span className="nd-alarmcount__n">{resp.count}</span><span className="muted">Forbrugsspidser</span></div>
-        <div className="nd-alarmcount"><span className="nd-alarmcount__n">{resp.alarms.length ? top.length : 0}</span><span className="muted">Vises</span></div>
+      <div style={counts}>
+        <div style={count}><span style={num}>{resp.count}</span><span className="muted">Forbrugsspidser</span></div>
+        <div style={count}><span style={num}>{resp.alarms.length ? top.length : 0}</span><span className="muted">Vises</span></div>
       </div>
       {resp.count === 0 ? (
         <p className="muted" style={{ margin: "8px 0 0" }}>Ingen forbrugsspidser i perioden (seneste {days} dage).</p>

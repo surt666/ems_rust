@@ -83,15 +83,19 @@ export default function CostCard({ levelId, resolution = "daily", days = 30, hei
   }
 
   const dev = prevTotal && prevTotal > 0 ? ((total - prevTotal) / prevTotal) * 100 : null;
+  const row: React.CSSProperties = { display: "grid", gridAutoFlow: "column", justifyContent: "start", gap: "22px", margin: "4px 0 8px" };
+  const cell: React.CSSProperties = { display: "grid", gap: "2px" };
+  const lbl: React.CSSProperties = { fontSize: "var(--text-xs)", color: "var(--text-muted)" };
+  const val: React.CSSProperties = { fontVariantNumeric: "tabular-nums" };
   return (
     <>
-      <div className="nd-energy__totals">
-        <div><span>Periode (seneste {days} dage)</span><strong>{dkk(total)}</strong></div>
-        {prevTotal !== null && <div><span>Forrige periode</span><strong>{dkk(prevTotal)}</strong></div>}
+      <div style={row}>
+        <div style={cell}><span style={lbl}>Periode (seneste {days} dage)</span><strong style={val}>{dkk(total)}</strong></div>
+        {prevTotal !== null && <div style={cell}><span style={lbl}>Forrige periode</span><strong style={val}>{dkk(prevTotal)}</strong></div>}
         {dev !== null && (
-          <div>
-            <span>Afvigelse</span>
-            <strong className={dev > 0 ? "nd-neg" : "nd-pos"}>{dev > 0 ? "+" : ""}{dev.toFixed(1)} %</strong>
+          <div style={cell}>
+            <span style={lbl}>Afvigelse</span>
+            <strong style={val} className={dev > 0 ? "nd-neg" : "nd-pos"}>{dev > 0 ? "+" : ""}{dev.toFixed(1)} %</strong>
           </div>
         )}
       </div>

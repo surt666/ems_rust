@@ -65,6 +65,13 @@ function resolveLevelId(): string {
 const da = (n: number, frac: number) =>
   new Intl.NumberFormat("da-DK", { maximumFractionDigits: frac }).format(n);
 
+// Inline styles — NodeDashboard's `.nd-*` CSS is Astro-scoped and doesn't reach
+// this client island, so the totals row is styled here.
+const totalsRow: React.CSSProperties = { display: "grid", gridAutoFlow: "column", justifyContent: "start", gap: "22px", margin: "4px 0 8px" };
+const totalCell: React.CSSProperties = { display: "grid", gap: "2px" };
+const totalLabel: React.CSSProperties = { fontSize: "var(--text-xs)", color: "var(--text-muted)" };
+const totalVal: React.CSSProperties = { fontVariantNumeric: "tabular-nums" };
+
 interface Card {
   resource: string;
   label: string;
@@ -177,18 +184,14 @@ export default function ResourceCards({ levelId, resolution = "daily", days = 30
                 {da(c.total, frac)} {c.unit}
               </span>
             </div>
-            <div className="nd-energy__totals">
-              <div>
-                <span>Periode (seneste {days} dage)</span>
-                <strong>
-                  {da(c.total, frac)} {c.unit}
-                </strong>
+            <div style={totalsRow}>
+              <div style={totalCell}>
+                <span style={totalLabel}>Periode (seneste {days} dage)</span>
+                <strong style={totalVal}>{da(c.total, frac)} {c.unit}</strong>
               </div>
-              <div>
-                <span>Dagligt gennemsnit</span>
-                <strong>
-                  {da(c.avg, frac)} {c.unit}
-                </strong>
+              <div style={totalCell}>
+                <span style={totalLabel}>Dagligt gennemsnit</span>
+                <strong style={totalVal}>{da(c.avg, frac)} {c.unit}</strong>
               </div>
             </div>
             <EChartsChart

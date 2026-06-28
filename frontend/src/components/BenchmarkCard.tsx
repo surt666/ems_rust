@@ -36,22 +36,26 @@ const needle = (p: number) => {
   return `${(80 + 56 * Math.cos(a)).toFixed(1)},${(80 - 56 * Math.sin(a)).toFixed(1)}`;
 };
 
+// Self-contained styles — NodeDashboard's `.nd-*` CSS is Astro-scoped and does
+// not reach this client island, so size the gauge here (an unconstrained inline
+// SVG would otherwise fill the whole card width).
 function Gauge({ label, devPct }: { label: string; devPct: number }) {
   const p = needlePos(devPct);
+  const [nx, ny] = needle(p).split(",");
   const sign = devPct > 0 ? "+" : "";
   return (
-    <div className="nd-gauge">
-      <svg viewBox="0 0 160 92">
+    <div style={{ display: "grid", justifyItems: "center", gap: "2px" }}>
+      <svg viewBox="0 0 160 92" style={{ width: "100%", maxWidth: "104px", height: "auto" }}>
         <path d="M16,80 A64,64 0 0 1 144,80" fill="none" stroke="#22c55e" strokeWidth="12" strokeDasharray="67 201" strokeDashoffset="0" />
         <path d="M16,80 A64,64 0 0 1 144,80" fill="none" stroke="#f97316" strokeWidth="12" strokeDasharray="67 201" strokeDashoffset="-67" />
         <path d="M16,80 A64,64 0 0 1 144,80" fill="none" stroke="#ef4444" strokeWidth="12" strokeDasharray="67 201" strokeDashoffset="-134" />
-        <line x1="80" y1="80" x2={needle(p).split(",")[0]} y2={needle(p).split(",")[1]} stroke="var(--text-primary)" strokeWidth="2.5" />
+        <line x1="80" y1="80" x2={nx} y2={ny} stroke="var(--text-primary)" strokeWidth="2.5" />
         <circle cx="80" cy="80" r="4" fill="var(--text-primary)" />
       </svg>
-      <div className="nd-gauge__val" style={{ color: devPct > 0 ? "var(--danger)" : "var(--success)" }}>
+      <div style={{ fontSize: "var(--text-base)", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: devPct > 0 ? "var(--danger)" : "var(--success)" }}>
         {sign}{devPct.toFixed(1)} %
       </div>
-      <div className="nd-gauge__label">{label}</div>
+      <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", textAlign: "center" }}>{label}</div>
     </div>
   );
 }
@@ -95,16 +99,22 @@ export default function BenchmarkCard({ levelId, days = 30 }: Props) {
     return <div style={{ display: "grid", placeItems: "center", minHeight: "120px", color }}>{text}</div>;
   }
 
+  const metric = (label: string, value: string) => (
+    <div style={{ display: "grid", gap: "2px" }}>
+      <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>{label}</span>
+      <strong style={{ fontVariantNumeric: "tabular-nums" }}>{value}</strong>
+    </div>
+  );
   return (
     <>
-      <div className="nd-gauges">
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", justifyItems: "center", maxWidth: "320px", margin: "0 auto" }}>
         <Gauge label="Energi vs. forrige periode" devPct={b.energy_deviation_pct} />
         <Gauge label="Omkostning vs. forrige periode" devPct={b.cost_deviation_pct} />
       </div>
-      <div className="nd-metrics">
-        <div><span>Energi (periode)</span><strong>{da(b.energy_kwh, 1)} kWh</strong></div>
-        <div><span>Forrige</span><strong>{da(b.energy_prev_kwh, 1)} kWh</strong></div>
-        <div><span>Omkostning</span><strong>{da(b.cost_dkk)} kr.</strong></div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px", marginTop: "12px" }}>
+        {metric("Energi (periode)", `${da(b.energy_kwh, 1)} kWh`)}
+        {metric("Forrige", `${da(b.energy_prev_kwh, 1)} kWh`)}
+        {metric("Omkostning", `${da(b.cost_dkk)} kr.`)}
       </div>
     </>
   );
