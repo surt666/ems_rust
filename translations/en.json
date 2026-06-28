@@ -213,6 +213,8 @@
     "ingested": "Ingested (version)",
     "dedup_note": "Showing the newest version of each reading (max ingested_time).",
     "load_more": "Load more",
+    "loading": "Loading meter data from Athena…",
+    "loading_more": "Loading more…",
     "use_redshift": "Redshift (VPC)"
   }
 }

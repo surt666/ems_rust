@@ -54,8 +54,19 @@ const pickUrl = redshiftBase
 const ajaxReplace = `call window.htmx.ajax('GET', url, {source:'#m-rows', target:'#m-rows', swap:'innerHTML'})`;
 const ajaxAppend = `call window.htmx.ajax('GET', url, {source:'#m-rows', target:'#m-rows', swap:'beforeend'})`;
 const opdaterScript = `on click\n set #m-before.value to ''\n ${pickUrl}\n ${ajaxReplace}`;
-const moreScript = `on click\n ${pickUrl}\n ${ajaxAppend}`;
 const checkboxScript = `on change\n set #m-before.value to ''\n set url to '${athenaUrl}'\n if my checked then set url to '${redshiftUrl}' end\n ${ajaxReplace}`;
+// Infinite scroll: when the bottom sentinel scrolls into view, append the next
+// page — but only while there's a cursor (#m-before non-empty; the backend clears
+// it when the last page wasn't full) and not already loading (data-busy guard,
+// cleared on the response). Reuses the same cursor + append the button used.
+const infScrollScript = `on intersection(intersecting)
+  if intersecting and #m-before.value is not '' and @data-busy is not '1'
+    set @data-busy to '1'
+    ${pickUrl}
+    ${ajaxAppend}
+  end
+end
+on htmx:afterOnLoad from #m-rows set @data-busy to '0'`;
 ---
 <Layout title="Datatilegnelse">
   <div class="page-container" x-data="{ q: new URLSearchParams(location.search), to: new Date(Date.now() - new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10), from: new Date(Date.now() - new Date().getTimezoneOffset()*6e4 - 864e5).toISOString().slice(0,10) }">
@@ -129,6 +140,12 @@ const checkboxScript = `on change\n set #m-before.value to ''\n set url to '${at
              ?daq_id=<daq>&from=<iso>&to=<iso>&limit=<n>&before=<cursor> -->
     <div class="table-panel" data-endpoint="/measurements"
          data-endpoint-params="daq_id,from,to,limit,before">
+      <!-- Loading indicator (htmx-indicator): shown whenever a request that names
+           it is in flight — initial load, Opdater, and infinite-scroll appends. -->
+      <div id="m-spinner" class="htmx-indicator m-loading" role="status" aria-live="polite">
+        <span class="m-spin" aria-hidden="true"></span>
+        <span data-i18n="measurements.loading">Henter måledata fra Athena…</span>
+      </div>
       <table class="data-table">
         <thead>
           <tr>
@@ -144,6 +161,7 @@ const checkboxScript = `on change\n set #m-before.value to ''\n set url to '${at
             hx-trigger="load delay:60ms"
             hx-include="#m-controls"
             hx-swap="innerHTML"
+            hx-indicator="#m-spinner"
             hx-request='{"noHeaders":true}'>
             <tr><td colspan="4" class="muted">Indlæser…</td></tr>
           </tbody>
@@ -162,8 +180,12 @@ const checkboxScript = `on change\n set #m-before.value to ''\n set url to '${at
       </table>
       <div class="table-foot">
         <span class="muted" data-i18n="measurements.dedup_note">Viser nyeste version af hver aflæsning (max. ingested_time).</span>
-        <button type="button" id="m-more" class="btn-secondary" data-i18n="measurements.load_more"
-          {...(live ? { "_": moreScript } : {})}>Hent flere</button>
+        {live && (
+          <div id="m-sentinel" data-busy="0" class="m-sentinel" {...{ "_": infScrollScript }}>
+            <span class="m-spin" aria-hidden="true"></span>
+            <span class="muted" data-i18n="measurements.loading_more">Indlæser flere…</span>
+          </div>
+        )}
       </div>
     </div>
   </div>
@@ -190,4 +212,21 @@ const checkboxScript = `on change\n set #m-before.value to ''\n set url to '${at
     border-top: 1px solid var(--border-medium);
   }
   @media (max-width: 760px) { .meta-grid { grid-template-columns: 1fr 1fr; } }
+</style>
+
+<!-- Global: htmx toggles `.htmx-request` at runtime, so these can't be Astro-scoped. -->
+<style is:global>
+  .m-loading { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 0.85rem; }
+  /* The indicator collapses to nothing when idle, expands only while loading. */
+  .htmx-indicator { opacity: 0; height: 0; padding: 0 !important; overflow: hidden; transition: opacity 120ms ease-in; }
+  .htmx-request.htmx-indicator { opacity: 1; height: auto; padding: 10px 12px !important; }
+  .m-sentinel { display: flex; align-items: center; gap: 8px; min-height: 1px; opacity: 0; transition: opacity 120ms; font-size: 0.85rem; }
+  .m-sentinel[data-busy="1"] { opacity: 1; }
+  .m-spin {
+    display: inline-block; width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid var(--border-medium, #d7dde3);
+    border-top-color: var(--accent, #1f9e8f);
+    animation: m-spin 0.7s linear infinite;
+  }
+  @keyframes m-spin { to { transform: rotate(360deg); } }
 </style>

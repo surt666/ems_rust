@@ -13,10 +13,7 @@
 use std::collections::HashMap;
 use std::time::Duration as StdDuration;
 
-use aws_sdk_athena::types::{
-    QueryExecutionContext, ResultConfiguration, ResultReuseByAgeConfiguration,
-    ResultReuseConfiguration,
-};
+use aws_sdk_athena::types::{QueryExecutionContext, ResultConfiguration};
 use aws_sdk_athena::Client as AthenaClient;
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
@@ -186,7 +183,7 @@ async fn query_rows(
         limit = limit,
     );
 
-    // Start → poll → fetch. Result-reuse makes repeated identical loads near-instant.
+    // Start → poll → fetch. No result-reuse — always read the freshest raw_data.
     let start = athena
         .start_query_execution()
         .query_string(sql)
@@ -202,16 +199,9 @@ async fn query_rows(
                 .output_location(&c.output)
                 .build(),
         )
-        .result_reuse_configuration(
-            ResultReuseConfiguration::builder()
-                .result_reuse_by_age_configuration(
-                    ResultReuseByAgeConfiguration::builder()
-                        .enabled(true)
-                        .max_age_in_minutes(60)
-                        .build(),
-                )
-                .build(),
-        )
+        // No result-reuse cache: this is a live raw-data viewer, so every load
+        // runs fresh against raw_data (the latest readings always show). Trade-off
+        // is the full Athena latency (~7-10s) on every load.
         .send()
         .await?;
     let qid = start
