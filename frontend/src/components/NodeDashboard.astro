@@ -9,6 +9,7 @@
 import ResourceChart from "./ResourceChart.tsx";
 import ResourceCards from "./ResourceCards.tsx";
 import CostCard from "./CostCard.tsx";
+import EmissionsCard from "./EmissionsCard.tsx";
 import BenchmarkCard from "./BenchmarkCard.tsx";
 import AlarmsCard from "./AlarmsCard.tsx";
 
@@ -73,6 +74,15 @@ const ctaRows = [
         <span class="muted" style="margin-left:auto">seneste 30 dage</span>
       </div>
       <ResourceChart client:only="react" resolution="daily" days={30} height={280} />
+    </div>
+
+    <!-- CO₂e card — real, fed by get_emissions (consumption × emission factor). -->
+    <div class="card nd-energy">
+      <div class="section-header">
+        <h2 class="section-title" style="margin-bottom:0">CO₂e</h2>
+        <span class="muted" style="margin-left:auto">faktorbaseret · seneste 30 dage</span>
+      </div>
+      <EmissionsCard client:only="react" resolution="daily" days={30} height={180} />
     </div>
 
     <!-- Combined cost card — real, fed by get_cost (consumption × tariff). -->

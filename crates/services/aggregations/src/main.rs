@@ -420,6 +420,7 @@ async fn handler(
                 api::finish(raw::handle_measurements(athena, &qs).await, Cors::None)
             }
             "get_cost" => api::finish(handle_cost(client, table, &qs).await, Cors::None),
+            "get_emissions" => api::finish(handle_emissions(client, table, &qs).await, Cors::None),
             "get_benchmark" => api::finish(handle_benchmark(client, table, &qs).await, Cors::None),
             "get_alarms" => api::finish(handle_alarms(client, table, &qs).await, Cors::None),
             other => api::to_http(
@@ -629,20 +630,33 @@ fn is_cubic_metre(u: &str) -> bool {
     u.contains("m3") || u.contains("m³") || u.contains("m^3")
 }
 
-/// Energy expressed in kWh (rollup stores Wh); non-energy units contribute 0.
-fn energy_kwh(value: f64, unit: &str) -> f64 {
+fn round2(x: f64) -> f64 {
+    (x * 100.0).round() / 100.0
+}
+
+/// Representative CO₂e emission factor (kg CO₂e) for a resource, given the
+/// rollup's stored unit. Energy quoted per kWh (rollup stores Wh → ÷1000);
+/// volumes per m³. Representative Danish 2026 figures — swap when real factors
+/// land (mirrors the tariff config).
+fn emission_kg_per_unit(resource: &str, unit: &str) -> f64 {
     let u = unit.to_ascii_lowercase();
+    let (per_kwh, per_m3) = match resource {
+        "electricity" => (0.12, 0.0),          // DK grid mix
+        "district_heating" | "heat" => (0.06, 0.0),
+        "district_cooling" => (0.04, 0.0),
+        "gas" => (0.0, 2.05),                   // natural gas, per m³
+        "water" => (0.0, 0.34),                 // supply + treatment, per m³
+        _ => (0.0, 0.0),
+    };
     if u.contains("kwh") {
-        value
+        per_kwh
     } else if u.contains("wh") {
-        value / 1000.0
+        per_kwh / 1000.0
+    } else if is_cubic_metre(&u) {
+        per_m3
     } else {
         0.0
     }
-}
-
-fn round2(x: f64) -> f64 {
-    (x * 100.0).round() / 100.0
 }
 
 /// `GET /meterdata/query/get_cost` — consumption × per-resource tariff, one row
@@ -689,40 +703,145 @@ async fn handle_cost(
     Ok(rows_response(&cost_rows, format))
 }
 
-/// A node's consumption + cost this period vs the preceding equal-length period.
+/// `GET /meterdata/query/get_emissions` — consumption × per-resource emission
+/// factor, one row per (resource, bucket) with the value in **kg CO₂e**. Same
+/// shape as get_aggregations; the client sums + ÷1000 for tonnes.
+#[utoipa::path(
+    get,
+    path = "/meterdata/query/get_emissions",
+    tag = "aggregations",
+    params(
+        ("level_id" = String, Query, description = "Hierarchy node path (…|HN2#..)"),
+        ("resolution" = Option<String>, Query, description = "hourly | daily (default daily)"),
+        ("start" = String, Query, description = "ISO-8601 start (required)"),
+        ("end" = String, Query, description = "ISO-8601 end (required)"),
+        ("format" = Option<String>, Query, description = "json (default) | html"),
+    ),
+    responses(
+        (status = 200, description = "Emission rows ([Row], value in kg CO₂e)", body = Vec<Row>),
+        (status = 400, description = "Missing/invalid start or end", body = api::ErrorResponse),
+    ),
+)]
+async fn handle_emissions(
+    client: &Client,
+    table: &str,
+    qs: &HashMap<String, String>,
+) -> Result<ApiResponse, ApiError> {
+    let format = Format::resolve(qs.get("format").map(String::as_str), Format::Json);
+    let level_id = qs.get("level_id").cloned().unwrap_or_default();
+    let resolution = qs.get("resolution").cloned().unwrap_or_else(|| "daily".to_string());
+    let start = qs.get("start").cloned().unwrap_or_default();
+    let end = qs.get("end").cloned().unwrap_or_default();
+    if start.is_empty() || end.is_empty() {
+        return Err(ApiError::bad_request("start and end are required (ISO-8601)"));
+    }
+    let rows = fetch_node_rows(client, table, &level_id, &resolution, &start, &end).await?;
+    let co2e_rows: Vec<Row> = rows
+        .into_iter()
+        .map(|r| {
+            let kg = round2(r.value * emission_kg_per_unit(&r.purpose, &r.unit));
+            Row { unit: "kg CO₂e".to_string(), value: kg, ..r }
+        })
+        .collect();
+    Ok(rows_response(&co2e_rows, format))
+}
+
+/// One building's cost + CO₂e over the window, with its deviation from the
+/// company-average building (cost).
+#[derive(Debug, Serialize, ToSchema)]
+struct BuildingStat {
+    node_path: String,
+    cost_dkk: f64,
+    co2e_kg: f64,
+    cost_dev_pct: f64,
+}
+
+/// Peer benchmark: every meter-bearing building under the company vs the
+/// company-average building (cost + CO₂e), with above/below counts.
 #[derive(Debug, Serialize, ToSchema)]
 struct Benchmark {
     level_id: String,
-    period_days: f64,
-    energy_kwh: f64,
-    energy_prev_kwh: f64,
-    energy_deviation_pct: f64,
-    cost_dkk: f64,
-    cost_prev_dkk: f64,
-    cost_deviation_pct: f64,
+    building_count: usize,
+    avg_cost_dkk: f64,
+    avg_co2e_kg: f64,
+    /// The selected node's own deviation when it is itself one of the buildings.
+    node_is_building: bool,
+    node_cost_dev_pct: f64,
+    node_co2e_dev_pct: f64,
+    above_count: usize,
+    above_excess_dkk: f64,
+    below_count: usize,
+    below_saving_dkk: f64,
+    buildings: Vec<BuildingStat>,
 }
 
-fn pct_change(cur: f64, prev: f64) -> f64 {
-    if prev.abs() < f64::EPSILON {
+/// Deviation of `cur` from baseline `base`, in percent (0 if base ~ 0).
+fn pct_change(cur: f64, base: f64) -> f64 {
+    if base.abs() < f64::EPSILON {
         0.0
     } else {
-        round2((cur - prev) / prev * 100.0)
+        round2((cur - base) / base * 100.0)
     }
 }
 
-/// Sum a window's rows into (energy kWh, cost DKK).
-fn energy_and_cost(rows: &[Row]) -> (f64, f64) {
-    let mut e = 0.0;
-    let mut c = 0.0;
-    for r in rows {
-        e += energy_kwh(r.value, &r.unit);
-        c += r.value * tariff_dkk_per_unit(&r.purpose, &r.unit);
-    }
-    (e, c)
+/// The meter-bearing node for a leaf node_path (`…|HN4#1|L#9` → `…|HN4#1`), else None.
+fn building_of_leaf(node_path: &str) -> Option<String> {
+    node_path.rfind("|L#").map(|i| node_path[..i].to_string())
 }
 
-/// `GET /meterdata/query/get_benchmark` — this node vs its own preceding period.
-/// Returns current/previous energy + cost and the % deviation (lower = better).
+/// All rollup rows for a company partition (`pk = "HN2#<id>"`) — every descendant
+/// node_path / resource / bucket. A benchmark is company-wide by nature, so this
+/// single-partition read is the natural unit.
+async fn query_company(client: &Client, table: &str, pk: &str) -> Result<Vec<AggItem>> {
+    let raw = client
+        .query()
+        .table_name(table)
+        .key_condition_expression("pk = :pk")
+        .expression_attribute_values(":pk", AttributeValue::S(pk.to_string()))
+        .into_paginator()
+        .items()
+        .send()
+        .collect::<Result<Vec<_>, _>>()
+        .await
+        .map_err(|e| anyhow!("DynamoDB query: {:?}", e))?;
+    Ok(raw.into_iter().filter_map(|it| serde_dynamo::from_item(it).ok()).collect())
+}
+
+/// Aggregate a company's rollup rows into per-building (cost, CO₂e) over the
+/// window. A "building" = a meter-bearing node (the parent of a `L#` leaf); its
+/// total is the node's own rollup rows (which already sum its meters). Pure given
+/// the items, so it is unit-tested directly.
+fn building_stats(
+    items: &[AggItem],
+    gran: Gran,
+    start_bucket: &str,
+    end_bucket: &str,
+) -> std::collections::BTreeMap<String, (f64, f64)> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let in_window = |g: &str, b: &str| g == gran.code() && b >= start_bucket && b <= end_bucket;
+    let mut building_paths: BTreeSet<String> = BTreeSet::new();
+    for it in items {
+        let (np, _res, g, b) = parse_sk(&it.sk);
+        if in_window(g, b) {
+            if let Some(bldg) = building_of_leaf(np) {
+                building_paths.insert(bldg);
+            }
+        }
+    }
+    let mut stats: BTreeMap<String, (f64, f64)> = BTreeMap::new();
+    for it in items {
+        let (np, res, g, b) = parse_sk(&it.sk);
+        if in_window(g, b) && building_paths.contains(np) {
+            let e = stats.entry(np.to_string()).or_insert((0.0, 0.0));
+            e.0 += it.sum * tariff_dkk_per_unit(res, &it.unit);
+            e.1 += it.sum * emission_kg_per_unit(res, &it.unit);
+        }
+    }
+    stats
+}
+
+/// `GET /meterdata/query/get_benchmark` — peer benchmark of the buildings under
+/// the selected node's company vs the company-average building (cost + CO₂e).
 #[utoipa::path(
     get,
     path = "/meterdata/query/get_benchmark",
@@ -734,7 +853,7 @@ fn energy_and_cost(rows: &[Row]) -> (f64, f64) {
         ("end" = String, Query, description = "ISO-8601 end (required)"),
     ),
     responses(
-        (status = 200, description = "Benchmark vs the preceding equal period", body = Benchmark),
+        (status = 200, description = "Peer benchmark across the company's buildings", body = Benchmark),
         (status = 400, description = "Missing/invalid start or end", body = api::ErrorResponse),
     ),
 )]
@@ -750,26 +869,77 @@ async fn handle_benchmark(
     if start.is_empty() || end.is_empty() {
         return Err(ApiError::bad_request("start and end are required (ISO-8601)"));
     }
-    let s = parse_iso(&start).map_err(|e| ApiError::bad_request(e.to_string()))?;
-    let e = parse_iso(&end).map_err(|e| ApiError::bad_request(e.to_string()))?;
-    let dur = e - s;
-    let prev_start = (s - dur).to_rfc3339();
-    let prev_end = s.to_rfc3339();
+    let gran = Gran::from_resolution(&resolution);
+    let empty = || Benchmark {
+        level_id: level_id.clone(),
+        building_count: 0,
+        avg_cost_dkk: 0.0,
+        avg_co2e_kg: 0.0,
+        node_is_building: false,
+        node_cost_dev_pct: 0.0,
+        node_co2e_dev_pct: 0.0,
+        above_count: 0,
+        above_excess_dkk: 0.0,
+        below_count: 0,
+        below_saving_dkk: 0.0,
+        buildings: Vec::new(),
+    };
+    let (pk, sk_path) = match parse_node_keys(&level_id) {
+        Ok(keys) => keys,
+        Err(_) => return Ok(ApiResponse::json(&empty())),
+    };
+    let (start_bucket, end_bucket) = match (bucket_label(&start, gran), bucket_label(&end, gran)) {
+        (Ok(s), Ok(e)) => (s, e),
+        _ => return Err(ApiError::bad_request("start/end must be ISO-8601 timestamps")),
+    };
 
-    let cur = fetch_node_rows(client, table, &level_id, &resolution, &start, &end).await?;
-    let prev = fetch_node_rows(client, table, &level_id, &resolution, &prev_start, &prev_end).await?;
-    let (e_cur, c_cur) = energy_and_cost(&cur);
-    let (e_prev, c_prev) = energy_and_cost(&prev);
+    let items = query_company(client, table, &pk)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let stats = building_stats(&items, gran, &start_bucket, &end_bucket);
 
+    let n = stats.len();
+    if n == 0 {
+        return Ok(ApiResponse::json(&empty()));
+    }
+    let avg_cost = stats.values().map(|v| v.0).sum::<f64>() / n as f64;
+    let avg_co2e = stats.values().map(|v| v.1).sum::<f64>() / n as f64;
+
+    let (mut above_count, mut above, mut below_count, mut below) = (0usize, 0.0, 0usize, 0.0);
+    let mut buildings: Vec<BuildingStat> = Vec::with_capacity(n);
+    for (np, (cost, co2e)) in &stats {
+        if *cost > avg_cost {
+            above_count += 1;
+            above += cost - avg_cost;
+        } else if *cost < avg_cost {
+            below_count += 1;
+            below += avg_cost - cost;
+        }
+        buildings.push(BuildingStat {
+            node_path: np.clone(),
+            cost_dkk: round2(*cost),
+            co2e_kg: round2(*co2e),
+            cost_dev_pct: pct_change(*cost, avg_cost),
+        });
+    }
+    buildings.sort_by(|a, b| {
+        b.cost_dev_pct.partial_cmp(&a.cost_dev_pct).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let node_stat = stats.get(&sk_path);
     let bench = Benchmark {
         level_id,
-        period_days: round2(dur.num_seconds() as f64 / 86_400.0),
-        energy_kwh: round2(e_cur),
-        energy_prev_kwh: round2(e_prev),
-        energy_deviation_pct: pct_change(e_cur, e_prev),
-        cost_dkk: round2(c_cur),
-        cost_prev_dkk: round2(c_prev),
-        cost_deviation_pct: pct_change(c_cur, c_prev),
+        building_count: n,
+        avg_cost_dkk: round2(avg_cost),
+        avg_co2e_kg: round2(avg_co2e),
+        node_is_building: node_stat.is_some(),
+        node_cost_dev_pct: node_stat.map_or(0.0, |(c, _)| pct_change(*c, avg_cost)),
+        node_co2e_dev_pct: node_stat.map_or(0.0, |(_, e)| pct_change(*e, avg_co2e)),
+        above_count,
+        above_excess_dkk: round2(above),
+        below_count,
+        below_saving_dkk: round2(below),
+        buildings,
     };
     Ok(ApiResponse::json(&bench))
 }
@@ -892,8 +1062,8 @@ async fn handle_alarms(
                        meter readings (Datatilegnelse, over Athena). Data routes accept ?format=html|json.",
         version = "0.1.0",
     ),
-    paths(handle_aggregations, handle_cost, handle_benchmark, handle_alarms, raw::handle_measurements),
-    components(schemas(Row, Benchmark, Alarm, AlarmsResponse, raw::Measurement, api::ErrorResponse, api::ErrorDetail)),
+    paths(handle_aggregations, handle_cost, handle_emissions, handle_benchmark, handle_alarms, raw::handle_measurements),
+    components(schemas(Row, Benchmark, BuildingStat, Alarm, AlarmsResponse, raw::Measurement, api::ErrorResponse, api::ErrorDetail)),
     tags(
         (name = "aggregations", description = "Hierarchy consumption rollup (Resource-Insights chart)"),
         (name = "measurements", description = "Raw meter readings (Datatilegnelse)"),
@@ -940,6 +1110,7 @@ mod tests {
         assert!(doc.contains("/meterdata/query/get_aggregations"), "missing get_aggregations path");
         assert!(doc.contains("/meterdata/query/get_measurements"), "missing get_measurements path");
         assert!(doc.contains("/meterdata/query/get_cost"), "missing get_cost path");
+        assert!(doc.contains("/meterdata/query/get_emissions"), "missing get_emissions path");
         assert!(doc.contains("/meterdata/query/get_benchmark"), "missing get_benchmark path");
         assert!(doc.contains("/meterdata/query/get_alarms"), "missing get_alarms path");
         assert!(doc.contains("Measurement"), "missing Measurement schema");
@@ -974,10 +1145,48 @@ mod tests {
     }
 
     #[test]
-    fn energy_kwh_normalizes_wh() {
-        assert!((energy_kwh(1500.0, "Wh") - 1.5).abs() < 1e-9);
-        assert!((energy_kwh(2.0, "kWh") - 2.0).abs() < 1e-9);
-        assert_eq!(energy_kwh(10.0, "m3"), 0.0, "volume isn't energy");
+    fn emission_factor_is_unit_aware() {
+        // electricity 0.12 kg/kWh; rollup stores Wh → 1/1000.
+        assert!((emission_kg_per_unit("electricity", "kWh") - 0.12).abs() < 1e-9);
+        assert!((emission_kg_per_unit("electricity", "Wh") - 0.00012).abs() < 1e-9);
+        assert!((emission_kg_per_unit("water", "m^3") - 0.34).abs() < 1e-9);
+        assert_eq!(emission_kg_per_unit("electricity", "°C"), 0.0);
+    }
+
+    #[test]
+    fn building_stats_groups_by_meter_bearing_node() {
+        let it = |sk: &str, unit: &str, sum: f64| AggItem {
+            sk: sk.into(),
+            sum,
+            count: 1,
+            unit: unit.into(),
+        };
+        // Two buildings under one company. Building-level rows aggregate their
+        // meters; leaf (L#) rows mark which node_paths are buildings.
+        let items = vec![
+            // building A own row + its leaf
+            it("HN2#1|HN3#1|HN4#1#electricity#d#2026-06-01", "Wh", 1000.0),
+            it("HN2#1|HN3#1|HN4#1|L#9#electricity#d#2026-06-01", "Wh", 1000.0),
+            // building B own row + its leaf
+            it("HN2#1|HN3#1|HN4#2#electricity#d#2026-06-01", "Wh", 3000.0),
+            it("HN2#1|HN3#1|HN4#2|L#8#electricity#d#2026-06-01", "Wh", 3000.0),
+            // company + property aggregate rows (not meter-bearing → excluded)
+            it("HN2#1#electricity#d#2026-06-01", "Wh", 4000.0),
+            it("HN2#1|HN3#1#electricity#d#2026-06-01", "Wh", 4000.0),
+            // out of window → excluded
+            it("HN2#1|HN3#1|HN4#1#electricity#d#2026-07-01", "Wh", 9999.0),
+        ];
+        let stats = building_stats(&items, Gran::Day, "2026-06-01", "2026-06-30");
+        assert_eq!(stats.len(), 2, "only the two meter-bearing buildings");
+        // cost = Wh × 0.0025; A=1000→2.5, B=3000→7.5
+        assert!((stats["HN2#1|HN3#1|HN4#1"].0 - 2.5).abs() < 1e-9);
+        assert!((stats["HN2#1|HN3#1|HN4#2"].0 - 7.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn building_of_leaf_strips_meter() {
+        assert_eq!(building_of_leaf("HN2#1|HN3#1|HN4#1|L#9").as_deref(), Some("HN2#1|HN3#1|HN4#1"));
+        assert_eq!(building_of_leaf("HN2#1|HN3#1|HN4#1"), None);
     }
 
     #[test]
