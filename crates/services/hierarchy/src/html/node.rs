@@ -625,7 +625,12 @@ fn render_sensor_row(s: &Sensor) -> Markup {
                     a href="#" _="on click halt" data-i18n="sensor.menu.edit" { "Redigér sensor" }
                     a href="#" _="on click halt" data-i18n="sensor.menu.tags" { "Redigér tags" }
                     a href="#" _="on click halt" data-i18n="sensor.menu.consumption" { "Gå til forbrug" }
-                    a href=(datatilegnelse) data-i18n="sensor.menu.datatilegnelse" { "Gå til datatilegnelse" }
+                    // data-astro-reload: full page load (skip the Astro view transition).
+                    // The /measurements page reads location.search at Alpine-init time; a
+                    // soft-nav inits it before the URL settles, so q/daq_id come up empty
+                    // (blank metadata + a daq_id-less 400 on the load fetch). A real
+                    // navigation has the URL right from the start.
+                    a href=(datatilegnelse) data-astro-reload="" data-i18n="sensor.menu.datatilegnelse" { "Gå til datatilegnelse" }
                     a href="#" class="danger-link" _="on click halt" data-i18n="sensor.menu.deactivate" { "Deaktivér sensor" }
                     a href="#" class="danger-link" _="on click halt" data-i18n="sensor.menu.delete" { "Slet sensor" }
                 }
