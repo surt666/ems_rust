@@ -4,7 +4,7 @@ use typed_builder::TypedBuilder;
 use crate::domain::formula::Formula;
 use crate::domain::ids::{NodeId, SensorId};
 use crate::domain::node::PATH_SEP;
-use crate::domain::values::MeterType;
+use crate::domain::values::{MeterType, Resource};
 
 // ---------------------------------------------------------------------------
 // Sensor
@@ -21,7 +21,7 @@ pub struct Sensor {
     pub created: DateTime<Utc>,
     pub daq_id: String,
     pub path: String,
-    pub purpose: String,
+    pub purpose: Resource,
     pub meter_type: MeterType,
     #[builder(default)]
     pub unit: Option<String>,
@@ -91,7 +91,7 @@ mod tests {
             .created(ptime_of("2026-04-18T10:00:00Z"))
             .daq_id("daq:adeunis_pu_v1:123:0018b210000191c7:counter_a".to_owned())
             .path(path)
-            .purpose("Electricity".to_owned())
+            .purpose(Resource::Electricity)
             .meter_type(MeterType::Counter)
             .unit(Some("kWh".to_owned()))
             .formula(Formula::Identity)
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn fields_preserved() {
         let s = make_sample();
-        assert_eq!(s.purpose, "Electricity");
+        assert_eq!(s.purpose, Resource::Electricity);
         assert_eq!(s.daq_id, "daq:adeunis_pu_v1:123:0018b210000191c7:counter_a");
         assert!(matches!(s.meter_type, MeterType::Counter));
         assert_eq!(s.unit, Some("kWh".to_owned()));
@@ -135,7 +135,7 @@ mod tests {
             .created(ptime_of("2026-01-01T00:00:00Z"))
             .daq_id("x".to_owned())
             .path("S#1".to_owned()) // no HN segment
-            .purpose("x".to_owned())
+            .purpose(Resource::Water)
             .meter_type(MeterType::Counter)
             .build();
         let _ = s.parent_id();

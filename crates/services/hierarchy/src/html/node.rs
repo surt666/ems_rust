@@ -2,7 +2,20 @@ use maud::{html, Markup, PreEscaped};
 use model::domain::node::Node;
 use model::domain::schema::FieldSpec;
 use model::domain::sensor::Sensor;
-use model::domain::values::CognitoGroup;
+use model::domain::values::{CognitoGroup, Resource};
+
+/// Danish UI label for a resource (the EMS "Målertype" wording). The domain
+/// `Resource` owns the wire token (`Display`); the view owns the label.
+fn resource_label_da(r: Resource) -> &'static str {
+    match r {
+        Resource::Electricity => "El",
+        Resource::DistrictHeating => "Fjernvarme",
+        Resource::DistrictCooling => "Fjernkøling",
+        Resource::Gas => "Gas",
+        Resource::Water => "Vand",
+        Resource::Heat => "Varme",
+    }
+}
 
 
 // ---------------------------------------------------------------------------
@@ -417,16 +430,13 @@ fn sensor_dialog(nid_str: &str, parent_str: &str) -> Markup {
                     div class="form-row" {
                         label class="form-label" { "Resource" }
                         // The per-meter resource (EMS "Målertype" / energy form). The
-                        // value is written to the sensor's `purpose` field and keyed into
-                        // the rollup sort key, so option values MUST match the aggregations
-                        // lambda's `Resource::as_str` exactly.
+                        // value is written to the sensor's `purpose` field, so the option
+                        // values are the domain `Resource` tokens themselves — iterated
+                        // here so they can't drift from the enum / the rollup contract.
                         select name="data.purpose" required class="form-select" {
-                            option value="electricity" { "El" }
-                            option value="district_heating" { "Fjernvarme" }
-                            option value="district_cooling" { "Fjernkøling" }
-                            option value="gas" { "Gas" }
-                            option value="water" { "Vand" }
-                            option value="heat" { "Varme" }
+                            @for r in Resource::all() {
+                                option value=(r.as_str()) { (resource_label_da(r)) }
+                            }
                         }
                         span class="required" { "*" }
                     }
@@ -607,14 +617,14 @@ fn render_sensor_row(s: &Sensor) -> Markup {
         urlencoding::encode(&s.daq_id),
         urlencoding::encode(&sid),
         urlencoding::encode(logical),
-        urlencoding::encode(&s.purpose),
+        urlencoding::encode(&s.purpose.to_string()),
         urlencoding::encode(&unit),
         urlencoding::encode(&s.meter_type.to_string()),
     );
     html! {
         li class="sensor-item sensor-row" {
             div class="sensor-row__label" {
-                span class="sensor-row__name" { (s.purpose) }
+                span class="sensor-row__name" { (s.purpose.to_string()) }
                 " "
                 span class="muted" { "(" (s.daq_id) ")" }
             }
@@ -848,17 +858,17 @@ mod tests {
     #[test]
     fn render_sensors_nonempty() {
         use model::domain::ids::SensorId;
-        use model::domain::values::MeterType;
+        use model::domain::values::{MeterType, Resource};
         let s = Sensor::builder()
             .id(SensorId::make(1))
             .daq_id("daq:test:001".to_owned())
             .path("HN0#root|HN2#10003|S#1".to_owned())
-            .purpose("Electricity".to_owned())
+            .purpose(Resource::Electricity)
             .meter_type(MeterType::Counter)
             .build();
         let html = render_sensors(&[s]).into_string();
         assert!(html.contains("daq:test:001"));
-        assert!(html.contains("Electricity"));
+        assert!(html.contains("electricity"));
         assert!(html.contains("sensor-item"));
     }
 }

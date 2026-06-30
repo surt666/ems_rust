@@ -223,6 +223,82 @@ pub enum MeterType {
 
 
 // ---------------------------------------------------------------------------
+// Resource / Dimension
+// ---------------------------------------------------------------------------
+
+/// The accumulation dimension of a resource — the unit family it sums in.
+///
+/// Energy carriers roll up in kWh, volume carriers in m³. This is the read
+/// side's `dimension_of_unit` grouping (the `measurements_aggregate` `gsi1`
+/// dimension partition) made explicit in the domain. It is **derived** from the
+/// resource (see [`Resource::dimension`]), never stored on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
+pub enum Dimension {
+    #[strum(serialize = "energy")]
+    Energy,
+    #[strum(serialize = "volume")]
+    Volume,
+}
+
+/// The resource (energy form / EMS "Målertype") a sensor measures.
+///
+/// The string form (`strum` serialize, always lower-case) is the **wire/storage
+/// contract**: it is written to the sensor's `purpose` attribute, forwarded to
+/// `meter-identity`, and keyed verbatim into the `measurements_aggregate` rollup
+/// sort key as the `<resource>` segment. The aggregations read side fans out over
+/// these exact tokens, so this set must stay in lock-step with the rollup. Parsing
+/// is case-insensitive (tolerates legacy rows); `Display` always re-emits the
+/// canonical lower-case token, so writes are normalised.
+///
+/// Modelling `purpose` as this enum makes "a sensor measures a known resource" a
+/// type-level invariant — illegal values can't be built, stored, or read back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq,
+         strum::Display, strum::EnumString, EnumIter, strum::IntoStaticStr)]
+#[strum(ascii_case_insensitive)]
+pub enum Resource {
+    #[strum(serialize = "electricity")]
+    Electricity,
+    #[strum(serialize = "district_heating")]
+    DistrictHeating,
+    #[strum(serialize = "district_cooling")]
+    DistrictCooling,
+    #[strum(serialize = "gas")]
+    Gas,
+    #[strum(serialize = "water")]
+    Water,
+    #[strum(serialize = "heat")]
+    Heat,
+}
+
+impl Resource {
+    /// The canonical lower-case wire token (zero-alloc). Same string as
+    /// `Display`; the read side keys rollup rows by this.
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+
+    /// Every resource, in declaration order — the per-node "all" fan-out set.
+    /// Exposed as an inherent method so callers don't need `strum`'s iterator
+    /// trait in scope.
+    pub fn all() -> impl Iterator<Item = Resource> {
+        Resource::iter()
+    }
+
+    /// The accumulation dimension — energy carriers (electricity, heat, district
+    /// heating/cooling) sum in kWh; volume carriers (gas, water) in m³.
+    pub fn dimension(self) -> Dimension {
+        match self {
+            Resource::Electricity
+            | Resource::DistrictHeating
+            | Resource::DistrictCooling
+            | Resource::Heat => Dimension::Energy,
+            Resource::Gas | Resource::Water => Dimension::Volume,
+        }
+    }
+}
+
+
+// ---------------------------------------------------------------------------
 // Timezone
 // ---------------------------------------------------------------------------
 
@@ -311,6 +387,37 @@ pub enum FieldType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use strum::IntoEnumIterator;
+
+    // ---- Resource -----------------------------------------------------------
+
+    /// `Display` re-emits the exact lower-case wire token for every variant —
+    /// the `measurements_aggregate` rollup contract — and round-trips via parse.
+    #[test]
+    fn resource_wire_tokens_round_trip() {
+        for r in Resource::iter() {
+            assert_eq!(r.to_string().parse::<Resource>().unwrap(), r);
+        }
+        assert_eq!(Resource::DistrictHeating.to_string(), "district_heating");
+        assert_eq!(Resource::Electricity.to_string(), "electricity");
+    }
+
+    /// Parsing tolerates legacy casing but `Display` always normalises.
+    #[test]
+    fn resource_parse_is_case_insensitive() {
+        assert_eq!("Electricity".parse::<Resource>().unwrap(), Resource::Electricity);
+        assert_eq!("WATER".parse::<Resource>().unwrap(), Resource::Water);
+        assert!("energy".parse::<Resource>().is_err(), "dimension is not a resource");
+    }
+
+    /// Energy carriers sum in kWh, volume carriers in m³.
+    #[test]
+    fn resource_dimension_split() {
+        assert_eq!(Resource::Electricity.dimension(), Dimension::Energy);
+        assert_eq!(Resource::Heat.dimension(), Dimension::Energy);
+        assert_eq!(Resource::Gas.dimension(), Dimension::Volume);
+        assert_eq!(Resource::Water.dimension(), Dimension::Volume);
+    }
 
     // ---- EdgeKind -----------------------------------------------------------
 

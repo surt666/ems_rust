@@ -20,6 +20,7 @@ dependencies = [
  "chrono",
  "futures",
  "lambda_http",
+ "model",
  "regex",
  "serde",
  "serde_dynamo",

@@ -23,7 +23,7 @@ use model::domain::ids::{NodeId, SensorId, UserId};
 use model::domain::node::Node;
 use model::domain::sensor::Sensor;
 use model::domain::user::User;
-use model::domain::values::{CognitoGroup, Currency, EdgeKind, Language, MeterType, Profile};
+use model::domain::values::{CognitoGroup, Currency, EdgeKind, Language, MeterType, Profile, Resource};
 use model::errors::RepositoryError;
 use model::logic::{access, hierarchy, sensors, users};
 use model::repository::EdgeSpec;
@@ -53,15 +53,6 @@ fn bad_request(msg: &str) -> Value {
         "statusCode": 400,
         "body": json!({
             "error": { "code": "Bad_request", "message": msg }
-        }).to_string()
-    })
-}
-
-fn not_found(msg: &str) -> Value {
-    json!({
-        "statusCode": 404,
-        "body": json!({
-            "error": { "code": "Not_found", "message": msg }
         }).to_string()
     })
 }
@@ -664,7 +655,7 @@ where
 pub async fn handle_attach_sensor<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut, FFD>(
     parent_id: String,
     daq_id: String,
-    purpose: String,
+    purpose_s: String,
     meter_type_s: String,
     unit: Option<String>,
     resample_val: Option<Value>,
@@ -692,6 +683,12 @@ where
     let meter_type = match meter_type_s.parse::<MeterType>() {
         Ok(mt) => mt,
         Err(e) => return bad_request(&format!("bad meter_type: {}", e)),
+    };
+    // "a sensor measures a known resource" is enforced here at the boundary;
+    // `Sensor.purpose: Resource` then carries the invariant through the domain.
+    let purpose = match purpose_s.parse::<Resource>() {
+        Ok(r) => r,
+        Err(e) => return bad_request(&format!("bad purpose: {}", e)),
     };
 
     // Coerce resample_minutes: int or numeric string; empty/null → None.
@@ -800,16 +797,16 @@ where
         Err(e) => return bad_request(&format!("bad sensor_id: {}", e)),
     };
 
-    // Resolve the parent node from the active row's path (the edge to delete
-    // hangs off the parent). A missing active row ⇒ nothing to delete ⇒ 404.
-    let parent = match get_active_sensor(sid).await {
-        Ok(Some(sensor)) => sensor.parent_id(),
-        Ok(None) => return not_found(&format!("{} not found", sid)),
+    // The active-row fetch is adapter I/O; the domain (`sensors::delete`) owns
+    // what it *means* — the must-exist guard (None ⇒ NotFound ⇒ 404) and parent
+    // resolution for the edge delete.
+    let current = match get_active_sensor(sid).await {
+        Ok(opt) => opt,
         Err(e) => return repo_error_response(e),
     };
 
-    match delete_sensor(sid, parent).await {
-        Ok(()) => ok(json!({ "deleted": sid.to_string() })),
+    match sensors::delete(sid, move |_| current, delete_sensor).await {
+        Ok(id) => ok(json!({ "deleted": id.to_string() })),
         Err(e) => repo_error_response(e),
     }
 }
@@ -2032,7 +2029,7 @@ mod tests {
         let resp = handle_attach_sensor(
             bldg.to_string(),
             "daq:f".to_string(),
-            "E".to_string(),
+            "electricity".to_string(),
             "counter".to_string(),
             None,
             None,
@@ -2129,7 +2126,7 @@ mod tests {
         let resp = handle_attach_sensor(
             bldg.to_string(),
             "daq:bad".to_string(),
-            "E".to_string(),
+            "electricity".to_string(),
             "counter".to_string(),
             None,
             None,

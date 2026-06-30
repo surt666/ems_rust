@@ -224,42 +224,13 @@ fn to_rows_dimension(
 
 // ── DynamoDB query ────────────────────────────────────────────────────────────
 
-/// The meter type / energy form a sensor measures (the EMS "Målertype"), keyed
-/// into the rollup sort key. A node's "all" query fans out over `Resource::ALL`,
-/// so adding a resource means adding a variant here; `as_str` must match the value
-/// the Glue rollup writes into the sort key.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Resource {
-    Electricity,
-    DistrictHeating,
-    DistrictCooling,
-    Gas,
-    Water,
-    Heat,
-}
-
-impl Resource {
-    /// Every resource — the per-resource fan-out for a node's series.
-    const ALL: &'static [Resource] = &[
-        Resource::Electricity,
-        Resource::DistrictHeating,
-        Resource::DistrictCooling,
-        Resource::Gas,
-        Resource::Water,
-        Resource::Heat,
-    ];
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Resource::Electricity => "electricity",
-            Resource::DistrictHeating => "district_heating",
-            Resource::DistrictCooling => "district_cooling",
-            Resource::Gas => "gas",
-            Resource::Water => "water",
-            Resource::Heat => "heat",
-        }
-    }
-}
+// The resource a sensor measures (the EMS "Målertype") is shared domain
+// vocabulary — `model::domain::values::Resource`. The meter-data context keys
+// rollup rows by `Resource::as_str` and fans a node's "all" query out over
+// `Resource::all()`; the hierarchy context writes the same token into the
+// sensor's `purpose`. Same ubiquitous language, so the type is shared, not
+// re-declared here.
+use model::domain::values::Resource;
 
 struct QueryParams<'a> {
     table: &'a str,
@@ -280,7 +251,7 @@ struct QueryParams<'a> {
 /// the resource is fixed the date window is a pure key-condition range.
 async fn query_node(client: &Client, p: QueryParams<'_>) -> Result<Vec<AggItem>> {
     let resources: Vec<&str> = if p.resource.is_empty() {
-        Resource::ALL.iter().map(|r| r.as_str()).collect()
+        Resource::all().map(|r| r.as_str()).collect()
     } else {
         vec![p.resource]
     };
@@ -1234,9 +1205,10 @@ mod tests {
 
     #[test]
     fn resource_all_is_authoritative() {
-        // The all-resources query fans out over exactly these — must be non-empty,
-        // and each `as_str` must match what the Glue rollup writes into the SK.
-        assert!(!Resource::ALL.is_empty(), "fan-out needs at least one resource");
+        // The all-resources query fans out over the shared domain `Resource` — must
+        // be non-empty, and each `as_str` must match what the Glue rollup writes
+        // into the SK.
+        assert!(Resource::all().next().is_some(), "fan-out needs at least one resource");
         assert_eq!(Resource::Electricity.as_str(), "electricity");
         assert_eq!(Resource::Water.as_str(), "water");
     }

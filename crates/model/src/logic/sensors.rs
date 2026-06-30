@@ -10,7 +10,7 @@ use crate::domain::formula::Formula;
 use crate::domain::ids::{NodeId, SensorId};
 use crate::domain::node::{child_path, Node};
 use crate::domain::sensor::Sensor;
-use crate::domain::values::{EdgeKind, MeterType};
+use crate::domain::values::{EdgeKind, MeterType, Resource};
 use crate::errors::RepositoryError;
 use crate::logic::schema_check;
 use crate::repository::EdgeSpec as RepoEdgeSpec;
@@ -80,7 +80,7 @@ fn has_cycle(
 pub async fn attach<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut, FFD>(
     parent: NodeId,
     daq_id: String,
-    purpose: String,
+    purpose: Resource,
     meter_type: MeterType,
     unit: Option<String>,
     formula: Formula,
@@ -148,7 +148,7 @@ where
             .created(chrono::Utc::now())
             .daq_id(daq_id.clone())
             .path(path)
-            .purpose(purpose.clone())
+            .purpose(purpose)
             .meter_type(meter_type)
             .unit(unit.clone())
             .formula(formula_for_build.clone())
@@ -265,6 +265,36 @@ fn daq_already_attached(daq_id: &str, existing: &Sensor) -> RepositoryError {
         "daq_id {:?} is already attached to logical meter {} at {}; move it first",
         daq_id, existing.id, existing.path
     ))
+}
+
+// ---------------------------------------------------------------------------
+// delete
+// ---------------------------------------------------------------------------
+
+/// Delete a sensor and everything that hangs off it.
+///
+/// The domain rules — mirroring `attach`/`replace_device`, so the orchestration
+/// and the must-exist guard live here rather than in the service:
+///   * the sensor must currently be active, else it's a `NotFound` (→ 404);
+///   * the `has_sensor` edge to remove hangs off the sensor's **parent** node,
+///     which is resolved from the active row's path (`Sensor::parent_id`).
+///
+/// `delete_sensor` (injected) performs the cross-row removal — active + history
+/// rows, the daq lock, the parent edge, and the node's sensor-counter decrement.
+/// Returns the deleted sensor's id on success.
+pub async fn delete<FGA, FDS, FDSFut>(
+    sensor_id: SensorId,
+    get_active_sensor: FGA,
+    delete_sensor: FDS,
+) -> Result<SensorId, RepositoryError>
+where
+    FGA: FnOnce(SensorId) -> Option<Sensor>,
+    FDS: FnOnce(SensorId, NodeId) -> FDSFut,
+    FDSFut: Future<Output = Result<(), RepositoryError>>,
+{
+    let sensor = get_active_sensor(sensor_id).ok_or_else(|| sensor_not_found(sensor_id))?;
+    delete_sensor(sensor_id, sensor.parent_id()).await?;
+    Ok(sensor_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -404,7 +434,7 @@ mod tests {
     use crate::domain::node;
     use crate::domain::schema::{EdgeSpec as SchemaEdgeSpec, Schema};
     use crate::repository::EdgeSpec as TestRepoEdgeSpec;
-    use crate::domain::values::{EdgeKind, MeterType};
+    use crate::domain::values::{EdgeKind, MeterType, Resource};
     use crate::errors::RepositoryError;
     use crate::logic::hierarchy;
     use crate::repository::memory::Store;
@@ -556,7 +586,7 @@ mod tests {
         attach(
             parent,
             daq_id.to_string(),
-            "Electricity".to_string(),
+            Resource::Electricity,
             MeterType::Counter,
             Some("kWh".to_string()),
             formula,
@@ -589,6 +619,38 @@ mod tests {
             .await
             .expect_err("second attach of the same daq must conflict");
         assert!(matches!(err, RepositoryError::Conflict(_)), "got {err:?}");
+    }
+
+    /// `delete` removes the active sensor and returns its id.
+    #[tokio::test]
+    async fn delete_removes_active_sensor() {
+        let store = Rc::new(Store::new());
+        let c2 = seed_company(&store);
+        let b1 = seed_building(&store, c2).await;
+        let s = do_attach(store.clone(), b1, "daq:del", Formula::Identity, Some(15))
+            .await
+            .expect("attach ok");
+
+        let deleted = delete(s.id, get_active_fn(store.clone()), delete_sensor_fn(store.clone()))
+            .await
+            .expect("delete ok");
+        assert_eq!(deleted, s.id);
+        assert!(store.get_active_sensor(&s.id).is_none(), "sensor must be gone");
+    }
+
+    /// `delete` on a sensor that isn't active is a `NotFound` (→ 404), so the
+    /// must-exist guard lives in the domain rather than the service.
+    #[tokio::test]
+    async fn delete_unknown_is_not_found() {
+        let store = Rc::new(Store::new());
+        let err = delete(
+            SensorId::make(9_999_999),
+            get_active_fn(store.clone()),
+            delete_sensor_fn(store.clone()),
+        )
+        .await
+        .expect_err("deleting a missing sensor must fail");
+        assert!(matches!(err, RepositoryError::NotFound(_)), "got {err:?}");
     }
 
     // -----------------------------------------------------------------------
@@ -1094,7 +1156,7 @@ mod tests {
                 .created(ts())
                 .daq_id(format!("d{}", id))
                 .path(path.to_string())
-                .purpose("E".to_string())
+                .purpose(Resource::Electricity)
                 .meter_type(MeterType::Counter)
                 .build()
         };

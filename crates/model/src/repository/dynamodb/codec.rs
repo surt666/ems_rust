@@ -16,7 +16,9 @@ use crate::domain::schema::{EdgeSpec, FieldSpec, Schema};
 use crate::domain::sensor::Sensor;
 use crate::domain::sensor_sk::SensorSk;
 use crate::domain::user::User;
-use crate::domain::values::{CognitoGroup, Currency, EdgeKind, FieldType, Language, MeterType};
+use crate::domain::values::{
+    CognitoGroup, Currency, EdgeKind, FieldType, Language, MeterType, Resource,
+};
 use crate::errors::RepositoryError;
 
 // ---------------------------------------------------------------------------
@@ -775,7 +777,7 @@ pub fn sensor_to_item(sn: &Sensor) -> Item {
     item.insert("daq_id".to_string(), s(sn.daq_id.clone()));
     item.insert("gsi1pk".to_string(), s(sensor_gsi1pk(&sn.path)));
     item.insert("gsi1sk".to_string(), s(sn.path.clone()));
-    item.insert("purpose".to_string(), s(sn.purpose.clone()));
+    item.insert("purpose".to_string(), s(sn.purpose.to_string()));
     item.insert(
         "meter_type".to_string(),
         s(sn.meter_type.to_string()),
@@ -849,7 +851,10 @@ pub fn sensor_of_item(item: &Item) -> Result<Sensor, RepositoryError> {
         .map_err(|e| RepositoryError::Codec(format!("bad sensor id {:?}: {}", pk_s, e)))?;
     let daq_id = as_s(field(item, "daq_id")?)?.to_string();
     let path = as_s(field(item, "gsi1sk")?)?.to_string();
-    let purpose = as_s(field(item, "purpose")?)?.to_string();
+    let purpose_s = as_s(field(item, "purpose")?)?;
+    let purpose = purpose_s
+        .parse::<Resource>()
+        .map_err(|e| RepositoryError::Codec(format!("bad purpose {:?}: {}", purpose_s, e)))?;
     let mt_s = as_s(field(item, "meter_type")?)?;
     let meter_type = mt_s.parse::<MeterType>()
         .map_err(|e| RepositoryError::Codec(format!("bad meter_type {:?}: {}", mt_s, e)))?;
@@ -1261,7 +1266,7 @@ mod tests {
         let item = load_fixture("sensor.json");
         let sensor = sensor_of_item(&item).expect("decode sensor");
         assert_eq!(sensor.id.to_string(), "S#10010");
-        assert_eq!(sensor.purpose, "Energy");
+        assert_eq!(sensor.purpose, Resource::Electricity);
         assert_eq!(sensor.daq_id, "daq:gwb143_json_v1:6003111553:90143675:0");
         assert!(matches!(sensor.meter_type, MeterType::Counter));
         assert_eq!(sensor.unit, Some("KWh".to_string()));

@@ -537,7 +537,7 @@ mod tests {
     use super::*;
     use crate::domain::ids::Level;
     use crate::domain::node::{make_root, make as make_node};
-    use crate::domain::values::{CognitoGroup, MeterType};
+    use crate::domain::values::{CognitoGroup, MeterType, Resource};
 
     fn ts() -> DateTime<Utc> {
         "2026-01-01T00:00:00Z"
@@ -561,7 +561,7 @@ mod tests {
             .created(ts())
             .daq_id(format!("daq:{}", sid))
             .path(path)
-            .purpose("Energy".to_owned())
+            .purpose(Resource::Electricity)
             .meter_type(MeterType::Counter)
             .build()
     }
@@ -851,7 +851,7 @@ mod tests {
                 .created(ts())
                 .daq_id("daq:test".to_owned())
                 .path(path)
-                .purpose("Energy".to_owned())
+                .purpose(Resource::Electricity)
                 .meter_type(MeterType::Counter)
                 .build();
             let e = EdgeSpec {
@@ -882,7 +882,7 @@ mod tests {
                 .created(ts())
                 .daq_id("daq:test".to_owned())
                 .path(path)
-                .purpose("Energy".to_owned())
+                .purpose(Resource::Electricity)
                 .meter_type(MeterType::Counter)
                 .build();
             let e = EdgeSpec {
@@ -914,7 +914,7 @@ mod tests {
             .created(ts())
             .daq_id("d1".to_owned())
             .path("HN0#root|HN1#1|S#1".to_owned())
-            .purpose("Energy".to_owned())
+            .purpose(Resource::Electricity)
             .meter_type(MeterType::Counter)
             .build();
         let s2 = Sensor::builder()
@@ -922,7 +922,7 @@ mod tests {
             .created(ts())
             .daq_id("d2".to_owned())
             .path("HN0#root|HN1#2|S#2".to_owned())
-            .purpose("Energy".to_owned())
+            .purpose(Resource::Electricity)
             .meter_type(MeterType::Counter)
             .build();
         {
@@ -949,7 +949,7 @@ mod tests {
             .created(old_created)
             .daq_id("old".to_owned())
             .path("HN0#root|S#10".to_owned())
-            .purpose("Energy".to_owned())
+            .purpose(Resource::Electricity)
             .meter_type(MeterType::Counter)
             .build();
         {
@@ -964,7 +964,7 @@ mod tests {
             .created(new_ts)
             .daq_id("new".to_owned())
             .path("HN0#root|S#10".to_owned())
-            .purpose("Energy".to_owned())
+            .purpose(Resource::Electricity)
             .meter_type(MeterType::Counter)
             .build();
 

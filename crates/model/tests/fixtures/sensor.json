@@ -9,7 +9,7 @@
         "S": "active#2026-06-07T09:17:16Z"
     },
     "purpose": {
-        "S": "Energy"
+        "S": "electricity"
     },
     "resample_minutes": {
         "N": "5"
