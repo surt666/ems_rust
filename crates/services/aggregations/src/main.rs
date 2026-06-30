@@ -601,29 +601,6 @@ async fn fetch_node_rows(
     Ok(to_rows(items, level_id, resolution, gran))
 }
 
-/// Representative unit price (DKK) for a resource, given the rollup's stored unit.
-/// Energy rolls up in Wh (tariff is quoted per kWh → divide by 1000); volumes in m³.
-fn tariff_dkk_per_unit(resource: &str, unit: &str) -> f64 {
-    let u = unit.to_ascii_lowercase();
-    let (per_kwh, per_m3) = match resource {
-        "electricity" => (2.50, 0.0),
-        "district_heating" | "heat" => (0.90, 0.0),
-        "district_cooling" => (0.50, 0.0),
-        "gas" => (0.0, 8.0),
-        "water" => (0.0, 50.0),
-        _ => (0.0, 0.0),
-    };
-    if u.contains("kwh") {
-        per_kwh
-    } else if u.contains("wh") {
-        per_kwh / 1000.0
-    } else if is_cubic_metre(&u) {
-        per_m3
-    } else {
-        0.0
-    }
-}
-
 /// True for the various ways a cubic-metre unit is written in the data
 /// (`m3`, `m³`, `m^3`). The rollup carries whatever the raw meter reported.
 fn is_cubic_metre(u: &str) -> bool {
@@ -634,20 +611,11 @@ fn round2(x: f64) -> f64 {
     (x * 100.0).round() / 100.0
 }
 
-/// Representative CO₂e emission factor (kg CO₂e) for a resource, given the
-/// rollup's stored unit. Energy quoted per kWh (rollup stores Wh → ÷1000);
-/// volumes per m³. Representative Danish 2026 figures — swap when real factors
-/// land (mirrors the tariff config).
-fn emission_kg_per_unit(resource: &str, unit: &str) -> f64 {
+/// Apply a per-kWh / per-m³ rate to a value's unit: energy rolls up in Wh (the
+/// per-kWh rate ÷1000), volumes in m³, anything else contributes 0. Shared by the
+/// tariff and emission-factor tables below — they differ only in the rate pair.
+fn per_unit(per_kwh: f64, per_m3: f64, unit: &str) -> f64 {
     let u = unit.to_ascii_lowercase();
-    let (per_kwh, per_m3) = match resource {
-        "electricity" => (0.12, 0.0),          // DK grid mix
-        "district_heating" | "heat" => (0.06, 0.0),
-        "district_cooling" => (0.04, 0.0),
-        "gas" => (0.0, 2.05),                   // natural gas, per m³
-        "water" => (0.0, 0.34),                 // supply + treatment, per m³
-        _ => (0.0, 0.0),
-    };
     if u.contains("kwh") {
         per_kwh
     } else if u.contains("wh") {
@@ -657,6 +625,61 @@ fn emission_kg_per_unit(resource: &str, unit: &str) -> f64 {
     } else {
         0.0
     }
+}
+
+/// Representative unit price (DKK) for a resource, given the rollup's stored unit.
+fn tariff_dkk_per_unit(resource: &str, unit: &str) -> f64 {
+    let (per_kwh, per_m3) = match resource {
+        "electricity" => (2.50, 0.0),
+        "district_heating" | "heat" => (0.90, 0.0),
+        "district_cooling" => (0.50, 0.0),
+        "gas" => (0.0, 8.0),
+        "water" => (0.0, 50.0),
+        _ => (0.0, 0.0),
+    };
+    per_unit(per_kwh, per_m3, unit)
+}
+
+/// Representative CO₂e emission factor (kg CO₂e) for a resource (Danish 2026
+/// figures — swap when real factors land; mirrors the tariff config).
+fn emission_kg_per_unit(resource: &str, unit: &str) -> f64 {
+    let (per_kwh, per_m3) = match resource {
+        "electricity" => (0.12, 0.0),          // DK grid mix
+        "district_heating" | "heat" => (0.06, 0.0),
+        "district_cooling" => (0.04, 0.0),
+        "gas" => (0.0, 2.05),                   // natural gas, per m³
+        "water" => (0.0, 0.34),                 // supply + treatment, per m³
+        _ => (0.0, 0.0),
+    };
+    per_unit(per_kwh, per_m3, unit)
+}
+
+/// Extract the `(level_id, resolution, start, end)` window from the query string
+/// (resolution defaults to `daily`); 400 if `start` or `end` is missing. The
+/// shared preamble of the derived read-model handlers (cost / emissions /
+/// benchmark / alarms).
+fn window_params(
+    qs: &HashMap<String, String>,
+) -> Result<(String, String, String, String), ApiError> {
+    let level_id = qs.get("level_id").cloned().unwrap_or_default();
+    let resolution = qs.get("resolution").cloned().unwrap_or_else(|| "daily".to_string());
+    let start = qs.get("start").cloned().unwrap_or_default();
+    let end = qs.get("end").cloned().unwrap_or_default();
+    if start.is_empty() || end.is_empty() {
+        return Err(ApiError::bad_request("start and end are required (ISO-8601)"));
+    }
+    Ok((level_id, resolution, start, end))
+}
+
+/// Scale each node row's value by a per-(resource, unit) factor and re-label the
+/// unit — the shared core of get_cost (tariff) and get_emissions (emission factor).
+fn scale_rows(rows: Vec<Row>, unit: &str, factor: impl Fn(&str, &str) -> f64) -> Vec<Row> {
+    rows.into_iter()
+        .map(|r| {
+            let value = round2(r.value * factor(&r.purpose, &r.unit));
+            Row { unit: unit.to_string(), value, ..r }
+        })
+        .collect()
 }
 
 /// `GET /meterdata/query/get_cost` — consumption × per-resource tariff, one row
@@ -684,23 +707,9 @@ async fn handle_cost(
     qs: &HashMap<String, String>,
 ) -> Result<ApiResponse, ApiError> {
     let format = Format::resolve(qs.get("format").map(String::as_str), Format::Json);
-    let level_id = qs.get("level_id").cloned().unwrap_or_default();
-    let resolution = qs.get("resolution").cloned().unwrap_or_else(|| "daily".to_string());
-    let start = qs.get("start").cloned().unwrap_or_default();
-    let end = qs.get("end").cloned().unwrap_or_default();
-    if start.is_empty() || end.is_empty() {
-        return Err(ApiError::bad_request("start and end are required (ISO-8601)"));
-    }
-
+    let (level_id, resolution, start, end) = window_params(qs)?;
     let rows = fetch_node_rows(client, table, &level_id, &resolution, &start, &end).await?;
-    let cost_rows: Vec<Row> = rows
-        .into_iter()
-        .map(|r| {
-            let cost = round2(r.value * tariff_dkk_per_unit(&r.purpose, &r.unit));
-            Row { unit: "DKK".to_string(), value: cost, ..r }
-        })
-        .collect();
-    Ok(rows_response(&cost_rows, format))
+    Ok(rows_response(&scale_rows(rows, "DKK", tariff_dkk_per_unit), format))
 }
 
 /// `GET /meterdata/query/get_emissions` — consumption × per-resource emission
@@ -728,22 +737,9 @@ async fn handle_emissions(
     qs: &HashMap<String, String>,
 ) -> Result<ApiResponse, ApiError> {
     let format = Format::resolve(qs.get("format").map(String::as_str), Format::Json);
-    let level_id = qs.get("level_id").cloned().unwrap_or_default();
-    let resolution = qs.get("resolution").cloned().unwrap_or_else(|| "daily".to_string());
-    let start = qs.get("start").cloned().unwrap_or_default();
-    let end = qs.get("end").cloned().unwrap_or_default();
-    if start.is_empty() || end.is_empty() {
-        return Err(ApiError::bad_request("start and end are required (ISO-8601)"));
-    }
+    let (level_id, resolution, start, end) = window_params(qs)?;
     let rows = fetch_node_rows(client, table, &level_id, &resolution, &start, &end).await?;
-    let co2e_rows: Vec<Row> = rows
-        .into_iter()
-        .map(|r| {
-            let kg = round2(r.value * emission_kg_per_unit(&r.purpose, &r.unit));
-            Row { unit: "kg CO₂e".to_string(), value: kg, ..r }
-        })
-        .collect();
-    Ok(rows_response(&co2e_rows, format))
+    Ok(rows_response(&scale_rows(rows, "kg CO₂e", emission_kg_per_unit), format))
 }
 
 /// One building's cost + CO₂e over the window, with its deviation from the
@@ -793,7 +789,7 @@ fn building_of_leaf(node_path: &str) -> Option<String> {
 /// node_path / resource / gran / bucket. A benchmark is company-wide by nature,
 /// so this single-partition read is the natural unit. The gran/bucket live inside
 /// the sort key (so they can't be filtered server-side — `sk` is a key attribute),
-/// but a ProjectionExpression to the 4 fields actually used shrinks each item,
+/// but a ProjectionExpression to the 3 fields actually used (sk/sum/unit) shrinks each item,
 /// so pages hold more rows → fewer round trips and far less deserialisation than
 /// fetching every attribute. `building_stats` does the gran/window filtering.
 async fn query_company(client: &Client, table: &str, pk: &str) -> Result<Vec<AggItem>> {
@@ -801,9 +797,8 @@ async fn query_company(client: &Client, table: &str, pk: &str) -> Result<Vec<Agg
         .query()
         .table_name(table)
         .key_condition_expression("pk = :pk")
-        .projection_expression("sk, #s, #c, #u")
+        .projection_expression("sk, #s, #u")
         .expression_attribute_names("#s", "sum")
-        .expression_attribute_names("#c", "count")
         .expression_attribute_names("#u", "unit")
         .expression_attribute_values(":pk", AttributeValue::S(pk.to_string()))
         .into_paginator()
@@ -827,25 +822,29 @@ fn building_stats(
 ) -> std::collections::BTreeMap<String, (f64, f64)> {
     use std::collections::{BTreeMap, BTreeSet};
     let in_window = |g: &str, b: &str| g == gran.code() && b >= start_bucket && b <= end_bucket;
+    // Single pass (one parse_sk per item): leaf rows reveal which node_paths are
+    // buildings; every non-leaf node's own rows accumulate provisional totals. We
+    // then keep only the building-level entries (property/company rows fall out).
     let mut building_paths: BTreeSet<String> = BTreeSet::new();
+    let mut by_path: BTreeMap<String, (f64, f64)> = BTreeMap::new();
     for it in items {
-        let (np, _res, g, b) = parse_sk(&it.sk);
-        if in_window(g, b) {
-            if let Some(bldg) = building_of_leaf(np) {
+        let (np, res, g, b) = parse_sk(&it.sk);
+        if !in_window(g, b) {
+            continue;
+        }
+        match building_of_leaf(np) {
+            Some(bldg) => {
                 building_paths.insert(bldg);
+            }
+            None => {
+                let e = by_path.entry(np.to_string()).or_insert((0.0, 0.0));
+                e.0 += it.sum * tariff_dkk_per_unit(res, &it.unit);
+                e.1 += it.sum * emission_kg_per_unit(res, &it.unit);
             }
         }
     }
-    let mut stats: BTreeMap<String, (f64, f64)> = BTreeMap::new();
-    for it in items {
-        let (np, res, g, b) = parse_sk(&it.sk);
-        if in_window(g, b) && building_paths.contains(np) {
-            let e = stats.entry(np.to_string()).or_insert((0.0, 0.0));
-            e.0 += it.sum * tariff_dkk_per_unit(res, &it.unit);
-            e.1 += it.sum * emission_kg_per_unit(res, &it.unit);
-        }
-    }
-    stats
+    by_path.retain(|np, _| building_paths.contains(np));
+    by_path
 }
 
 /// `GET /meterdata/query/get_benchmark` — peer benchmark of the buildings under
@@ -870,13 +869,7 @@ async fn handle_benchmark(
     table: &str,
     qs: &HashMap<String, String>,
 ) -> Result<ApiResponse, ApiError> {
-    let level_id = qs.get("level_id").cloned().unwrap_or_default();
-    let resolution = qs.get("resolution").cloned().unwrap_or_else(|| "daily".to_string());
-    let start = qs.get("start").cloned().unwrap_or_default();
-    let end = qs.get("end").cloned().unwrap_or_default();
-    if start.is_empty() || end.is_empty() {
-        return Err(ApiError::bad_request("start and end are required (ISO-8601)"));
-    }
+    let (level_id, resolution, start, end) = window_params(qs)?;
     let gran = Gran::from_resolution(&resolution);
     let empty = || Benchmark {
         level_id: level_id.clone(),
@@ -1039,13 +1032,7 @@ async fn handle_alarms(
     table: &str,
     qs: &HashMap<String, String>,
 ) -> Result<ApiResponse, ApiError> {
-    let level_id = qs.get("level_id").cloned().unwrap_or_default();
-    let resolution = qs.get("resolution").cloned().unwrap_or_else(|| "daily".to_string());
-    let start = qs.get("start").cloned().unwrap_or_default();
-    let end = qs.get("end").cloned().unwrap_or_default();
-    if start.is_empty() || end.is_empty() {
-        return Err(ApiError::bad_request("start and end are required (ISO-8601)"));
-    }
+    let (level_id, resolution, start, end) = window_params(qs)?;
     let spike_factor = qs
         .get("spike_factor")
         .and_then(|s| s.parse::<f64>().ok())

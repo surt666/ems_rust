@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { aggBase, resolveLevelId } from "../lib/agg";
 
 // "Bygningsbenchmark" — peer benchmark of the buildings under the selected node's
 // company vs the company-average building (cost + CO₂e), fed by the aggregations
@@ -21,15 +22,6 @@ interface Bench {
 }
 
 interface Props { levelId?: string; days?: number }
-
-function resolveLevelId(): string {
-  const id = sessionStorage.getItem("selectedNodeId") || "";
-  const path = sessionStorage.getItem("selectedNodePath") || "";
-  const company = sessionStorage.getItem("selectedCompanyId") || "";
-  let level = path ? `${path}#${id}` : id;
-  if (company && level && !level.includes(company)) level = `${company}#${level}`;
-  return level;
-}
 
 const da = (n: number, frac = 0) => new Intl.NumberFormat("da-DK", { maximumFractionDigits: frac }).format(n);
 
@@ -59,7 +51,7 @@ export default function BenchmarkCard({ levelId, days = 30 }: Props) {
     const run = async () => {
       const lvl = levelId || resolveLevelId();
       if (!lvl) { setState("error"); setMsg("Ingen node valgt."); return; }
-      const base = import.meta.env.PUBLIC_AGG_API_BASE_URL || "";
+      const base = aggBase();
       const end = new Date();
       const start = new Date(end.getTime() - days * 86400000);
       const params = new URLSearchParams({ level_id: lvl, resolution: "daily", start: start.toISOString(), end: end.toISOString() });

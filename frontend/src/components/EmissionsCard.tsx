@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import EChartsChart from "./EChartsChart";
+import { RESOURCE_LABELS, aggBase, resolveLevelId } from "../lib/agg";
 
 // "CO₂e" — real emissions, fed by the aggregations `get_emissions` action
 // (consumption × per-resource emission factor, server-side, in kg). Shown in
@@ -8,20 +9,6 @@ import EChartsChart from "./EChartsChart";
 
 interface Row { purpose: string; unit: string; timestamp: string; value: number }
 interface Props { levelId?: string; resolution?: string; days?: number; height?: number }
-
-const RESOURCE_LABELS: Record<string, string> = {
-  electricity: "El", district_heating: "Fjernvarme", district_cooling: "Fjernkøling",
-  gas: "Gas", water: "Vand", heat: "Varme",
-};
-
-function resolveLevelId(): string {
-  const id = sessionStorage.getItem("selectedNodeId") || "";
-  const path = sessionStorage.getItem("selectedNodePath") || "";
-  const company = sessionStorage.getItem("selectedCompanyId") || "";
-  let level = path ? `${path}#${id}` : id;
-  if (company && level && !level.includes(company)) level = `${company}#${level}`;
-  return level;
-}
 
 const ton = (kg: number) => new Intl.NumberFormat("da-DK", { maximumFractionDigits: 2 }).format(kg / 1000);
 
@@ -38,7 +25,7 @@ export default function EmissionsCard({ levelId, resolution = "daily", days = 30
     const run = async () => {
       const lvl = levelId || resolveLevelId();
       if (!lvl) { setState("error"); setMsg("Ingen node valgt."); return; }
-      const base = import.meta.env.PUBLIC_AGG_API_BASE_URL || "";
+      const base = aggBase();
       const end = new Date();
       const start = new Date(end.getTime() - days * 86400000);
       const params = new URLSearchParams({ level_id: lvl, resolution, start: start.toISOString(), end: end.toISOString() });

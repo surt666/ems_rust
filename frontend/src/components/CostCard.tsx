@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import EChartsChart from "./EChartsChart";
+import { aggBase, resolveLevelId } from "../lib/agg";
 
 // "Samlet omkostning" — real cost, fed by the aggregations `get_cost` action
 // (consumption × per-resource tariff, server-side). Sums all resources per
@@ -13,15 +14,6 @@ interface Props {
   resolution?: string;
   days?: number;
   height?: number;
-}
-
-function resolveLevelId(): string {
-  const id = sessionStorage.getItem("selectedNodeId") || "";
-  const path = sessionStorage.getItem("selectedNodePath") || "";
-  const company = sessionStorage.getItem("selectedCompanyId") || "";
-  let level = path ? `${path}#${id}` : id;
-  if (company && level && !level.includes(company)) level = `${company}#${level}`;
-  return level;
 }
 
 const dkk = (n: number) =>
@@ -40,7 +32,7 @@ export default function CostCard({ levelId, resolution = "daily", days = 30, hei
     const run = async () => {
       const lvl = levelId || resolveLevelId();
       if (!lvl) { setState("error"); setMsg("Ingen node valgt."); return; }
-      const base = import.meta.env.PUBLIC_AGG_API_BASE_URL || "";
+      const base = aggBase();
       const end = new Date();
       const start = new Date(end.getTime() - days * 86400000);
       const prevStart = new Date(start.getTime() - days * 86400000); // preceding equal window

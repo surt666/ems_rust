@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import EChartsChart, { type EChartsSeries } from "./EChartsChart";
+import { RESOURCE_LABELS, resolveLevelId, aggBase } from "../lib/agg";
 
 // Live per-resource consumption chart (Apache ECharts), fed by the aggregations
 // API. This is the dashboard's ECharts replacement for the rimain Nivo chart:
@@ -24,27 +25,6 @@ interface Props {
   height?: number;
 }
 
-// Danish resource labels (values match the aggregations lambda's Resource::as_str).
-const RESOURCE_LABELS: Record<string, string> = {
-  electricity: "El",
-  district_heating: "Fjernvarme",
-  district_cooling: "Fjernkøling",
-  gas: "Gas",
-  water: "Vand",
-  heat: "Varme",
-};
-
-// Same node-path contract as AggregationChartWrapper: the rollup is keyed by the
-// full hierarchy path, partitioned by company (HN2), so ensure the company prefix
-// is present even when the tree only stored a partial parent path.
-function resolveLevelId(): string {
-  const id = sessionStorage.getItem("selectedNodeId") || "";
-  const path = sessionStorage.getItem("selectedNodePath") || "";
-  const company = sessionStorage.getItem("selectedCompanyId") || "";
-  let level = path ? `${path}#${id}` : id;
-  if (company && level && !level.includes(company)) level = `${company}#${level}`;
-  return level;
-}
 
 export default function ResourceChart({ levelId, resolution = "daily", days = 30, height = 320 }: Props) {
   const [categories, setCategories] = useState<string[]>([]);
@@ -70,7 +50,7 @@ export default function ResourceChart({ levelId, resolution = "daily", days = 30
         start: start.toISOString(),
         end: end.toISOString(),
       });
-      const base = import.meta.env.PUBLIC_AGG_API_BASE_URL || "";
+      const base = aggBase();
       try {
         setState("loading");
         const res = await fetch(`${base}/meterdata/query/get_aggregations?${params.toString()}`);

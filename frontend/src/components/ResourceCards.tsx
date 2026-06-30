@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import EChartsChart from "./EChartsChart";
+import { RESOURCE_LABELS, aggBase, resolveLevelId } from "../lib/agg";
 
 // Per-resource consumption cards (Varme / Vand / El …), fed by the live
 // aggregations API — the real replacement for the mock `energyCards` block in
@@ -24,14 +25,6 @@ interface Props {
   days?: number;
 }
 
-const RESOURCE_LABELS: Record<string, string> = {
-  electricity: "El",
-  district_heating: "Fjernvarme",
-  district_cooling: "Fjernkøling",
-  gas: "Gas",
-  water: "Vand",
-  heat: "Varme",
-};
 // Maps to the existing `badge energy-*` classes in the theme CSS.
 const RESOURCE_BADGE: Record<string, string> = {
   electricity: "el",
@@ -49,18 +42,6 @@ const RESOURCE_COLOR: Record<string, string> = {
   water: "#38bdf8",
   heat: "#f97316",
 };
-
-// Same node-path contract as ResourceChart: the rollup is keyed by the full
-// hierarchy path, partitioned by company (HN2); ensure the company prefix is
-// present even when the tree only stored a partial parent path.
-function resolveLevelId(): string {
-  const id = sessionStorage.getItem("selectedNodeId") || "";
-  const path = sessionStorage.getItem("selectedNodePath") || "";
-  const company = sessionStorage.getItem("selectedCompanyId") || "";
-  let level = path ? `${path}#${id}` : id;
-  if (company && level && !level.includes(company)) level = `${company}#${level}`;
-  return level;
-}
 
 const da = (n: number, frac: number) =>
   new Intl.NumberFormat("da-DK", { maximumFractionDigits: frac }).format(n);
@@ -106,7 +87,7 @@ export default function ResourceCards({ levelId, resolution = "daily", days = 30
         start: start.toISOString(),
         end: end.toISOString(),
       });
-      const base = import.meta.env.PUBLIC_AGG_API_BASE_URL || "";
+      const base = aggBase();
       try {
         setState("loading");
         const res = await fetch(`${base}/meterdata/query/get_aggregations?${params.toString()}`);

@@ -968,19 +968,22 @@ pub async fn run(cmd: Command) -> Value {
         }
 
         Command::ReplaceSensorDevice { sensor_id, daq_id } => {
-            // Prefetch (async) what the synchronous closures below can't read: the
-            // current active sensor (so replace_device can locate it) and the new
-            // daq's current owner (the one-active-logical-per-daq guard). Transient
-            // lookup errors degrade to None — the transaction surfaces real faults.
-            let current = match SensorId::parse(&sensor_id) {
-                Ok(sid) => ddb_sensor::get_active_sensor(ddb, &table, &sid)
-                    .await
-                    .unwrap_or(None),
-                Err(_) => None,
+            // Prefetch (async, concurrently) what the synchronous closures below
+            // can't read: the current active sensor (so replace_device can locate
+            // it) and the new daq's current owner (the one-active-logical guard).
+            // The two reads are independent. Transient lookup errors degrade to
+            // None — the transaction surfaces real faults.
+            let current_fut = async {
+                match SensorId::parse(&sensor_id) {
+                    Ok(sid) => ddb_sensor::get_active_sensor(ddb, &table, &sid)
+                        .await
+                        .unwrap_or(None),
+                    Err(_) => None,
+                }
             };
-            let new_daq_owner = ddb_sensor::find_active_by_daq(ddb, &table, &daq_id)
-                .await
-                .unwrap_or(None);
+            let (current, new_daq_owner) =
+                tokio::join!(current_fut, ddb_sensor::find_active_by_daq(ddb, &table, &daq_id));
+            let new_daq_owner = new_daq_owner.unwrap_or(None);
             handle_replace_sensor_device(
                 sensor_id,
                 daq_id,
