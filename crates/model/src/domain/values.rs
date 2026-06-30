@@ -39,7 +39,7 @@ impl EdgeKind {
 
     /// Reverse-direction verb used on `gsi1sk` for user-edge lookups.
     /// `HasLabel` and `HasSensor` return `None`; others carry a verb.
-    pub fn gsi_verb(&self) -> Option<&str> {
+    pub const fn gsi_verb(&self) -> Option<&str> {
         match self {
             EdgeKind::Blocked => Some("blocks"),
             EdgeKind::Administrates => Some("administrators"),
@@ -68,7 +68,7 @@ impl EdgeKind {
     ///
     /// Only `Administrates`, `Reads`, and `Writes` confer a capability;
     /// `Blocked`, `HasLabel`, and `HasSensor` return `None`.
-    pub fn capability(&self) -> Option<CognitoGroup> {
+    pub const fn capability(&self) -> Option<CognitoGroup> {
         match self {
             EdgeKind::Administrates => Some(CognitoGroup::Admin),
             EdgeKind::Writes => Some(CognitoGroup::Writer),
@@ -102,7 +102,7 @@ impl CognitoGroup {
     /// node for a user belonging to this group.
     ///
     /// `Admin → Administrates`, `Writer → Writes`, `Reader → Reads`.
-    pub fn access_edge(&self) -> EdgeKind {
+    pub const fn access_edge(&self) -> EdgeKind {
         match self {
             CognitoGroup::Admin => EdgeKind::Administrates,
             CognitoGroup::Writer => EdgeKind::Writes,
@@ -112,7 +112,7 @@ impl CognitoGroup {
 
     /// Reverse of `EdgeKind::capability`: given an access edge kind return the
     /// corresponding group, or `None` for non-access edge kinds.
-    pub fn from_edge_kind(k: &EdgeKind) -> Option<CognitoGroup> {
+    pub const fn from_edge_kind(k: &EdgeKind) -> Option<CognitoGroup> {
         k.capability()
     }
 }
@@ -147,7 +147,7 @@ impl Profile {
     }
 
     /// Map a profile to its Cognito group.
-    pub fn to_cognito_group(&self) -> CognitoGroup {
+    pub const fn to_cognito_group(&self) -> CognitoGroup {
         match self {
             Profile::Sysadm => CognitoGroup::Admin,
             Profile::Developer | Profile::Standard => CognitoGroup::Writer,
@@ -286,7 +286,7 @@ impl Resource {
 
     /// The accumulation dimension — energy carriers (electricity, heat, district
     /// heating/cooling) sum in kWh; volume carriers (gas, water) in m³.
-    pub fn dimension(self) -> Dimension {
+    pub const fn dimension(self) -> Dimension {
         match self {
             Resource::Electricity
             | Resource::DistrictHeating

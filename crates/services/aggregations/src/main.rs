@@ -61,7 +61,7 @@ impl Gran {
     }
 
     /// The single character stored in the sort key (`h`/`d`).
-    fn code(self) -> &'static str {
+    const fn code(self) -> &'static str {
         match self {
             Gran::Hour => "h",
             Gran::Day => "d",

@@ -6,7 +6,7 @@ use model::domain::values::{CognitoGroup, Resource};
 
 /// Danish UI label for a resource (the EMS "Målertype" wording). The domain
 /// `Resource` owns the wire token (`Display`); the view owns the label.
-fn resource_label_da(r: Resource) -> &'static str {
+const fn resource_label_da(r: Resource) -> &'static str {
     match r {
         Resource::Electricity => "El",
         Resource::DistrictHeating => "Fjernvarme",

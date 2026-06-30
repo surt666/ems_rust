@@ -63,12 +63,12 @@ impl ApiResponse {
     }
 
     /// A response whose JSON body string is already built (e.g. a dispatch envelope).
-    pub fn json_raw(status: u16, body: String) -> Self {
+    pub const fn json_raw(status: u16, body: String) -> Self {
         Self { status, body: ApiBody::Json(body) }
     }
 
     /// `status` with an HTML-fragment body.
-    pub fn html(status: u16, body: String) -> Self {
+    pub const fn html(status: u16, body: String) -> Self {
         Self { status, body: ApiBody::Html(body) }
     }
 }

@@ -47,7 +47,7 @@ struct Counter {
 }
 
 impl Counter {
-    fn new() -> Self {
+    const fn new() -> Self {
         // Starting value: `n = 10_000`.
         Counter { n: 10_000, live: 0 }
     }
@@ -383,7 +383,7 @@ impl Store {
 
     /// Always returns `None` — no reading data in the in-memory store.
     #[allow(unused_variables)]
-    pub fn get_sensor_reading(&self, id: &SensorId) -> Option<()> {
+    pub const fn get_sensor_reading(&self, id: &SensorId) -> Option<()> {
         None
     }
 

@@ -40,7 +40,7 @@ pub fn pct(s: &str) -> String {
 }
 
 /// Return `(icon_href, bar_class)` for a given level.
-pub fn level_visual(level: model::domain::ids::Level) -> (&'static str, &'static str) {
+pub const fn level_visual(level: model::domain::ids::Level) -> (&'static str, &'static str) {
     use model::domain::ids::Level;
     match level {
         Level::Hn0 => ("", ""),

@@ -11,12 +11,12 @@ pub struct SensorId(pub u32);
 
 impl SensorId {
     /// Construct a `SensorId` from a raw integer.
-    pub fn make(n: u32) -> SensorId {
+    pub const fn make(n: u32) -> SensorId {
         SensorId(n)
     }
 
     /// Return the raw integer.
-    pub fn id(&self) -> u32 {
+    pub const fn id(&self) -> u32 {
         self.0
     }
 
@@ -73,12 +73,12 @@ pub enum Level {
 
 impl Level {
     /// Numeric depth: Hn0 → 0, …, Hn9 → 9 (the `#[repr(u8)]` discriminant).
-    pub fn depth(&self) -> u8 {
+    pub const fn depth(&self) -> u8 {
         *self as u8
     }
 
     /// Construct from a depth value; returns `None` for depth > 9.
-    pub fn of_depth(d: u8) -> Option<Level> {
+    pub const fn of_depth(d: u8) -> Option<Level> {
         match d {
             0 => Some(Level::Hn0),
             1 => Some(Level::Hn1),
@@ -109,21 +109,21 @@ pub enum NodeId {
 
 impl NodeId {
     /// Construct a non-root node.
-    pub fn make(level: Level, id: u32) -> NodeId {
+    pub const fn make(level: Level, id: u32) -> NodeId {
         NodeId::Node { level, id }
     }
 
     /// The singleton root node.
-    pub fn root() -> NodeId {
+    pub const fn root() -> NodeId {
         NodeId::Root
     }
 
-    pub fn is_root(&self) -> bool {
+    pub const fn is_root(&self) -> bool {
         matches!(self, NodeId::Root)
     }
 
     /// Level of this node; Root returns `Level::Hn0`.
-    pub fn level(&self) -> Level {
+    pub const fn level(&self) -> Level {
         match self {
             NodeId::Root => Level::Hn0,
             NodeId::Node { level, .. } => *level,

@@ -40,7 +40,7 @@ fn n(v: impl Into<String>) -> AttributeValue {
     AttributeValue::N(v.into())
 }
 
-fn b(v: bool) -> AttributeValue {
+const fn b(v: bool) -> AttributeValue {
     AttributeValue::Bool(v)
 }
 

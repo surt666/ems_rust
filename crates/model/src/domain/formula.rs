@@ -267,15 +267,15 @@ impl State {
     }
 }
 
-fn is_digit(c: char) -> bool {
+const fn is_digit(c: char) -> bool {
     c.is_ascii_digit()
 }
 
-fn is_ident_start(c: char) -> bool {
+const fn is_ident_start(c: char) -> bool {
     c.is_ascii_alphabetic() || c == '_'
 }
 
-fn is_ident_char(c: char) -> bool {
+const fn is_ident_char(c: char) -> bool {
     is_ident_start(c) || is_digit(c)
 }
 

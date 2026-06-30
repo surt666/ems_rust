@@ -27,7 +27,7 @@ fn validation_err(msg: impl Into<String>) -> RepositoryError {
 }
 
 /// Construct a synthetic `NotFound` for a sensor.
-fn sensor_not_found(id: SensorId) -> RepositoryError {
+const fn sensor_not_found(id: SensorId) -> RepositoryError {
     RepositoryError::NotFound(NodeId::make(crate::domain::ids::Level::Hn9, id.id()))
 }
 

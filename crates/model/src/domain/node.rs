@@ -95,7 +95,7 @@ pub fn make_root() -> Node {
 
 impl Node {
     /// Return the hierarchy level of this node's id.
-    pub fn level(&self) -> Level {
+    pub const fn level(&self) -> Level {
         self.id.level()
     }
 }
