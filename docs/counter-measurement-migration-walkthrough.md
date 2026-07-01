@@ -26,7 +26,7 @@ The guiding principle: **do the heavy work once, in the pipeline, and denormalis
 
 ## 3. What already exists (we're not starting from zero)
 
-- A **Spark/Glue rollup** turns `logical_meter_data` into a DynamoDB materialised view (`measurements_aggregate`) — **hour + day buckets, pre-aggregated at every hierarchy level** (company → building → meter). Group-by is already done (§3).
+- A **Spark/Glue rollup** turns `logical_meter_data` into a DynamoDB materialised view (`measurements_aggregate`) — **hour + day periods, pre-aggregated at every hierarchy level** (company → building → meter). Group-by is already done (§3).
 - A **Rust CQRS read API** (`aggregations`) serves it, plus raw-data reads via Athena for the "datatilegnelse" view.
 - A **hierarchy service** + **`meter-identity`** table own identity/hierarchy; a **cross-account CDC bridge** already keeps them fed.
 
@@ -53,10 +53,10 @@ The new pipeline ingests through a **Kinesis** stream. Everything still arriving
 
 ## 5. Measurements *out*: the compute model, in three lanes
 
-The old `values` endpoint runs ~35 compute handlers per request. We split them by *where the work belongs* (§5):
+The old `values` endpoint runs ~35 compute **handlers** per request — a *handler* is the unit of computation for one derived metric (energy, cost, CO2, degree-days, …), and they compose (cost = energy × price). We split them by *where the work belongs* (§5):
 
 - **Lane A — Spark rollup:** deterministic aggregates of the readings (energy, flow, temperatures, cooling). Materialised columns.
-- **Lane B — Flink stream:** things that need sub-bucket resolution (active-hours, standby). Pre-aggregated to daily columns in the stream.
+- **Lane B — Flink stream:** things that need finer-than-period (sub-hour) resolution (active-hours, standby). Pre-aggregated to daily columns in the stream.
 - **Lane C — denormalised reference data:** cost, CO2, degree-days/climate-correction. We **own** weather (Weatherbit HDD/CDD), CO2e factors, and prices as *tiny* reference tables, **broadcast-join them once in Spark**, and write the results as **columns** on the aggregate row.
 
 The rule that makes reads fast: **never join at read time** (S3/Athena joins are seconds-slow). Join once in the pipeline; the read is a single DynamoDB key. Weather that finalises late is handled by the rollup's existing look-back window (≥5 days) — **no bespoke machinery**.

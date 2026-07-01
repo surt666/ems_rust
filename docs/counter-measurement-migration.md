@@ -42,7 +42,7 @@
 **Spark/Glue rollup** — `infra/daq/data_pipeline/glue/measurements_aggregate.py` (`MeasurementsAggregateStack`, daq acct `891377204778`, hourly, `LookbackDays` default 1). Spec: `.../specs/2026-06-07-measurements-rollup-view-design.md`.
 - **Source:** `all.logical_meter_data` (event-sourced; `resample_value` where `resample_method='time_proportional'`, dedup newest `ingested_time`).
 - **Sink:** DynamoDB `measurements_aggregate` (TTL 90d hourly / 730d daily; GSI by dimension energy|volume|other).
-- **hour + day only**; per `(node, purpose, gran, bucket)`: `sum, count, min, max, last_value, last_ts`.
+- **hour + day only**; per `(node, resource, granularity, period)`: `sum, count, min, max, last_value, last_ts`.
 - **Hierarchy pre-aggregated** at every ancestor level (company `HN2#` → leaf `L#`) → group-by is materialized.
 
 **Read API** — `measurements-aggregations-api` (`crates/services/aggregations`), HTTP API `GET /meterdata/query/{action}`: `get_aggregations` (DynamoDB) · `get_measurements` (`raw_data` via Athena) · `/openapi.json` · `/docs`; `?format=html|json`.
@@ -56,7 +56,7 @@
 | 3 | latest-reading | ✅ `last_value`/`last_ts` | frontend-facing |
 | 4/5 | filter/details-query | ✅ hour/day `sum` | off-grid resolutions (§6) |
 | 6/7 | filter/details-groupby | ✅ strong (hierarchy pre-agg) | off-grid resolutions |
-| 8 | aggregate | ✅ sum/min/max; avg=`sum/count` | arbitrary interval edges compose from buckets |
+| 8 | aggregate | ✅ sum/min/max; avg=`sum/count` | arbitrary interval edges compose from stored hour/day periods |
 | 9 | values | 🟡 base `sum` only | **compute layer** — §5 |
 | 11/12 | legacy | ✅ hour/day equiv | finer zoom |
 
@@ -68,24 +68,26 @@
 
 **Rule: do every join once in the pipeline (broadcast-join tiny reference tables) and write results as columns on `measurements_aggregate`; the read stays a single keyed DDB query.** Read-time joins from S3/Iceberg (Athena) are seconds-slow, so nothing joins at read time. Denormalize as **columns, not rows** (row count unchanged); keep the 2–3 CO2 scopes as columns (`co2_scope_*`), cost in one base currency (convert at read) — cardinality stays flat.
 
+> **Handler** = `analysis_service`'s unit of computation for one derived metric — a "value key" such as `energy`, `cost`, `co2`, `degree-days`, `active-hours`. A handler produces that metric's value series over the requested period through a 3-phase pipeline (declare prep/reference data → fetch counter data → compute), and handlers **compose** (e.g. the `cost` handler nests `energy` and multiplies by price). The `values` endpoint runs ~35 of them. The migration question is *where each handler's work belongs* — materialised in the pipeline vs computed in the read service. The three lanes:
+
 | Lane | Handlers | Placement |
 |---|---|---|
-| **A · Spark rollup** | energy, flow, temp-in/out-avg, VWAT-numerator, computed-cooling, cooling-efficiency, hours, reading-count | Deterministic bucket aggregates. Extra columns beyond sum/count/min/max: temp Σ+count, Σ(flow·temp)+Σflow, flow·Δtemp |
-| **B · Flink stream** | active-hours, standby (+fraction/ratio/per-hour), op-hours mask | Need sub-bucket resolution → pre-aggregate in the stream into daily `active_hours`/`standby_energy` columns |
+| **A · Spark rollup** | energy, flow, temp-in/out-avg, VWAT-numerator, computed-cooling, cooling-efficiency, hours, reading-count | Deterministic per-period aggregates. Extra columns beyond sum/count/min/max: temp Σ+count, Σ(flow·temp)+Σflow, flow·Δtemp |
+| **B · Flink stream** | active-hours, standby (+fraction/ratio/per-hour), op-hours mask | Need finer-than-period (sub-hour) resolution → pre-aggregate in the stream into daily `active_hours`/`standby_energy` columns |
 | **C · Denormalized columns** (broadcast join) | cost (`energy×price`), CO2 (`energy×factor`), degree-days / climate-correct (weather), key-ratio, energy-budget | Reference tables are tiny (weather O(location×day), factors O(scope×validFrom)) → broadcast-join once, write columns |
 
 Handlers suffixed `*-old` (`degree-days-old`, `energy-dda-old`, `normal-degree-days-old`, `co2-old`) + `energy-guf` are the legacy degree-day approach, superseded by model-based `climate-correct` — likely droppable (verify).
 
 ### 5.2 `measurements_aggregate` item shape (with §5.1 additions)
 
-Keys unchanged: `pk="HN2#<hn2>"`, `sk="<path>#<purpose>#<gran>#<bucket>"`, `gsi1pk="HN2#<hn2>#<dimension>"`, `gsi1sk="<path>#<gran>#<bucket>"`. Additions land as **extra columns on the energy row** (functions of that row's `sum` + reference data) or **new derived-`purpose` rows** (physically distinct series, different unit).
+Keys unchanged: `pk="HN2#<hn2>"`, `sk="<path>#<resource>#<gran>#<period>"`, `gsi1pk="HN2#<hn2>#<dimension>"`, `gsi1sk="<path>#<gran>#<period>"` — `gran` + `period` (the hour/day label) live **in the sort key**, not as stored attributes; the **resource** (electricity/water/heat) is stored in an attribute still misnamed `purpose`. Additions land as **extra columns on the energy row** (functions of that row's `sum` + reference data) or **new derived-resource rows** (physically distinct series, different unit).
 
 ```jsonc
 {
   "pk": "HN2#2",
   "sk": "HN2#2|HN3#9|HN4#456|L#10009#Electricity#d#2026-06-07",
   "gsi1pk": "HN2#2#energy", "gsi1sk": "HN2#2|HN3#9|HN4#456|L#10009#d#2026-06-07",
-  "purpose": "Electricity", "unit": "kWh",
+  "purpose": "Electricity", "unit": "kWh",   // "purpose" attribute holds the resource (misnamed)
   "sum": 123.4, "count": 24, "min": 0.1, "max": 9.7, "last_value": 90123.4, "last_ts": "2026-06-07T23:00:00Z",
   "cost": 246.8, "cost_ccy": "DKK",     // energy × price(period, tariff)
   "co2_s1": 12.3, "co2_s2": 9.8,        // energy × CO2 factor, per scope (columns)
@@ -95,9 +97,9 @@ Keys unchanged: `pk="HN2#<hn2>"`, `sk="<path>#<purpose>#<gran>#<bucket>"`, `gsi1
   "updated_at": "2026-06-08T01:00:00Z", "ttl": 1783000000
 }
 ```
-Derived-`purpose` rows (same schema) for flow+temperature meters: `Cooling, FlowVolume, TempInAvg, TempOutAvg, VWAT`; avg = `sum/count`.
+Derived-resource rows (same schema) for flow+temperature meters: `Cooling, FlowVolume, TempInAvg, TempOutAvg, VWAT`; avg = `sum/count`.
 
-Open schema decisions: (1) `hdd`/`cdd` repeat per purpose row at a node — accept duplication (single-read) vs a `DegreeDays` row (adds a lookup); leaning accept. (2) item-size × row-count acceptable — gated on the §10.1 sizing.
+Open schema decisions: (1) `hdd`/`cdd` repeat per resource row at a node — accept duplication (single-read) vs a `DegreeDays` row (adds a lookup); leaning accept. (2) item-size × row-count acceptable — gated on the §10.1 sizing.
 
 ### 5.3 Weather / CO2e / prices — realization
 
@@ -113,13 +115,13 @@ Everything that can be data is data (pipeline → `logical_sensor_data` + `measu
 | Query orchestration / response shaping / validation | The CQRS surface |
 | Request-param selection & scalar scaling | scope pick (`co2_scope_*`), currency, unit/display, budget scenario, tunable base-temp — select/scale over columns |
 | Ratio / division metrics | VWAT, efficiency, key-ratio, per-hour — divide of two rolled-up sums (numerators pre-baked) |
-| Resolution re-agg + interval edges | week/month/year from daily; non-bucket-aligned intervals |
+| Resolution re-agg + interval edges | week/month/year from daily; intervals not aligned to the hour/day grid |
 | Ad-hoc cross-node / cross-period comparison | benchmarking, this-vs-last |
 | Transition "meter" grouping | meter → its `logical_id`s, until derived sensors cover it |
 
 ### 5.5 Sensor & formula model; the meter hierarchy
 
-**No meter entity.** The model is typed hierarchy nodes + **sensors** (`S#<int>`, attached via `has_sensor`), each with `purpose`, `meter_type` (Counter|Gauge), `unit`, `resample_minutes`, and a **`formula`** (`Identity`/`Zero`/`Expr`; `Expr` refs other sensors' computed `S'`, `+ - * / abs`, company-scoped, cycle-checked). `logical_meter_data` is keyed per `logical_id` (a sensor) → rename **`logical_sensor_data`**. A "meter" during switchover = a named collection of `logical_id`s (old counters 1/2/3/10/11).
+**No meter entity.** The model is typed hierarchy nodes + **sensors** (`S#<int>`, attached via `has_sensor`), each with `purpose` (the **resource** — electricity/heat), `meter_type` (Counter|Gauge), `unit`, `resample_minutes`, and a **`formula`** (`Identity`/`Zero`/`Expr`; `Expr` refs other sensors' computed `S'`, `+ - * / abs`, company-scoped, cycle-checked). `logical_meter_data` is keyed per `logical_id` (a sensor) → rename **`logical_sensor_data`**. A "meter" during switchover = a named collection of `logical_id`s (old counters 1/2/3/10/11).
 
 **Formula status:** the system is implemented (AST + tested `eval`, parser, `attach`/`set_formula`, API, and `formula` is propagated into `meter-identity`) — but **not applied to the time-series**: the hierarchy `evaluate` reading-hook is a stub and the Flink/Glue pipeline has zero formula references. So no derived series exists yet. **Build gap:** a pipeline step running `eval()` per reading, resolving cross-sensor `Ref`s (time-aligned sibling values); formula change → late-recompute. (Evaluate in the pipeline, never at read time.)
 
@@ -222,7 +224,7 @@ Before committing schema/pipeline changes, verify two models against the current
 1. **Extract raw relationships** from me2db/meter DB: `meter → parent_meter` (main/sub forest), `isPartOfCalcMeterSum` (summation flag), `counter.formula` + `CounterType.Formula` (calc meters, `[meterId:counterIndex]` refs), meter→counters (1/2/3/10/11) → `logical_id` mapping, area → explicit meter-id lists.
 2. **Audit calc-meter grammar.** Parse all `counter.formula`; enumerate operators/functions; confirm they fit `+ - * / abs` + refs. Flag anything richer (min/max/conditional/time) for handling or grammar extension.
 3. **Audit summation modes.** Quantify context (building) vs area (explicit list) vs arbitrary; count cross-building main/sub (legit → cross-node part-of refs); confirm no cross-company refs.
-4. **Derive new-model artifacts.** `parent_meter` → one `part-of-main` ref per sub → generated netting formula `main = self − Σ(part-of-summation subs)`; calc meters → `Expr` (translate `[meterId:counter]` → sensor `Ref`s via counter-index→purpose); not-part-of-summation → `Zero`. Relationship is the source of truth; formula is generated.
+4. **Derive new-model artifacts.** `parent_meter` → one `part-of-main` ref per sub → generated netting formula `main = self − Σ(part-of-summation subs)`; calc meters → `Expr` (translate `[meterId:counter]` → sensor `Ref`s via counter-index→resource); not-part-of-summation → `Zero`. Relationship is the source of truth; formula is generated.
 5. **Diff harness (the actual verify).** Per sample company: recompute node/company totals from the derived formulas (Σ computed `S'` over the subtree) vs current `analysis_service` summation output per context; diff within tolerance; investigate mismatches (double-counting, missing subs, translation errors, context edge cases). Can run offline using the model's existing `eval` — **independent of the pipeline formula-wiring** (§5.5 gap).
 6. **Cutover gate.** Companies that pass → migrate mechanically; residual mismatches → interim dual-run keeping old semantics until resolved.
 
