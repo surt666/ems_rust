@@ -145,7 +145,11 @@ The analytics/frontend path does **not** read raw (it's all on logical). Consume
 
 ## 9. Consumer classification (analysis/meter → common service)
 
-**client** = repoint only · **subsumed** = fold into the common service · **out of scope** = different context.
+Disposition = what happens to the service in the target end-state:
+- **client** — the service **keeps existing as its own service**, but is **repointed to call the new common service(s)** (`aggregations` / `hierarchy`) instead of `analysis_service` / `meter_service`. Its own logic is unchanged; it's still a consumer, just of the new backend. (Here "client" means "a caller of the common service" — not the `@enity/*-client` HTTP libraries.)
+- **subsumed** — the service's functionality is **absorbed into the common service**, and the separate service is **retired**.
+- **eliminate / collapse** — a **thin intermediary** whose callers are **all** entry points (`yggdrasil` / `ems-backend`); once those call the common service directly, it **disappears** — no separate service, nothing to repoint. Higher-value than *client*: it shrinks the middle tier instead of preserving it. (If it has real domain logic, it's *subsumed*, not eliminated.)
+- **out of scope** — a **different bounded context**; not part of this consolidation (left as-is or handled elsewhere).
 
 | Consumer | Uses | Disposition |
 |---|---|---|
@@ -167,6 +171,38 @@ The analytics/frontend path does **not** read raw (it's all on logical). Consume
 | `ems-backend/Web` | analysis legacy endpoints | **out of scope** (legacy monolith) |
 
 **Feasibility confirmed:** every meter call = identity/hierarchy (→ hierarchy service); analysis calls concentrate on filter-query/filter-groupby/aggregate/values (→ aggregations, covered except the §5 compute layer). 1 subsumed, ~8 client, rest out of scope. The only real blocker to "frontend calls one service" is the §5 compute layer, not consumer breadth.
+
+**Alternative lens — collapse the middle tier (don't just repoint).** Most "client" services sit in a sandwich: `frontend → yggdrasil / ems-backend → {service} → analysis/meter`. A middle service that is **(1)** reached *only* via entry points (yggdrasil/ems-backend) **and (2)** a thin reshape over analysis+meter can be **eliminated** — the entry point calls the common service directly. This is the higher-value move: it shrinks the distributed monolith rather than preserving it. Deciding it needs both filters — the **caller graph** (all callers = entry points?) and a **logic-depth** check (thin reshape vs real domain logic). First pass (caller graph via client-pkg importers):
+
+| Middle service | Callers | Filter 1 (entry-only?) | Disposition |
+|---|---|---|---|
+| `computed-benchmark` | yggdrasil only | ✅ | **collapse candidate** — verify benchmark logic is thin / a query pattern |
+| `import-export` | yggdrasil only | ✅ but **20k LOC** import/export domain → **fails filter 2** | stays **client** (repoint data-fetch only) |
+| `energy-model-v2` | analysis_service + ems-backend + yggdrasil | ❌ multi-caller | stays **client** (shared dep + real ML) |
+| `alarm-management` | ems-backend + user_service + yggdrasil | ❌ multi-caller | stays **client** (alarms domain) |
+
+So `client` in the table above is the *conservative* disposition; several entries may become **eliminate/subsumed** once the full caller-graph + logic-depth pass is done (open §13).
+
+### 9.1 Subsumability estimate (logic-depth pass)
+
+Rough sizing + logic shape (src LOC excl. tests). "Subsume" = fold into the common aggregation service; otherwise it stays its own service and just **repoints** its measurement reads (client).
+
+| Service | LOC | Logic character | Subsume? |
+|---|---|---|---|
+| `consumption-api` | 4.7k | consumption read/reshape over analysis (+ some `me2db`, response schema) | **Yes — easy-ish.** It *is* a consumption read API = the common service. Its `me2db` reads are meter/hierarchy (`Maaler`/`Firma`/`Energiform`) → available from hierarchy + `meter-identity` (not a blocker); only real wrinkle is the response schema |
+| `computed-benchmark` | 2.2k | benchmark calc (~200 LOC) **+ its own results DB** | **Yes — moderate.** Port the calc; its DB → a rollup/materialized view or query pattern. (Only-via-yggdrasil → also an eliminate candidate) |
+| `ok-carwash-api` | 1.3k | bespoke car-wash config + export builder | **No — stays** (product edge; small; repoint + §8 raw-read) |
+| `export` | 2.4k | async export-**job** subsystem (queue/jobs/file gen, own db) | **No — stays.** Different concern (job orchestration); repoint data-fetch only |
+| `import-export` | 20k | import/export domain (formats, mappings) | **No — stays.** Repoint data-fetch only |
+| `energy-cost` | 6k | price-list / cost-factor **registry** (`cost-factor-service`, `price-list-service`) | **Reference-data owner now; replace later.** It owns the price/CO2-factor tables the pipeline broadcast-joins (§5.1 Lane C); cost-*compute* moves to the denormalized column. Since **we plan to own prices** (§5.1), the registry itself becomes a **replace/retire candidate** — move price/factor ownership into the new system, feed the pipeline directly, drop `energy-cost` (a later simplification). Its `me2db` reads are hierarchy/meter (available) |
+| `energy-model-v2` / `-service` | 5.6k / 4.4k | ML regression modeling | **No — stays** (distinct capability) |
+| `alarm_runner` / `alarm-management` | 5.2k / 16.7k | alarm evaluation engine + config | **No — stays** (alarms domain) |
+| `report-runner` | 9.2k | report generation (custom/KPI/week, templates, notifications) | **No — stays** (reporting domain) |
+| `climate_reporting_service` | 6.9k | CSRD compliance (emission types/scopes/fields, exports) | **No — stays** (compliance domain) |
+
+**Estimate:** only **`consumption-api`** (easy) and **`computed-benchmark`** (moderate) are genuinely subsumable; everything else stays its own service and just repoints (**client**). `energy-cost` is special — a price/factor registry whose data we plan to own (→ replace later). So the consolidation is real but **narrow**: the win is that all these services stop calling analysis/meter and read the common service instead — not that many of them disappear.
+
+**me2db reads are hierarchy + meter identity — not a migration blocker.** The services that hit `me2db` directly (`consumption-api`, `energy-cost`, `report-runner`, `climate_reporting_service`) pull almost entirely **hierarchy** (`Bygningselement`, `Firma`, `Adresse`, recursive-hierarchy CTEs) and **meter/sensor identity** (`Maaler`, `Taeller`/`FysiskTaeller`, `Energiform`/`EnergiHovedgruppe`, `Grundenhed`/base-unit/meter-type) — exactly what the new **hierarchy service + `meter-identity`** already hold. So these direct me2db reads are **repoint targets, not blockers**: swap to the new identity/hierarchy source. The only residual is **user/access/recipient data** (`Bruger`, `DataadgangBrugerFirma`, profiles, contact-users — mostly `report-runner` for report distribution) + i18n (`sprog`). This isn't a separate context either: the **hierarchy service already owns users** (`U#<email>` rows, access/block edges, Cognito provisioning). During switchover it needs a **sync path** — the ME2 monolith already CDC-streams *all* entity changes (users included) via the `Me2Events` table → **`me2-events`** Kafka topic (`me2-event-stream`); a consumer projecting user/hierarchy changes into `hierarchy_new` keeps the new system in sync until it becomes the source of truth.
 
 ## 10. Verification plan
 
@@ -198,7 +234,52 @@ Users should not type formulas for the common cases. Instead, illustrate the **c
 - **Combine two sensors as one:** mark both as **`Zero`** (excluded from normal aggregation) and create a derived sensor with `s1 + s2` — mirroring today's behaviour.
 - Formulas stay the substrate; tree-picking gestures compile to them. Raw `Expr` authoring is the power-user escape hatch. Decide + user-test this **separately** from adopting the engine — the redesign, not the engine, is the UX lever (the current main/sub/sum/calc model is what confuses users).
 
-## 12. Open questions
+## 12. Path ahead — proposed sequencing
+
+Stepwise, **verify-before-build**. After a shared verification phase, the two build tracks (data-denormalization and formula/hierarchy) are independent and run **in parallel**; consolidation/cutover comes last, per-company.
+
+**Track I — Ingestion completeness** *(parallel foundation; the pipeline must carry **all** measurements before the read side can replace analysis).* Measurement sources still on the legacy **eventlogger** Kafka topics get redirected into the new **Kinesis** stream via **EventBridge Pipes** — the mechanism already live for **me2-events**. Per source:
+- **Electrocom** — write the data-pipeline parser (the hardest; python/ts reference code already exists to port).
+- **Catch-all MQTT** (`mqtt-ext-broker` / `mqtt-emqx`) — reroute through **AWS IoT Core** (native pipeline path) rather than a bespoke parser.
+- **Brunata / Datahub / Aalborg Forsyning / Danfoss / Techem** — move to the **`multi_tenant_api`** (API-based ingestion; no parser).
+- **CSV** — the new **`csv_parser`**.
+- **Manual meter updates** — arrive **through the pipe** (EventBridge Pipe → Kinesis).
+- **Kinect** — **dead**; decommissioned, nothing to migrate.
+- *Exit:* every active source lands in `logical_sensor_data` via the new pipeline → the legacy eventlogger/ingestion services can be retired.
+
+**Phase 0 — Verify & size** *(now; read-only, parallel; these are the go/no-go gates).*
+- **Meter-hierarchy diff harness** (§10.2) — run offline via the model's `eval` (no pipeline dependency); validate sub→main + calc-formula derivation vs current summation, per company. → gates Phase 2.
+- **Reference-data parity harness** (§10.1) — old `values` vs new denormalized cost/CO2/degree-day columns. → gates Phase 1.
+- **Data-volume sizing** (M/N/R/L/S) — confirm the denormalized DDB item is affordable.
+- **Frontend call pattern** (values #9 vs aggregate/groupby) + **legacy-endpoint traffic** (metrics) — scope the real critical path.
+- *Exit:* derivation + parity within tolerance; sizing OK; critical path known.
+
+**Phase 1 — Extend the data** *(additive, low-risk; parallel with Phase 2; gated on §10.1 + sizing).* Additive to the existing rollup — current reads untouched.
+- Add **location** to `meter-identity`; stand up the **weather** ref-table (Weatherbit) + broadcast-join into the rollup; `LookbackDays ≥ 5`.
+- Own **price/CO2 factor** ref-tables; broadcast-join **cost/CO2 columns**.
+- Add **Lane A** columns (temp/flow/cooling/VWAT-numerator).
+- Rename `logical_meter_data → logical_sensor_data` (sequence with column changes; S3Tables replace).
+- *Exit:* `measurements_aggregate` carries the denormalized columns; reads stay single-key.
+
+**Phase 2 — Formula & hierarchy** *(the hard prerequisite; parallel with Phase 1; gated on §10.2).*
+- **Wire formula `eval` into the pipeline** (company-scoped, cycle-safe, cross-sensor refs) → derived-sensor rows.
+- **Migrate the meter hierarchy**: old `parent_meter` → `part-of-main` refs (auto-netting), calc meters → `Expr`; per-company **dual-run** until the diff harness is green.
+- Add **Lane B** Flink columns (active-hours/standby).
+- *Exit:* cross-sensor physics + netting materialized; per-company parity.
+
+**Phase 3 — Consolidate & cut over** *(last; per-company).*
+- Extend the **`aggregations`** service to the full analysis surface (filter/groupby/aggregate/values + service-side ratios/resolutions/access-filtering, §5.4).
+- **Subsume** `consumption-api`; **collapse** `computed-benchmark`; **repoint** the client services (§9.1).
+- Cut over **yggdrasil → frontend** per company where validated; retire **legacy endpoints** once metrics show zero traffic.
+- *Exit:* frontend (via yggdrasil temporarily) reads only `aggregations` + `hierarchy`.
+
+**Cross-cutting** *(throughout switchover).*
+- **me2-events CDC sync** → project user/hierarchy/access changes into `hierarchy_new`/`meter-identity` until cutover flips source-of-truth (§13 item 13). Treat as one transition-sync design, not user-specific.
+- **Own prices** → later; retire `energy-cost` (§9.1).
+
+**Recommended first move:** the **§10.2 meter-hierarchy diff harness** — it validates the biggest thesis (formula derivation), runs offline with no pipeline dependency, and gates the largest build (Phase 2). Every expensive step downstream is gated on Phase 0.
+
+## 13. Open questions
 
 **Decided:** denormalize (no read-time joins); columns not rows; `LookbackDays ≥ 5` for weather (trigger only as fallback); week/month in-service; formulas as the single substrate with auto-maintained netting; no parallel sensor hierarchy; one/two common services (aggregations + hierarchy) — feasibility confirmed (§9).
 
@@ -214,3 +295,5 @@ Users should not type formulas for the common cases. Instead, illustrate the **c
 9. **Confirm `key-values/sum` (#10)** is aux → exclude. **First-reading bound (#2)** — rollup vs on-demand (only `energy-model-v2`).
 10. **`ok-carwash-api`** (§8) — repoint raw read.
 11. **Frontend call pattern** — does it hit `values` (#9) or mostly `aggregate`/`groupby`? Decides how much of §5 is on the critical path.
+12. **Middle-tier collapse (§9.1 done, first pass)** — logic-depth estimate: only `consumption-api` (easy) + `computed-benchmark` (moderate, also eliminate candidate) are subsumable; the rest stay clients that repoint. `import-export` fails the thin-filter despite being only-via-yggdrasil. Remaining: confirm `consumption-api`'s `me2db` reads + `computed-benchmark`'s DB→rollup path; verify each "stays" service has no other thin-reshape endpoints worth folding.
+13. **User sync during switchover (§9.1)** — hierarchy owns users, but while me2db is still authoritative, project user/access changes into `hierarchy_new` by consuming the existing **`me2-events`** CDC topic (`Me2Events` → `me2-event-stream`). Scope the consumer (which `Me2Events` entity types → hierarchy nodes/users/access edges) and the cutover point where the new system becomes source of truth. (Adjacent to counter-measurement scope — transition dependency.)
