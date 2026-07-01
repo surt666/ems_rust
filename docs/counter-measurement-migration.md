@@ -1,147 +1,216 @@
 # Counter-measurement migration — working notes
 
 > **Status:** working notes (not the final report). Last updated 2026-07-01.
-> **Objective:** determine whether the frontend (and reporting) needs currently served by **`analysis_service` + `meter_service`** can be consolidated onto **one or two common read services** built on the new `ems_rust` data pipeline — *assuming the pipeline holds all data as measurement data + hierarchy information*. Target end-state: the **frontend (and `yggdrasil` temporarily)** call only this service, instead of the myriad services that today fan out to analysis/meter.
-> **Stance — stepwise, not big-bang.** Fully retiring the legacy `ems-backend` (.NET monolith) and the downstream services is the *end goal*, **not** the immediate task. This doc must not assume wholesale replacement of any one system in a single step; it maps what a consolidated service would need to cover and in what order consumers can be cut over.
-> **Track:** which request/response patterns exist today, which are already covered by the new pipeline, and which consumers must move.
+> **Objective:** consolidate the frontend (and reporting) needs served today by **`analysis_service` + `meter_service`** onto **one or two common read services** on the new `ems_rust` pipeline (`aggregations` for measurement data, `hierarchy` for identity) — so the **frontend (and `yggdrasil` temporarily)** call only those, not the ~15 services fanning out to analysis/meter.
+> **Stance — stepwise, not big-bang.** Retiring the legacy `ems-backend` (.NET monolith) + downstream services is the end goal, not the immediate task. No wholesale replacement of any one system in a single step.
 
 ## 1. Context & mapping
 
 | emswt/main (old) | ems_rust (target) |
 |---|---|
 | `sensor_measurements` DB (raw) | S3 Iceberg `raw_data` |
-| `counter_measurements` DB (logical) | S3 Iceberg `logical_meter_data` |
-| `analysis_service` (reads `counter_measurements` via `@enity/counter-query`) | `aggregations` Rust lambda (CQRS read, `crates/services/aggregations`) |
-| in-app + per-request compute | Spark/Glue rollup → DynamoDB `measurements_aggregate` + request-time compute |
+| `counter_measurements` DB (logical) | S3 Iceberg `logical_meter_data` → rename **`logical_sensor_data`** (§5.5) |
+| `analysis_service` (reads via `@enity/counter-query`) | `aggregations` Rust lambda (CQRS read, `crates/services/aggregations`) |
+| `meter_service` (identity/hierarchy) | `hierarchy` service (`hierarchy_new`) + `meter-identity` |
+| in-app + per-request compute | Spark/Glue rollup → DynamoDB `measurements_aggregate` + thin request-time compute |
 
-**Key migration seam:** `@enity/counter-query` has only **2 importers** (`analysis_service`, `counter-ingestion`). `counter-ingestion` is the raw→logical transform (already has an Athena/S3 client).
+**Migration seam:** `@enity/counter-query` has only 2 importers (`analysis_service`, `counter-ingestion`). Old read side = `analysis_service`; all endpoints are POST query-by-body (CQRS-read-shaped). It turns cumulative readings into consumption in-app (`RunningTotal`/`RunningArea`) then runs a 3-phase `prep→data→compute` pipeline.
 
-The old read side is `analysis_service`. All its endpoints are **POST query-by-body** (already CQRS-read-shaped). Canonical API defs: `emswt/main/packages/analysis-client/src/api-endpoints/`. It turns cumulative counter readings into consumption **in-app** (`RunningTotal`/`RunningArea` — time-weighted), then runs a 3-phase `prep → data → compute` pipeline.
+## 2. Endpoint request/response patterns (`analysis_service`)
 
-## 2. Endpoint request/response patterns (analysis_service)
+**pass-through** = straight DB read · **processing** = aggregation/computation. API defs: `emswt/main/packages/analysis-client/src/api-endpoints/`.
 
-Classification: **pass-through** = straight DB read (rename/omit columns) · **processing** = aggregation/computation.
-
-| # | Endpoint (POST) | Request (key inputs) | Response | Class | Notes |
+| # | Endpoint (POST) | Request | Response | Class | Caller / note |
 |---|---|---|---|---|---|
-| 1 | `api/counters/reading-count` | `counterIds`, `intervals[]` | per-counter reading counts | pass-through | DB `COUNT` per interval. **Caller:** `missing-manual-readings` (missing-manual-reading reminders — §8). Not ingestion control |
-| 2 | `api/counters/reading-bounds` | `counterIds` | per-counter `{first,last}` | pass-through | DB `MIN/MAX` reading ts. **Caller:** `energy-model-v2` — uses `.first` for activation-date eligibility (§8) |
-| 3 | `api/counters/latest-reading` | `counterIds` | per-counter `{latest}` | pass-through | derived from #2 (`.last`). **Callers:** `yggdrasil` meter-list + `import-export` — "Latest Reading" column (**frontend-facing**) |
-| 4 | `api/meter-data/filter-query` | `meterFilter` (→meter_service), `interval`, `resolution?` | per-meter output series (`intervals[]`) | processing | resolve meters → fetch counters → in-app delta + time-weighted rollup → expression handlers |
-| 5 | `api/meter-data/details-query` | `meterDetails` (pre-resolved), `interval`, `resolution?` | = #4 response | processing | #4 without meter resolution |
-| 6 | `api/meter-data/filter-groupby` | `meterFilter`, `groupBy[]`, `requests[]` | nested `groups[]` (values/intervals/aggregations) | processing | rollup + hierarchy group-aggregation |
-| 7 | `api/meter-data/details-groupby` | `meterDetails`, `groupBy[]` | = #6 response | processing | #6 without meter resolution |
-| 8 | `api/meter-data/aggregate` | `meters?`, `aggregations: Record<key, {interval,resolution?,…}>` | `aggregations: Record<key, {interval,resolution?,…}>`, `time?` | processing | rollup + sum/avg/min/max over interval |
-| 9 | `api/meter-data/values` | `meters`, `requests: [{interval,resolution?}]` | per-meter interval values | processing (richest) | full compute pipeline — see §4 |
-| 10 | `api/key-values/sum` | `keys` | sum | processing — **likely out of domain** | uses `auxDataLayer`, not `counter_measurements`; confirm & exclude |
-| 11 | `legacy/consumption/query` | legacy consumption body | consumption series | processing (legacy) | not in typed `analysis-client`; called by raw URL. Traced caller: `ems-backend/Web` (.NET monolith). Confirm live traffic via metric `enity_analysis_legacy_consumption_count` before dropping |
-| 12 | `legacy/zoom/query` | legacy zoom body | zoomed series | processing (legacy) | called by raw URL from `benchmark`, `co2-value`, `ems-backend/Web` (+ `me1-me2-conversion-tools` util). Confirm via `enity_analysis_legacy_zoom_count`. Note `benchmark`/`co2-value` may themselves be legacy (cf. newer `computed-benchmark` on the typed client) |
+| 1 | `api/counters/reading-count` | `counterIds`, `intervals[]` | per-counter counts | pass-through | `missing-manual-readings` (reminders). Not ingestion control |
+| 2 | `api/counters/reading-bounds` | `counterIds` | `{first,last}` | pass-through | `energy-model-v2` uses `.first` (activation eligibility) |
+| 3 | `api/counters/latest-reading` | `counterIds` | `{latest}` | pass-through | `yggdrasil` meter-list + `import-export` ("Latest Reading" col) — **frontend-facing** |
+| 4 | `api/meter-data/filter-query` | `meterFilter`,`interval`,`resolution?` | per-meter series | processing | resolve meters → delta+time-weighted rollup → compute |
+| 5 | `api/meter-data/details-query` | `meterDetails`,… | = #4 | processing | #4 without meter resolution |
+| 6 | `api/meter-data/filter-groupby` | `meterFilter`,`groupBy[]` | nested `groups[]` | processing | rollup + hierarchy group-agg |
+| 7 | `api/meter-data/details-groupby` | `meterDetails`,`groupBy[]` | = #6 | processing | #6 without meter resolution |
+| 8 | `api/meter-data/aggregate` | `aggregations{interval,resolution}` | `aggregations{}` | processing | sum/avg/min/max over interval |
+| 9 | `api/meter-data/values` | `requests[{interval,resolution}]` | per-meter values | processing (richest) | full compute pipeline — §5 |
+| 10 | `api/key-values/sum` | `keys` | sum | processing — **likely out of domain** | uses `auxDataLayer`; confirm & exclude |
+| 11 | `legacy/consumption/query` | legacy body | series | legacy | raw-URL; caller `ems-backend/Web`. Confirm traffic via `enity_analysis_legacy_consumption_count` |
+| 12 | `legacy/zoom/query` | legacy body | zoomed series | legacy | raw-URL; callers `benchmark`,`co2-value`,`ems-backend/Web`. Confirm via `enity_analysis_legacy_zoom_count` |
 
-Totals: **3 pass-through**, **8 processing** (+1 aux/out-of-domain to confirm).
+**3 pass-through, 8 processing** (+1 aux to confirm).
 
 ## 3. Already implemented in ems_rust
 
-**Spark/Glue rollup** — `infra/daq/data_pipeline/glue/measurements_aggregate.py` (`MeasurementsAggregateStack`, daq account `891377204778`, hourly, `LookbackDays` default 1). Design spec: `infra/daq/data_pipeline/docs/superpowers/specs/2026-06-07-measurements-rollup-view-design.md`.
+**Spark/Glue rollup** — `infra/daq/data_pipeline/glue/measurements_aggregate.py` (`MeasurementsAggregateStack`, daq acct `891377204778`, hourly, `LookbackDays` default 1). Spec: `.../specs/2026-06-07-measurements-rollup-view-design.md`.
+- **Source:** `all.logical_meter_data` (event-sourced; `resample_value` where `resample_method='time_proportional'`, dedup newest `ingested_time`).
+- **Sink:** DynamoDB `measurements_aggregate` (TTL 90d hourly / 730d daily; GSI by dimension energy|volume|other).
+- **hour + day only**; per `(node, purpose, gran, bucket)`: `sum, count, min, max, last_value, last_ts`.
+- **Hierarchy pre-aggregated** at every ancestor level (company `HN2#` → leaf `L#`) → group-by is materialized.
 
-- **Source:** `all.logical_meter_data` (event-sourced/append-only; `resample_value` where `resample_method='time_proportional'`, dedup newest `ingested_time` per `(logical_id, resample_timestamp)`).
-- **Sink:** DynamoDB `measurements_aggregate` (TTL 90d hourly / 730d daily; GSI by dimension `energy|volume|other`).
-- **Granularities:** **hour + day only.**
-- **Per `(node, purpose/resource, gran, bucket)`:** `sum, count, min, max, last_value, last_ts`.
-- **Hierarchy pre-aggregation:** emits a row at **every ancestor level** (company `HN2#` → … → leaf meter `L#`) via `ancestor_keys` → **group-by-hierarchy is already materialized**.
+**Read API** — `measurements-aggregations-api` (`crates/services/aggregations`), HTTP API `GET /meterdata/query/{action}`: `get_aggregations` (DynamoDB) · `get_measurements` (`raw_data` via Athena) · `/openapi.json` · `/docs`; `?format=html|json`.
 
-**Read API** — Rust CQRS lambda `measurements-aggregations-api` (`crates/services/aggregations`), API Gateway HTTP API, `GET /meterdata/query/{action}`:
-- `get_aggregations` → reads DynamoDB `measurements_aggregate` (Resource-Insights chart).
-- `get_measurements` → reads `all.raw_data` via **Athena** (Datatilegnelse; dedup `GROUP BY` + `max_by(value, ingested_time)`).
-- `+ /meterdata/openapi.json`, `/meterdata/docs`; `?format=html|json`.
+## 4. Coverage overlay — old endpoints vs the existing rollup
 
-## 4. Coverage overlay — old endpoints vs new rollup
-
-| # | Endpoint | Covered by existing rollup? | Gap |
+| # | Endpoint | Covered? | Gap |
 |---|---|---|---|
-| 1 | reading-count | ✅ `count` | — (consumer `missing-manual-readings` likely out of scope — §8) |
-| 2 | reading-bounds | 🟡 `last_ts`=last; **first** not materialized | `first` needed **only** by `energy-model-v2`; add a first-bound only if it becomes a client (§8) |
-| 3 | latest-reading | ✅ `last_value`/`last_ts` | — (frontend-facing via `yggdrasil`/`import-export`) |
-| 4/5 | filter/details-query | ✅ at hour/day (`sum` series) | off-grid resolutions (§5) |
-| 6/7 | filter/details-groupby | ✅ **strong** — hierarchy pre-agg, hour/day | off-grid resolutions only |
-| 8 | aggregate | ✅ `sum/min/max`; **avg = sum/count** derivable | arbitrary interval boundaries compose from buckets (month/year = Σ days ✅; partial buckets 🟡) |
-| 9 | values | 🟡 base energy `sum` only | **compute pipeline not in rollup** — §4a |
-| 11/12 | legacy consumption/zoom | ✅ hour/day equivalent | finer zoom levels |
-| 10 | key-values/sum | out of counter domain | confirm & exclude |
+| 1 | reading-count | ✅ `count` | consumer likely out of scope (§9) |
+| 2 | reading-bounds | 🟡 `last` yes; **first** not materialized | `first` needed only by `energy-model-v2` |
+| 3 | latest-reading | ✅ `last_value`/`last_ts` | frontend-facing |
+| 4/5 | filter/details-query | ✅ hour/day `sum` | off-grid resolutions (§6) |
+| 6/7 | filter/details-groupby | ✅ strong (hierarchy pre-agg) | off-grid resolutions |
+| 8 | aggregate | ✅ sum/min/max; avg=`sum/count` | arbitrary interval edges compose from buckets |
+| 9 | values | 🟡 base `sum` only | **compute layer** — §5 |
+| 11/12 | legacy | ✅ hour/day equiv | finer zoom |
 
-**Takeaway:** the existing rollup already collapses #1–#3 and the hour/day base of #4–#8/#11–#12 (including hierarchy grouping) into DynamoDB point-reads. Remaining real work = the `values` compute layer (§4a) + off-grid resolutions (§5).
+**Takeaway:** the rollup already collapses #1–#3 and the hour/day base of #4–#8/#11–#12 (incl. hierarchy grouping) into single-key DDB reads. Remaining work = the `values` compute layer (§5) + off-grid resolutions (§6).
 
-### 4a. `values` (#9) compute handlers — the request-time layer
+## 5. Target compute model
 
-3-phase dispatcher (`analysis_service/src/lib/handlers/dispatcher.ts`, `prepare/` modules). Handlers: energy, degree-days, normal-degree-days, climate-correct, GUF, CO2 / emission-scope, energy-budget (+ dda), active-hours / operational-hours, reading-count.
+### 5.1 Placement rule — denormalize, three lanes
 
-- **Movable to rollup / precompute** (candidate): base energy `sum` (done); degree-day / weather series could be a precomputed series joined at read time.
-- **Irreducibly request-time** (parameterized/tenant/contextual): energy-budget (per-user budget), active/operational-hours (threshold param), normal-degree-days & climate-correct (climate-normal + weather), CO2/emission-scope (contextual scope), group-by (live meter hierarchy).
+**Rule: do every join once in the pipeline (broadcast-join tiny reference tables) and write results as columns on `measurements_aggregate`; the read stays a single keyed DDB query.** Read-time joins from S3/Iceberg (Athena) are seconds-slow, so nothing joins at read time. Denormalize as **columns, not rows** (row count unchanged); keep the 2–3 CO2 scopes as columns (`co2_scope_*`), cost in one base currency (convert at read) — cardinality stays flat.
 
-> **TODO (next deep-dive):** split each §4a handler into "move to Flink/Spark rollup" vs "stays request-time" — the last decision before the aggregation service scope is fixed.
+| Lane | Handlers | Placement |
+|---|---|---|
+| **A · Spark rollup** | energy, flow, temp-in/out-avg, VWAT-numerator, computed-cooling, cooling-efficiency, hours, reading-count | Deterministic bucket aggregates. Extra columns beyond sum/count/min/max: temp Σ+count, Σ(flow·temp)+Σflow, flow·Δtemp |
+| **B · Flink stream** | active-hours, standby (+fraction/ratio/per-hour), op-hours mask | Need sub-bucket resolution → pre-aggregate in the stream into daily `active_hours`/`standby_energy` columns |
+| **C · Denormalized columns** (broadcast join) | cost (`energy×price`), CO2 (`energy×factor`), degree-days / climate-correct (weather), key-ratio, energy-budget | Reference tables are tiny (weather O(location×day), factors O(scope×validFrom)) → broadcast-join once, write columns |
 
-## 5. Resolution strategy (decisions)
+Handlers suffixed `*-old` (`degree-days-old`, `energy-dda-old`, `normal-degree-days-old`, `co2-old`) + `energy-guf` are the legacy degree-day approach, superseded by model-based `climate-correct` — likely droppable (verify).
 
-- **hour + day:** materialized in DynamoDB (done).
-- **week / month (and year):** **compute in-service from the daily rollup — do NOT materialize.** A 2-year daily series is only 730 datapoints; conflating to weekly (~÷7) or monthly (~÷12) in service memory is cheap. Not worth the DynamoDB write/storage cost.
-- **15-minute (sub-hour):** **deferred / open** — purely a DynamoDB storage-cost decision, gated on whether the frontend actually needs sub-hour. Revisit only if a real need appears.
+### 5.2 `measurements_aggregate` item shape (with §5.1 additions)
 
-## 6. Adjacent context: `meter_service` (identity plane) — not part of the aggregation service
+Keys unchanged: `pk="HN2#<hn2>"`, `sk="<path>#<purpose>#<gran>#<bucket>"`, `gsi1pk="HN2#<hn2>#<dimension>"`, `gsi1sk="<path>#<gran>#<bucket>"`. Additions land as **extra columns on the energy row** (functions of that row's `sum` + reference data) or **new derived-`purpose` rows** (physically distinct series, different unit).
 
-`meter_service` is a **different bounded context** from counter measurements — the meter/asset **identity, hierarchy & metadata registry**, orthogonal to the measurement time-series. (Correction to earlier notes: it does **not** read `sensor_measurements` or any measurement DB — a full-tree grep finds zero references.)
+```jsonc
+{
+  "pk": "HN2#2",
+  "sk": "HN2#2|HN3#9|HN4#456|L#10009#Electricity#d#2026-06-07",
+  "gsi1pk": "HN2#2#energy", "gsi1sk": "HN2#2|HN3#9|HN4#456|L#10009#d#2026-06-07",
+  "purpose": "Electricity", "unit": "kWh",
+  "sum": 123.4, "count": 24, "min": 0.1, "max": 9.7, "last_value": 90123.4, "last_ts": "2026-06-07T23:00:00Z",
+  "cost": 246.8, "cost_ccy": "DKK",     // energy × price(period, tariff)
+  "co2_s1": 12.3, "co2_s2": 9.8,        // energy × CO2 factor, per scope (columns)
+  "hdd": 4.2, "cdd": 0.0,               // degree-days for this node's location/day (daily+ only)
+  "energy_cc": 118.9,                   // climate-corrected energy
+  "active_hours": 18.5, "standby_energy": 3.1,   // Lane B
+  "updated_at": "2026-06-08T01:00:00Z", "ttl": 1783000000
+}
+```
+Derived-`purpose` rows (same schema) for flow+temperature meters: `Cooling, FlowVolume, TempInAvg, TempOutAvg, VWAT`; avg = `sum/count`.
 
-- **Data sources:** `me2db` (legacy ME2 monolith DB) + its own `meter` DB. No measurement DB.
-- **Owns (CRUD master data, not a read model):** meter / sensor / physical-counter / physical-meter / counter, building / address / hierarchy-elements, tags, units / reading-types, energy-form/class/main-group, operational-hours, documents, custom fields, `sensor-data-ownership`, meter-sorting. Emits change events via `kafka_rest_url`. (`meterRouter` alone: 17 GET / 18 POST / 7 PUT / 4 DELETE.)
-- **Consumers:** 15 services via `@enity/meter-client` (most-consumed service in the system): alarm-management, alarm_runner, analysis_service, climate_reporting_service, consumption-api, ems-backend/Web, energy-cost, energy-model-service, energy-model-v2, export, import-export, missing-manual-readings, ok-carwash-api, report-runner, yggdrasil.
-- **Role in the measurement path:** resolve a `meterFilter` → concrete meters + hierarchy + unit, which `analysis_service` then uses to query `counter_measurements`. The "which meters" resolver behind the "what values" queries.
+Open schema decisions: (1) `hdd`/`cdd` repeat per purpose row at a node — accept duplication (single-read) vs a `DegreeDays` row (adds a lookup); leaning accept. (2) item-size × row-count acceptable — gated on the §10.1 sizing.
 
-**Target mapping:** → `ems_rust` **hierarchy service** (`rust-lambda-hierarchy` + `hierarchy_new`) + the **`meter-identity`** table. Not the aggregations service.
+### 5.3 Weather / CO2e / prices — realization
 
-**Direction — the measurement path should read from `meter-identity`, not `meter_service`.** The identity/hierarchy the read path needs is *already denormalized into the data*: `hn2..hn9`, `logical_id`, `purpose`, `unit` are stamped into `logical_meter_data` (and thus `measurements_aggregate`) by the Flink enrichment step, sourced from `meter-identity`. So the old request-time "call meter_service to resolve filter + hierarchy" is pushed **upstream into ingestion/enrichment**; the aggregation read side just ranges on precomputed hierarchy keys and never calls a meter service at query time.
+Own each as a small reference table; the Spark rollup broadcast-joins and writes columns (§5.1). **Finalization uses existing machinery, no bespoke trigger for the common case:** set **`LookbackDays ≥ 5`** so the recent window is re-baked as forecast HDD/CDD (or restated factors) finalize; reads are ≤1 rollup-cycle stale. A `(location, date)` late-trigger (existing `late_arrival_trigger`/`late_recomputation`/`backfill_trigger` shape) is a **fallback only** for restatements older than the window. Prereq: **location on `meter-identity`** (lat/lon or weather-location id). Weather is greenfield in ems_rust (only in a spec).
 
-**Adding metadata to `meter-identity` — yes, this makes sense, with two guardrails:**
-1. **Keep it a lean read projection, not a second registry.** Add only what the measurement read/enrichment path needs — candidates beyond today's identity/hierarchy/purpose/unit: `reading-type`, `operational-hours` (for §4a active-hours), possibly `tag`s for filtering. The rest of `meter_service` (documents, custom fields, building CRUD, ownership, sorting) stays in the hierarchy/registry service as the **write model / source of truth**; `meter-identity` is a CQRS **read projection** fed by its change events.
-2. **Decide per field: stamped-at-write vs looked-up-at-read.** Hierarchy path is stamped point-in-time today (historical rollups keep the hierarchy as-of ingestion). Metadata used for *current* filtering (tags, current hierarchy) is "as-of-now" and must be resolved at read time — baking it into history means a re-tag or hierarchy move silently rewrites the past. Classify each added field's temporal semantics deliberately.
+### 5.4 Service-vs-data boundary — what stays in the read service
 
-Net: sound direction — move the measurement path's identity/metadata reads onto `meter-identity` and enrich it as needed — **provided** `meter-identity` stays a curated projection of the registry and each field's point-in-time-vs-current semantics is chosen on purpose.
+Everything that can be data is data (pipeline → `logical_sensor_data` + `measurements_aggregate` columns). The read service keeps only:
 
-## 7. Raw side: `sensor_measurements` / `raw_data` readers
+| Stays in service | Why |
+|---|---|
+| Access / permission filtering | Per-user (writes/reads/blocked edges); rollup holds all nodes |
+| Query orchestration / response shaping / validation | The CQRS surface |
+| Request-param selection & scalar scaling | scope pick (`co2_scope_*`), currency, unit/display, budget scenario, tunable base-temp — select/scale over columns |
+| Ratio / division metrics | VWAT, efficiency, key-ratio, per-hour — divide of two rolled-up sums (numerators pre-baked) |
+| Resolution re-agg + interval edges | week/month/year from daily; non-bucket-aligned intervals |
+| Ad-hoc cross-node / cross-period comparison | benchmarking, this-vs-last |
+| Transition "meter" grouping | meter → its `logical_id`s, until derived sensors cover it |
 
-The main analytics/frontend path does **not** read raw — `analysis_service` and `consumption-api` don't hold the `sensor_measurements` secret; the whole consumption/analysis path is on `counter_measurements` (logical). Consumer read of raw = the **datatilegnelse** view only → served by `get_measurements` over `raw_data` via **Athena** in ems_rust.
+### 5.5 Sensor & formula model; the meter hierarchy
 
-**Direct DB readers (all pipeline/quality — → Flink/Glue in ems_rust):**
-- `counter-ingestion` — raw → logical transform (→ Flink resample/enrichment)
-- `sensor-measurements-stat-manager` — stats over raw (→ Flink/Glue)
-- `sensor-measurements-missing-readings-manager` — gap detection (→ late-recomputation / monitoring)
-- `sensor-measurements-management` — owns + serves raw via HTTP (→ `raw_data` + Athena serve)
-- `sensor-measurements-ingestion` — writes raw (→ Flink/Kinesis ingest)
+**No meter entity.** The model is typed hierarchy nodes + **sensors** (`S#<int>`, attached via `has_sensor`), each with `purpose`, `meter_type` (Counter|Gauge), `unit`, `resample_minutes`, and a **`formula`** (`Identity`/`Zero`/`Expr`; `Expr` refs other sensors' computed `S'`, `+ - * / abs`, company-scoped, cycle-checked). `logical_meter_data` is keyed per `logical_id` (a sensor) → rename **`logical_sensor_data`**. A "meter" during switchover = a named collection of `logical_id`s (old counters 1/2/3/10/11).
 
-**HTTP consumers of the raw-serve API (`sensor-measurements-management`):**
-- `sensor-measurements-stat-manager` — internal.
-- ⚠️ **`ok-carwash-api` — MARKED FOR UPDATE (migration).** The one *consumer* reading raw outside the datatilegnelse view: `fetchAdjustedReadings(...)` pulls raw readings directly to compute per-car-wash consumption. **Migration action:** repoint onto the ems_rust `raw_data` path (`get_measurements` via Athena), or rework onto the logical / aggregations path. Only non-pipeline external raw reader.
+**Formula status:** the system is implemented (AST + tested `eval`, parser, `attach`/`set_formula`, API, and `formula` is propagated into `meter-identity`) — but **not applied to the time-series**: the hierarchy `evaluate` reading-hook is a stub and the Flink/Glue pipeline has zero formula references. So no derived series exists yet. **Build gap:** a pipeline step running `eval()` per reading, resolving cross-sensor `Ref`s (time-aligned sibling values); formula change → late-recompute. (Evaluate in the pipeline, never at read time.)
 
-## 8. Consumer classification (analysis/meter → common service)
+**Meter hierarchy = one relationship, not a parallel tree.** The old main/sub tree exists only to avoid double-counting, and main/sub **legitimately crosses buildings**, so the netting relationship is independent of the location hierarchy. Represent it as **one "part-of-main" reference per sub-meter** (cross-node, company-scoped); the netting formula (`main = self − Σ subs`) is **auto-generated and re-derived** from it (add/remove a sub → parent updates; preserves the auto-maintenance the old summation flag gave for free). This is a per-sensor computation DAG, **not** a navigable second hierarchy — and it drops all the old machinery (separate meter tree, `Part of summation` flags, query-time summation contexts, area/context modes). Hand-authored `Expr` is reserved for genuine derived metrics (COP/ratios).
 
-The core objective (can everything collapse onto one/two common read services on the new pipeline). Each current `analysis_service`/`meter_service` consumer is placed as:
-- **client** — keeps working, just repointed at the common service;
-- **subsumed** — its logic moves into the common service (no separate service);
-- **out of scope** — different bounded context, not part of this consolidation.
+**Old → new mapping:** sub-meter = identity leaf; main = netting parent (auto-derived); calc meter (`counter.formula` over `[meterId:counter]` tokens; `MeterBasedFormulaTranslator` exists) = `Expr`; not-part-of-summation = `Zero`. All four old types collapse into the one formula/sensor concept.
 
-_Seeded from the §2 #1–#3 call sites; remaining consumers TBD._
+## 6. Resolution strategy
 
-| Consumer | Uses (analysis/meter) | Disposition | Notes |
-|---|---|---|---|
-| `yggdrasil` | analysis `latest-reading` (+ meter, + most analysis endpoints) | **client** (temporary frontend façade) | the BFF; frontend routes through it during cutover |
-| `import-export` | analysis `latest-reading` (+ query, meter) | **client** | reporting/export; "Latest Reading" column |
-| `energy-model-v2` | analysis `reading-bounds.first` (+ aggregate/values, meter) | **client or subsumed** | only consumer needing the un-materialized `first` bound (§4 #2) |
-| `missing-manual-readings` | analysis `reading-count` (+ meter) | **out of scope** (separate context) | manual-reading reminder workflow; needs expected-cadence metadata, not just measurement data |
-| _remaining_ | TBD | TBD | alarm-management, alarm_runner, computed-benchmark, consumption-api, climate_reporting_service, energy-cost, energy-model-service, export, ok-carwash-api, report-runner, back-office, ems-backend/Web |
+- **hour + day:** materialized (done).
+- **week / month / year:** compute **in-service** from the 730-point daily series (÷7 / ÷30) — do not materialize; not worth the DDB cost.
+- **15-minute:** deferred — a DDB storage-cost decision, gated on real frontend need.
 
-## 9. Open questions / next steps
+## 7. Adjacent context: `meter_service` (identity plane)
 
-1. **Dissect §4a handlers** → movable vs request-time (the key remaining decision).
-2. **Confirm frontend call pattern:** does the frontend (via `yggdrasil` / `consumption-api`) actually hit `values` (#9), or mostly `aggregate` (#8) / `groupby` (#6/7)? Decides how much of §4a is on the critical path.
-3. **Confirm `key-values/sum` (#10)** is aux data → exclude from counter domain.
-4. **First-reading bound (#2)** — decide whether to add to the rollup or query on demand.
-5. **`meter-identity` enrichment (§6)** — enumerate which `meter_service` fields the measurement read path actually needs in `meter-identity` (reading-type, operational-hours, tags?), and for each decide stamped-at-write (point-in-time) vs looked-up-at-read (current). Confirm the registry/hierarchy service remains the write-model source of truth.
-6. **`ok-carwash-api` migration (§7) — MARKED FOR UPDATE** — repoint its direct raw-reading (`fetchAdjustedReadings` via `sensor-measurements-management`) onto the ems_rust `raw_data` / Athena `get_measurements` path, or rework onto the logical / aggregations path. The only non-pipeline consumer of raw `sensor_measurements`.
-7. **Consolidation feasibility (core objective)** — finish the **§8 consumer-classification table** (4 of ~15 placed): for each remaining `analysis_service`/`meter_service` consumer decide client / subsumed / out-of-scope, then sequence a **stepwise** cutover — frontend → common service, with `yggdrasil` as a temporary façade — rather than big-bang. Two candidate common services already exist: `aggregations` (measurement) + `hierarchy` (identity).
+A different bounded context — the identity/hierarchy/metadata registry (its own `me2db` + meter DB; reads **no** measurement DB). Owns meters/sensors/counters, buildings/hierarchy, tags, units, operational-hours, documents, custom fields, ownership. **15 consumers** via `@enity/meter-client`. Role in the measurement path: resolve `meterFilter` → meters + hierarchy (the "which meters" behind "what values").
+
+**Target:** → `hierarchy` service + `meter-identity`, **not** the aggregations service. The measurement read path should read from `meter-identity` (identity/hierarchy is already denormalized into the data), never call a meter service at query time. Enrich `meter-identity` as a **lean read projection** (candidates: reading-type, operational-hours, location, tags), fed by registry change events; per field decide **stamped-at-write** (point-in-time, like the hierarchy path) vs **looked-up-at-read** (current, e.g. tags) — getting it wrong silently rewrites history.
+
+## 8. Raw side: `sensor_measurements` / `raw_data` readers
+
+The analytics/frontend path does **not** read raw (it's all on logical). Consumer read of raw = the **datatilegnelse** view → `get_measurements` over `raw_data` via Athena. Direct raw readers are pipeline/quality (`counter-ingestion` transform, `sensor-measurements-stat-manager`, `-missing-readings-manager`, `-management`, `-ingestion`) → Flink/Glue. **One outlier:** `ok-carwash-api` reads raw via `sensor-measurements-management` (`fetchAdjustedReadings`) for per-car-wash consumption → **MARKED FOR UPDATE**: repoint to `raw_data`/Athena or the logical path.
+
+## 9. Consumer classification (analysis/meter → common service)
+
+**client** = repoint only · **subsumed** = fold into the common service · **out of scope** = different context.
+
+| Consumer | Uses | Disposition |
+|---|---|---|
+| `yggdrasil` | analysis (latest-reading + most) + meter | **client** (temporary frontend façade) |
+| `consumption-api` | analysis aggregate/values; meter | **subsumed** (it *is* a consumption read API) |
+| `import-export` | analysis latest-reading + query; meter | **client** (reporting) |
+| `energy-model-v2` | analysis reading-bounds.first + aggregate/values; meter | **client** (needs `first` bound) |
+| `alarm_runner` | analysis filter-query; meter | **client** (alarms) |
+| `computed-benchmark` | analysis filter-groupby/values | **client** (benchmarks) |
+| `report-runner` | analysis filter-groupby/details-query; meter | **client** (reporting) |
+| `export` | analysis aggregate; meter | **client** |
+| `energy-model-service` (v1) | analysis filter-query/values; meter | **client** (verify legacy vs v2) |
+| `ok-carwash-api` | analysis values; + raw (§8) | **client** |
+| `alarm-management` | meter only | **client** (identity) |
+| `climate_reporting_service` | meter; via yggdrasil | **client** |
+| `missing-manual-readings` | analysis reading-count; meter | **out of scope** (manual-reading workflow) |
+| `energy-cost` | meter only | **out of scope** (pricing; identity client) |
+| `back-office` | counter-ingestion admin | **out of scope** (pipeline ops) |
+| `ems-backend/Web` | analysis legacy endpoints | **out of scope** (legacy monolith) |
+
+**Feasibility confirmed:** every meter call = identity/hierarchy (→ hierarchy service); analysis calls concentrate on filter-query/filter-groupby/aggregate/values (→ aggregations, covered except the §5 compute layer). 1 subsumed, ~8 client, rest out of scope. The only real blocker to "frontend calls one service" is the §5 compute layer, not consumer breadth.
+
+## 10. Verification plan
+
+Before committing schema/pipeline changes, verify two models against the current system on real data.
+
+### 10.1 Reference-data model (weather · CO2e · prices)
+
+1. **Inventory + keys.** Weather: choose the location key (Weatherbit lat/lon) and confirm every measuring sensor resolves to a location (add lat/lon or weather-location id to `meter-identity`). CO2e: enumerate factors + scopes (`@enity/energy-cost-client`), confirm scope count `S` and `validFrom` versioning. Prices: enumerate tariffs/currencies/versioning; confirm per-region/standard (denormalizable) vs per-tenant contract (cardinality risk).
+2. **Linearity / join-once validity.** Confirm cost & CO2 are pure `energy × factor(t, scope)` → safe to compute per leaf row and sum up the hierarchy. For degree-days/climate-correct, confirm base temp (fixed `hdd@17`?) and whether correction is a per-`(location,day)` join or a per-meter fitted model (the latter needs a stored model, not just a weather join).
+3. **Sizing (open item).** Compute M/N/R/L/S → `measurements_aggregate` row count + item-size delta from the new columns; confirm DDB storage/cost acceptable; confirm reference tables stay O(L×days)/O(S×validFrom).
+4. **Finalization horizon.** Confirm Weatherbit provisional→final horizon ≤ chosen `LookbackDays (≥5)`; verify the recent window re-bakes each run. Decide whether factor/price restatements ever apply beyond the window (→ need the fallback `(location/scope, date)` trigger).
+5. **Parity harness (the actual verify).** For a sample of nodes/periods, compute cost / CO2 / degree-day-adjusted energy **both ways** — old `analysis_service` `values` vs the new Spark-denormalized columns — and diff within tolerance. Investigate mismatches (unit conversion, base-temp, scope selection). Iterate to parity.
+6. **Temporal correctness.** Verify point-in-time semantics: cost/CO2 use the factor valid at consumption time (not current); historical rows keep weather/factor as-of that day. Test a factor change and a hierarchy move; confirm history isn't silently rewritten.
+
+### 10.2 Meter-hierarchy extraction (sub→main + calc formulas)
+
+1. **Extract raw relationships** from me2db/meter DB: `meter → parent_meter` (main/sub forest), `isPartOfCalcMeterSum` (summation flag), `counter.formula` + `CounterType.Formula` (calc meters, `[meterId:counterIndex]` refs), meter→counters (1/2/3/10/11) → `logical_id` mapping, area → explicit meter-id lists.
+2. **Audit calc-meter grammar.** Parse all `counter.formula`; enumerate operators/functions; confirm they fit `+ - * / abs` + refs. Flag anything richer (min/max/conditional/time) for handling or grammar extension.
+3. **Audit summation modes.** Quantify context (building) vs area (explicit list) vs arbitrary; count cross-building main/sub (legit → cross-node part-of refs); confirm no cross-company refs.
+4. **Derive new-model artifacts.** `parent_meter` → one `part-of-main` ref per sub → generated netting formula `main = self − Σ(part-of-summation subs)`; calc meters → `Expr` (translate `[meterId:counter]` → sensor `Ref`s via counter-index→purpose); not-part-of-summation → `Zero`. Relationship is the source of truth; formula is generated.
+5. **Diff harness (the actual verify).** Per sample company: recompute node/company totals from the derived formulas (Σ computed `S'` over the subtree) vs current `analysis_service` summation output per context; diff within tolerance; investigate mismatches (double-counting, missing subs, translation errors, context edge cases). Can run offline using the model's existing `eval` — **independent of the pipeline formula-wiring** (§5.5 gap).
+6. **Cutover gate.** Companies that pass → migrate mechanically; residual mismatches → interim dual-run keeping old semantics until resolved.
+
+## 11. Later — user-friendly formula authoring
+
+Users should not type formulas for the common cases. Instead, illustrate the **company hierarchy tree** and let them pick, generating the formula underneath:
+
+- **Sub-metering:** pick a meter (possibly in another building) from the tree → added to the parent as a **subtraction by default** (creates the `part-of-main` ref → auto-netting).
+- **Combine two sensors as one:** mark both as **`Zero`** (excluded from normal aggregation) and create a derived sensor with `s1 + s2` — mirroring today's behaviour.
+- Formulas stay the substrate; tree-picking gestures compile to them. Raw `Expr` authoring is the power-user escape hatch. Decide + user-test this **separately** from adopting the engine — the redesign, not the engine, is the UX lever (the current main/sub/sum/calc model is what confuses users).
+
+## 12. Open questions
+
+**Decided:** denormalize (no read-time joins); columns not rows; `LookbackDays ≥ 5` for weather (trigger only as fallback); week/month in-service; formulas as the single substrate with auto-maintained netting; no parallel sensor hierarchy; one/two common services (aggregations + hierarchy) — feasibility confirmed (§9).
+
+**Open:**
+1. **Data-volume sizing** (§10.1.3) — M/N/R/L/S → confirm item-size/cost before schema-freeze.
+2. **`meter-identity` enrichment** (§7) — which fields (reading-type, operational-hours, location, tags?), each stamped-at-write vs read-time.
+3. **Wire formula `eval` into the pipeline** (§5.5) — the prerequisite for cross-sensor physics in the data; run the §10.2 diff harness offline first.
+4. **Rename `logical_meter_data` → `logical_sensor_data`** (S3Tables rename = replace + reload; sequence with column changes).
+5. **Extra columns** — Lane A (temp Σ+count, Σ(flow·temp)+Σflow, flow·Δtemp) + Lane C (`hdd,cdd,energy_cc,cost,co2_scope_*`); Lane B daily (`active_hours,standby_energy`).
+6. **Meter-hierarchy migration** (§10.2) — mechanical vs interim dual-run per company, gated on the diff harness.
+7. **User-facing model** (§11) — auto-netting + unified concept vs formula authoring; user-test.
+8. **Verify legacy consumers** — `energy-model-service` v1 vs v2; `benchmark`/`co2-value` vs `computed-benchmark`; `ems-backend/Web` legacy endpoints (traffic via the `legacy_*_count` metrics).
+9. **Confirm `key-values/sum` (#10)** is aux → exclude. **First-reading bound (#2)** — rollup vs on-demand (only `energy-model-v2`).
+10. **`ok-carwash-api`** (§8) — repoint raw read.
+11. **Frontend call pattern** — does it hit `values` (#9) or mostly `aggregate`/`groupby`? Decides how much of §5 is on the critical path.
