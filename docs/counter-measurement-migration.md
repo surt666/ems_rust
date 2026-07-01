@@ -1,7 +1,9 @@
 # Counter-measurement migration — working notes
 
 > **Status:** working notes (not the final report). Last updated 2026-07-01.
-> **Goal:** consolidate everything that uses *counter measurements* in the `emswt/main` distributed monolith into a single CQRS read/aggregation service in `ems_rust` (mirroring the existing `aggregations` service), serving the **frontend (primary)** and some reporting. Track which request/response patterns exist today and which are already covered by the new pipeline.
+> **Objective:** determine whether the frontend (and reporting) needs currently served by **`analysis_service` + `meter_service`** can be consolidated onto **one or two common read services** built on the new `ems_rust` data pipeline — *assuming the pipeline holds all data as measurement data + hierarchy information*. Target end-state: the **frontend (and `yggdrasil` temporarily)** call only this service, instead of the myriad services that today fan out to analysis/meter.
+> **Stance — stepwise, not big-bang.** Fully retiring the legacy `ems-backend` (.NET monolith) and the downstream services is the *end goal*, **not** the immediate task. This doc must not assume wholesale replacement of any one system in a single step; it maps what a consolidated service would need to cover and in what order consumers can be cut over.
+> **Track:** which request/response patterns exist today, which are already covered by the new pipeline, and which consumers must move.
 
 ## 1. Context & mapping
 
@@ -22,9 +24,9 @@ Classification: **pass-through** = straight DB read (rename/omit columns) · **p
 
 | # | Endpoint (POST) | Request (key inputs) | Response | Class | Notes |
 |---|---|---|---|---|---|
-| 1 | `api/counters/reading-count` | `counterIds`, `intervals[]` | per-counter reading counts | pass-through | DB `COUNT` per interval |
-| 2 | `api/counters/reading-bounds` | `counterIds` | per-counter `{first,last}` | pass-through | DB `MIN/MAX` reading ts |
-| 3 | `api/counters/latest-reading` | `counterIds` | per-counter `{latest}` | pass-through | derived from #2 (`.last`) |
+| 1 | `api/counters/reading-count` | `counterIds`, `intervals[]` | per-counter reading counts | pass-through | DB `COUNT` per interval. **Caller:** `missing-manual-readings` (missing-manual-reading reminders — §8). Not ingestion control |
+| 2 | `api/counters/reading-bounds` | `counterIds` | per-counter `{first,last}` | pass-through | DB `MIN/MAX` reading ts. **Caller:** `energy-model-v2` — uses `.first` for activation-date eligibility (§8) |
+| 3 | `api/counters/latest-reading` | `counterIds` | per-counter `{latest}` | pass-through | derived from #2 (`.last`). **Callers:** `yggdrasil` meter-list + `import-export` — "Latest Reading" column (**frontend-facing**) |
 | 4 | `api/meter-data/filter-query` | `meterFilter` (→meter_service), `interval`, `resolution?` | per-meter output series (`intervals[]`) | processing | resolve meters → fetch counters → in-app delta + time-weighted rollup → expression handlers |
 | 5 | `api/meter-data/details-query` | `meterDetails` (pre-resolved), `interval`, `resolution?` | = #4 response | processing | #4 without meter resolution |
 | 6 | `api/meter-data/filter-groupby` | `meterFilter`, `groupBy[]`, `requests[]` | nested `groups[]` (values/intervals/aggregations) | processing | rollup + hierarchy group-aggregation |
@@ -32,8 +34,8 @@ Classification: **pass-through** = straight DB read (rename/omit columns) · **p
 | 8 | `api/meter-data/aggregate` | `meters?`, `aggregations: Record<key, {interval,resolution?,…}>` | `aggregations: Record<key, {interval,resolution?,…}>`, `time?` | processing | rollup + sum/avg/min/max over interval |
 | 9 | `api/meter-data/values` | `meters`, `requests: [{interval,resolution?}]` | per-meter interval values | processing (richest) | full compute pipeline — see §4 |
 | 10 | `api/key-values/sum` | `keys` | sum | processing — **likely out of domain** | uses `auxDataLayer`, not `counter_measurements`; confirm & exclude |
-| 11 | `legacy/consumption/query` | legacy consumption body | consumption series | processing (legacy) | older consumption path |
-| 12 | `legacy/zoom/query` | legacy zoom body | zoomed series | processing (legacy) | time-resolution drill-down |
+| 11 | `legacy/consumption/query` | legacy consumption body | consumption series | processing (legacy) | not in typed `analysis-client`; called by raw URL. Traced caller: `ems-backend/Web` (.NET monolith). Confirm live traffic via metric `enity_analysis_legacy_consumption_count` before dropping |
+| 12 | `legacy/zoom/query` | legacy zoom body | zoomed series | processing (legacy) | called by raw URL from `benchmark`, `co2-value`, `ems-backend/Web` (+ `me1-me2-conversion-tools` util). Confirm via `enity_analysis_legacy_zoom_count`. Note `benchmark`/`co2-value` may themselves be legacy (cf. newer `computed-benchmark` on the typed client) |
 
 Totals: **3 pass-through**, **8 processing** (+1 aux/out-of-domain to confirm).
 
@@ -56,9 +58,9 @@ Totals: **3 pass-through**, **8 processing** (+1 aux/out-of-domain to confirm).
 
 | # | Endpoint | Covered by existing rollup? | Gap |
 |---|---|---|---|
-| 1 | reading-count | ✅ `count` | — |
-| 2 | reading-bounds | 🟡 `last_ts`=last; **first** not materialized | need a first-bound query |
-| 3 | latest-reading | ✅ `last_value`/`last_ts` | — |
+| 1 | reading-count | ✅ `count` | — (consumer `missing-manual-readings` likely out of scope — §8) |
+| 2 | reading-bounds | 🟡 `last_ts`=last; **first** not materialized | `first` needed **only** by `energy-model-v2`; add a first-bound only if it becomes a client (§8) |
+| 3 | latest-reading | ✅ `last_value`/`last_ts` | — (frontend-facing via `yggdrasil`/`import-export`) |
 | 4/5 | filter/details-query | ✅ at hour/day (`sum` series) | off-grid resolutions (§5) |
 | 6/7 | filter/details-groupby | ✅ **strong** — hierarchy pre-agg, hour/day | off-grid resolutions only |
 | 8 | aggregate | ✅ `sum/min/max`; **avg = sum/count** derivable | arbitrary interval boundaries compose from buckets (month/year = Σ days ✅; partial buckets 🟡) |
@@ -117,7 +119,24 @@ The main analytics/frontend path does **not** read raw — `analysis_service` an
 - `sensor-measurements-stat-manager` — internal.
 - ⚠️ **`ok-carwash-api` — MARKED FOR UPDATE (migration).** The one *consumer* reading raw outside the datatilegnelse view: `fetchAdjustedReadings(...)` pulls raw readings directly to compute per-car-wash consumption. **Migration action:** repoint onto the ems_rust `raw_data` path (`get_measurements` via Athena), or rework onto the logical / aggregations path. Only non-pipeline external raw reader.
 
-## 8. Open questions / next steps
+## 8. Consumer classification (analysis/meter → common service)
+
+The core objective (can everything collapse onto one/two common read services on the new pipeline). Each current `analysis_service`/`meter_service` consumer is placed as:
+- **client** — keeps working, just repointed at the common service;
+- **subsumed** — its logic moves into the common service (no separate service);
+- **out of scope** — different bounded context, not part of this consolidation.
+
+_Seeded from the §2 #1–#3 call sites; remaining consumers TBD._
+
+| Consumer | Uses (analysis/meter) | Disposition | Notes |
+|---|---|---|---|
+| `yggdrasil` | analysis `latest-reading` (+ meter, + most analysis endpoints) | **client** (temporary frontend façade) | the BFF; frontend routes through it during cutover |
+| `import-export` | analysis `latest-reading` (+ query, meter) | **client** | reporting/export; "Latest Reading" column |
+| `energy-model-v2` | analysis `reading-bounds.first` (+ aggregate/values, meter) | **client or subsumed** | only consumer needing the un-materialized `first` bound (§4 #2) |
+| `missing-manual-readings` | analysis `reading-count` (+ meter) | **out of scope** (separate context) | manual-reading reminder workflow; needs expected-cadence metadata, not just measurement data |
+| _remaining_ | TBD | TBD | alarm-management, alarm_runner, computed-benchmark, consumption-api, climate_reporting_service, energy-cost, energy-model-service, export, ok-carwash-api, report-runner, back-office, ems-backend/Web |
+
+## 9. Open questions / next steps
 
 1. **Dissect §4a handlers** → movable vs request-time (the key remaining decision).
 2. **Confirm frontend call pattern:** does the frontend (via `yggdrasil` / `consumption-api`) actually hit `values` (#9), or mostly `aggregate` (#8) / `groupby` (#6/7)? Decides how much of §4a is on the critical path.
@@ -125,3 +144,4 @@ The main analytics/frontend path does **not** read raw — `analysis_service` an
 4. **First-reading bound (#2)** — decide whether to add to the rollup or query on demand.
 5. **`meter-identity` enrichment (§6)** — enumerate which `meter_service` fields the measurement read path actually needs in `meter-identity` (reading-type, operational-hours, tags?), and for each decide stamped-at-write (point-in-time) vs looked-up-at-read (current). Confirm the registry/hierarchy service remains the write-model source of truth.
 6. **`ok-carwash-api` migration (§7) — MARKED FOR UPDATE** — repoint its direct raw-reading (`fetchAdjustedReadings` via `sensor-measurements-management`) onto the ems_rust `raw_data` / Athena `get_measurements` path, or rework onto the logical / aggregations path. The only non-pipeline consumer of raw `sensor_measurements`.
+7. **Consolidation feasibility (core objective)** — finish the **§8 consumer-classification table** (4 of ~15 placed): for each remaining `analysis_service`/`meter_service` consumer decide client / subsumed / out-of-scope, then sequence a **stepwise** cutover — frontend → common service, with `yggdrasil` as a temporary façade — rather than big-bang. Two candidate common services already exist: `aggregations` (measurement) + `hierarchy` (identity).
