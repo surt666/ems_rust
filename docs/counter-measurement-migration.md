@@ -14,6 +14,8 @@
 | `meter_service` (identity/hierarchy) | `hierarchy` service (`hierarchy_new`) + `meter-identity` |
 | in-app + per-request compute | Spark/Glue rollup → DynamoDB `measurements_aggregate` + thin request-time compute |
 
+![Current vs. target — the frontend fans out across ~15 services to analysis/meter today; the target reads from one or two common services on the pipeline.](img/fig1-current-vs-target.png)
+
 **Migration seam:** `@enity/counter-query` has only 2 importers (`analysis_service`, `counter-ingestion`). Old read side = `analysis_service`; all endpoints are POST query-by-body (CQRS-read-shaped). It turns cumulative readings into consumption in-app (`RunningTotal`/`RunningArea`) then runs a 3-phase `prep→data→compute` pipeline.
 
 ## 2. Endpoint request/response patterns (`analysis_service`)
@@ -47,6 +49,8 @@
 
 **Read API** — `measurements-aggregations-api` (`crates/services/aggregations`), HTTP API `GET /meterdata/query/{action}`: `get_aggregations` (DynamoDB) · `get_measurements` (`raw_data` via Athena) · `/openapi.json` · `/docs`; `?format=html|json`.
 
+![The data pipeline: sources → Kinesis → Flink (enrich + resample) → logical_sensor_data → Spark rollup → DynamoDB → aggregations API.](img/fig2-pipeline.png)
+
 ## 4. Coverage overlay — old endpoints vs the existing rollup
 
 | # | Endpoint | Covered? | Gap |
@@ -72,11 +76,13 @@
 
 | Lane | Handlers | Placement |
 |---|---|---|
-| **A · Spark rollup** | energy, flow, temp-in/out-avg, VWAT-numerator, computed-cooling, cooling-efficiency, hours, reading-count | Deterministic per-period aggregates. Extra columns beyond sum/count/min/max: temp Σ+count, Σ(flow·temp)+Σflow, flow·Δtemp |
+| **A · Spark rollup** | energy, flow, temp-in/out-avg, VWAT-numerator, computed-cooling, cooling-efficiency, hours, reading-count | Deterministic per-period aggregates. **energy/flow/temperatures each come from their own sensor** (a distinct `daq_id`; resource/`meter_type` assigned by `meter-identity`) — aggregate directly (temp avg = `sum/count`). **computed-cooling / VWAT are cross-sensor** (`flow·Δtemp`, `Σ(flow·temp)`, combining the flow + temperature sensors of one physical device — same `daq_id` up to `meterserial`) → they aggregate a *derived* series from the formula step (§5.5), time-aligned after resample, not raw readings. Extra columns: temp Σ+count, Σ(flow·temp)+Σflow, flow·Δtemp |
 | **B · Flink stream** | active-hours, standby (+fraction/ratio/per-hour), op-hours mask | Need finer-than-period (sub-hour) resolution → pre-aggregate in the stream into daily `active_hours`/`standby_energy` columns |
-| **C · Denormalized columns** (broadcast join) | cost (`energy×price`), CO2 (`energy×factor`), degree-days / climate-correct (weather), key-ratio, energy-budget | Reference tables are tiny (weather O(location×day), factors O(scope×validFrom)) → broadcast-join once, write columns |
+| **C · Denormalized columns** (broadcast join) | cost (`energy×price`), CO2 (`energy×factor`), degree-days / climate-correct (weather), key-ratio, energy-budget | Reference tables are tiny → **broadcast-join once in Spark**, write columns. Keys: **weather on (location, date)** (node location from `meter-identity`); **factors on (resource/scope, validFrom)**. Mechanics in §5.3 |
 
 Handlers suffixed `*-old` (`degree-days-old`, `energy-dda-old`, `normal-degree-days-old`, `co2-old`) + `energy-guf` are the legacy degree-day approach, superseded by model-based `climate-correct` — likely droppable (verify).
+
+![The three compute lanes each write columns onto one `measurements_aggregate` item; a read is a single DynamoDB lookup, no joins.](img/fig3-compute-lanes.png)
 
 ### 5.2 `measurements_aggregate` item shape (with §5.1 additions)
 
@@ -103,7 +109,11 @@ Open schema decisions: (1) `hdd`/`cdd` repeat per resource row at a node — acc
 
 ### 5.3 Weather / CO2e / prices — realization
 
-Own each as a small reference table; the Spark rollup broadcast-joins and writes columns (§5.1). **Finalization uses existing machinery, no bespoke trigger for the common case:** set **`LookbackDays ≥ 5`** so the recent window is re-baked as forecast HDD/CDD (or restated factors) finalize; reads are ≤1 rollup-cycle stale. A `(location, date)` late-trigger (existing `late_arrival_trigger`/`late_recomputation`/`backfill_trigger` shape) is a **fallback only** for restatements older than the window. Prereq: **location on `meter-identity`** (lat/lon or weather-location id). Weather is greenfield in ems_rust (only in a spec).
+Own each as a small reference table; the Spark rollup broadcast-joins and writes columns (§5.1).
+
+**How the join works:** the aggregate row already carries the node's hierarchy + resource; add the node's **location** (from `meter-identity`) and Spark broadcast-joins two in-memory tables — `weather(location, date) → hdd, cdd, normal` (from Weatherbit) and `factors(resource/scope, validFrom) → price, co2` — with no shuffle, then computes and writes `hdd / cdd / energy_cc / cost / co2_scope_*`. `hdd`/`cdd` are per-location, so they sit on **location-bearing nodes** (building and below); `cost`/`co2`/`energy_cc` are **additive** (computed at the leaf with local weather, summed up the hierarchy).
+
+**Finalization uses existing machinery, no bespoke trigger for the common case:** set **`LookbackDays ≥ 5`** so the recent window is re-baked as forecast HDD/CDD (or restated factors) finalize; reads are ≤1 rollup-cycle stale. A `(location, date)` late-trigger (existing `late_arrival_trigger`/`late_recomputation`/`backfill_trigger` shape) is a **fallback only** for restatements older than the window. Prereq: **location on `meter-identity`** (lat/lon or weather-location id). Weather is greenfield in ems_rust (only in a spec).
 
 ### 5.4 Service-vs-data boundary — what stays in the read service
 
@@ -121,9 +131,11 @@ Everything that can be data is data (pipeline → `logical_sensor_data` + `measu
 
 ### 5.5 Sensor & formula model; the meter hierarchy
 
-**No meter entity.** The model is typed hierarchy nodes + **sensors** (`S#<int>`, attached via `has_sensor`), each with `purpose` (the **resource** — electricity/heat), `meter_type` (Counter|Gauge), `unit`, `resample_minutes`, and a **`formula`** (`Identity`/`Zero`/`Expr`; `Expr` refs other sensors' computed `S'`, `+ - * / abs`, company-scoped, cycle-checked). `logical_meter_data` is keyed per `logical_id` (a sensor) → rename **`logical_sensor_data`**. A "meter" during switchover = a named collection of `logical_id`s (old counters 1/2/3/10/11).
+**No meter entity.** The model is typed hierarchy nodes + **sensors** (`S#<int>`, attached via `has_sensor`), each with `purpose` (the **resource** — electricity/heat), `meter_type` (Counter|Gauge), `unit`, `resample_minutes`, and a **`formula`** (`Identity`/`Zero`/`Expr`; `Expr` refs other sensors' computed `S'`, `+ - * / abs`, company-scoped, cycle-checked). A **raw sensor reading carries only `{daq_id, timestamp, value, unit}`** — everything else (`logical_id`, hierarchy `hn2..hn9`, resource, `meter_type`, resample) is assigned by **`meter-identity` enrichment keyed on `daq_id`**. The `daq_id` is structured `protocol:schematype:customer:gatewayid:meterserial:sensorid`; **sensors on the same physical device share all but the final `sensorid`**. So there is no "meter with counters": each measurement (energy, flow, forward-temp, return-temp — and on modern meters many more: energy tariffs, production, per-phase, …) is an **independent sensor** with its own `daq_id`/`logical_id`, and the "same physical meter" grouping is just the shared `daq_id` prefix (up to `meterserial`). (The old `TaellerNr` 1/2/3/10/11 is a legacy convention, not a fixed structure — §10.2.) `logical_meter_data` is keyed per `logical_id` → rename **`logical_sensor_data`**; a "meter" during switchover = the set of sensors sharing that prefix.
 
 **Formula status:** the system is implemented (AST + tested `eval`, parser, `attach`/`set_formula`, API, and `formula` is propagated into `meter-identity`) — but **not applied to the time-series**: the hierarchy `evaluate` reading-hook is a stub and the Flink/Glue pipeline has zero formula references. So no derived series exists yet. **Build gap:** a pipeline step running `eval()` per reading, resolving cross-sensor `Ref`s (time-aligned sibling values); formula change → late-recompute. (Evaluate in the pipeline, never at read time.)
+
+![The four old meter concepts (main, sub, calculation, sum flag) collapse into one: a sensor with a formula.](img/fig4-meter-model.png)
 
 **Meter hierarchy = one relationship, not a parallel tree.** The old main/sub tree exists only to avoid double-counting, and main/sub **legitimately crosses buildings**, so the netting relationship is independent of the location hierarchy. Represent it as **one "part-of-main" reference per sub-meter** (cross-node, company-scoped); the netting formula (`main = self − Σ subs`) is **auto-generated and re-derived** from it (add/remove a sub → parent updates; preserves the auto-maintenance the old summation flag gave for free). This is a per-sensor computation DAG, **not** a navigable second hierarchy — and it drops all the old machinery (separate meter tree, `Part of summation` flags, query-time summation contexts, area/context modes). Hand-authored `Expr` is reserved for genuine derived metrics (COP/ratios).
 
@@ -139,7 +151,7 @@ Everything that can be data is data (pipeline → `logical_sensor_data` + `measu
 
 A different bounded context — the identity/hierarchy/metadata registry (its own `me2db` + meter DB; reads **no** measurement DB). Owns meters/sensors/counters, buildings/hierarchy, tags, units, operational-hours, documents, custom fields, ownership. **15 consumers** via `@enity/meter-client`. Role in the measurement path: resolve `meterFilter` → meters + hierarchy (the "which meters" behind "what values").
 
-**Target:** → `hierarchy` service + `meter-identity`, **not** the aggregations service. The measurement read path should read from `meter-identity` (identity/hierarchy is already denormalized into the data), never call a meter service at query time. Enrich `meter-identity` as a **lean read projection** (candidates: reading-type, operational-hours, location, tags), fed by registry change events; per field decide **stamped-at-write** (point-in-time, like the hierarchy path) vs **looked-up-at-read** (current, e.g. tags) — getting it wrong silently rewrites history.
+**Target:** → `hierarchy` service + `meter-identity`, **not** the aggregations service. The measurement read path should read from `meter-identity` (identity/hierarchy is already denormalized into the data), never call a meter service at query time. Enrich `meter-identity` as a **lean read projection** (candidates: reading-type, operational-hours, location, tags, and the **counter-role** that replaces `TaellerNr` — primary / secondary / temperature — expressed as `resource` + `meter_type`, not a counter number; add an explicit `primary` marker only when a node has two energy sensors), fed by registry change events; per field decide **stamped-at-write** (point-in-time, like the hierarchy path) vs **looked-up-at-read** (current, e.g. tags) — getting it wrong silently rewrites history.
 
 ## 8. Raw side: `sensor_measurements` / `raw_data` readers
 
@@ -152,6 +164,8 @@ Disposition = what happens to the service in the target end-state:
 - **subsumed** — the service's functionality is **absorbed into the common service**, and the separate service is **retired**.
 - **eliminate / collapse** — a **thin intermediary** whose callers are **all** entry points (`yggdrasil` / `ems-backend`); once those call the common service directly, it **disappears** — no separate service, nothing to repoint. Higher-value than *client*: it shrinks the middle tier instead of preserving it. (If it has real domain logic, it's *subsumed*, not eliminated.)
 - **out of scope** — a **different bounded context**; not part of this consolidation (left as-is or handled elsewhere).
+
+> **Repoint is a migration step, not the destination.** "client/repoint" only stops a service reaching into `analysis_service`/`meter_service` internals — it reads the clean common API instead. If we stop there we've just relocated the hard coupling one layer down. The **end-state** for each consumer is one of: **fold** its measurement/identity logic into `aggregations`/`hierarchy`; **re-home** a genuinely separate domain (alarms, reporting/CSRD, ML) as its *own* clean bounded-context service the frontend calls as a peer (owns its data, loose coupling via events/APIs — not a middle-tier pass-through); or **retire**. The table below is the *first* move; the fold-in/re-home is the target.
 
 | Consumer | Uses | Disposition |
 |---|---|---|
@@ -202,7 +216,7 @@ Rough sizing + logic shape (src LOC excl. tests). "Subsume" = fold into the comm
 | `report-runner` | 9.2k | report generation (custom/KPI/week, templates, notifications) | **No — stays** (reporting domain) |
 | `climate_reporting_service` | 6.9k | CSRD compliance (emission types/scopes/fields, exports) | **No — stays** (compliance domain) |
 
-**Estimate:** only **`consumption-api`** (easy) and **`computed-benchmark`** (moderate) are genuinely subsumable; everything else stays its own service and just repoints (**client**). `energy-cost` is special — a price/factor registry whose data we plan to own (→ replace later). So the consolidation is real but **narrow**: the win is that all these services stop calling analysis/meter and read the common service instead — not that many of them disappear.
+**Estimate:** `consumption-api` (easy) and `computed-benchmark` (moderate) fold in now; the rest **repoint first** and then reach their end-state as their domains are rebuilt — measurement/identity logic **folds into** `aggregations`/`hierarchy`, genuine domains (alarms, reporting/CSRD, ML) **re-home** as clean bounded-context peers, `energy-cost` becomes a reference-data owner then retires. **Repoint alone is not the goal** — it breaks the analysis/meter coupling but, left there, just relocates it. The near-term consolidation is modest; the destination is a small set of context-owning services, loosely coupled, that the frontend composes from — not a fan-out of middle-tier services.
 
 **me2db reads are hierarchy + meter identity — not a migration blocker.** The services that hit `me2db` directly (`consumption-api`, `energy-cost`, `report-runner`, `climate_reporting_service`) pull almost entirely **hierarchy** (`Bygningselement`, `Firma`, `Adresse`, recursive-hierarchy CTEs) and **meter/sensor identity** (`Maaler`, `Taeller`/`FysiskTaeller`, `Energiform`/`EnergiHovedgruppe`, `Grundenhed`/base-unit/meter-type) — exactly what the new **hierarchy service + `meter-identity`** already hold. So these direct me2db reads are **repoint targets, not blockers**: swap to the new identity/hierarchy source. The only residual is **user/access/recipient data** (`Bruger`, `DataadgangBrugerFirma`, profiles, contact-users — mostly `report-runner` for report distribution) + i18n (`sprog`). This isn't a separate context either: the **hierarchy service already owns users** (`U#<email>` rows, access/block edges, Cognito provisioning). During switchover it needs a **sync path** — the ME2 monolith already CDC-streams *all* entity changes (users included) via the `Me2Events` table → **`me2-events`** Kafka topic (`me2-event-stream`); a consumer projecting user/hierarchy changes into `hierarchy_new` keeps the new system in sync until it becomes the source of truth.
 
@@ -221,7 +235,7 @@ Before committing schema/pipeline changes, verify two models against the current
 
 ### 10.2 Meter-hierarchy extraction (sub→main + calc formulas)
 
-1. **Extract raw relationships** from me2db/meter DB: `meter → parent_meter` (main/sub forest), `isPartOfCalcMeterSum` (summation flag), `counter.formula` + `CounterType.Formula` (calc meters, `[meterId:counterIndex]` refs), meter→counters (1/2/3/10/11) → `logical_id` mapping, area → explicit meter-id lists.
+1. **Extract raw relationships** from me2db/meter DB: `meter → parent_meter` (main/sub forest), `isPartOfCalcMeterSum` (summation flag), `counter.formula` + `CounterType.Formula` (calc meters, `[meterId:counterIndex]` refs), meter→counters (`TaellerNr`) → `logical_id`/`daq_id` mapping — **note 1/2/3/10/11 is a *legacy convention*, not universal**: it's primary/secondary consumption + fwd/return temp (`[10,11]` hardcoded as gauge/temperature in counter-ingestion), but modern meters report many measure types (energy tariffs, production, volume, temps — see the ECM-Bus `config-matcher`), so extract the actual `TaellerNr` set per meter rather than assuming five slots; in the new model each measure is its own sensor sharing a `daq_id` up to `meterserial`, `meter_type` from enrichment. Area → explicit meter-id lists.
 2. **Audit calc-meter grammar.** Parse all `counter.formula`; enumerate operators/functions; confirm they fit `+ - * / abs` + refs. Flag anything richer (min/max/conditional/time) for handling or grammar extension.
 3. **Audit summation modes.** Quantify context (building) vs area (explicit list) vs arbitrary; count cross-building main/sub (legit → cross-node part-of refs); confirm no cross-company refs.
 4. **Derive new-model artifacts.** `parent_meter` → one `part-of-main` ref per sub → generated netting formula `main = self − Σ(part-of-summation subs)`; calc meters → `Expr` (translate `[meterId:counter]` → sensor `Ref`s via counter-index→resource); not-part-of-summation → `Zero`. Relationship is the source of truth; formula is generated.
@@ -238,7 +252,7 @@ Users should not type formulas for the common cases. Instead, illustrate the **c
 
 ## 12. Path ahead — proposed sequencing
 
-Stepwise, **verify-before-build**. After a shared verification phase, the two build tracks (data-denormalization and formula/hierarchy) are independent and run **in parallel**; consolidation/cutover comes last, per-company.
+Stepwise, **verify-before-build**. After a shared verification phase, the two build tracks (data-denormalization and formula/hierarchy) are independent and run **in parallel**; consolidation/cutover comes last. Note: **validation is per company; the cutover itself is a shared switch** (multi-tenant pipeline/services — see Phase 3), so "company by company" applies to *checking*, not to running old and new side by side per tenant.
 
 **Track I — Ingestion completeness** *(parallel foundation; the pipeline must carry **all** measurements before the read side can replace analysis).* Measurement sources still on the legacy **eventlogger** Kafka topics get redirected into the new **Kinesis** stream via **EventBridge Pipes** — the mechanism already live for **me2-events**. Per source:
 - **Electrocom** — write the data-pipeline parser (the hardest; python/ts reference code already exists to port).
@@ -248,6 +262,8 @@ Stepwise, **verify-before-build**. After a shared verification phase, the two bu
 - **Manual meter updates** — arrive **through the pipe** (EventBridge Pipe → Kinesis).
 - **Kinect** — **dead**; decommissioned, nothing to migrate.
 - *Exit:* every active source lands in `logical_sensor_data` via the new pipeline → the legacy eventlogger/ingestion services can be retired.
+
+![The phased path: verify & size first, then extend-the-data ∥ formula-and-hierarchy in parallel, then consolidate & cut over; ingestion runs as a parallel foundation track.](img/fig5-path.png)
 
 **Phase 0 — Verify & size** *(now; read-only, parallel; these are the go/no-go gates).*
 - **Meter-hierarchy diff harness** (§10.2) — run offline via the model's `eval` (no pipeline dependency); validate sub→main + calc-formula derivation vs current summation, per company. → gates Phase 2.
@@ -265,14 +281,14 @@ Stepwise, **verify-before-build**. After a shared verification phase, the two bu
 
 **Phase 2 — Formula & hierarchy** *(the hard prerequisite; parallel with Phase 1; gated on §10.2).*
 - **Wire formula `eval` into the pipeline** (company-scoped, cycle-safe, cross-sensor refs) → derived-sensor rows.
-- **Migrate the meter hierarchy**: old `parent_meter` → `part-of-main` refs (auto-netting), calc meters → `Expr`; per-company **dual-run** until the diff harness is green.
+- **Migrate the meter hierarchy**: old `parent_meter` → `part-of-main` refs (auto-netting), calc meters → `Expr`; populate + validate **company by company** (offline diff harness §10.2) — the derivation is per-company *data*, so it can roll out and be checked one company at a time.
 - Add **Lane B** Flink columns (active-hours/standby).
-- *Exit:* cross-sensor physics + netting materialized; per-company parity.
+- *Exit:* cross-sensor physics + netting materialized; company-by-company parity.
 
-**Phase 3 — Consolidate & cut over** *(last; per-company).*
+**Phase 3 — Consolidate & cut over** *(last).*
 - Extend the **`aggregations`** service to the full analysis surface (filter/groupby/aggregate/values + service-side ratios/resolutions/access-filtering, §5.4).
-- **Subsume** `consumption-api`; **collapse** `computed-benchmark`; **repoint** the client services (§9.1).
-- Cut over **yggdrasil → frontend** per company where validated; retire **legacy endpoints** once metrics show zero traffic.
+- **Subsume** `consumption-api`; **collapse** `computed-benchmark`; **repoint → fold/re-home** the client services (§9.1).
+- **Cutover is a shared switch, not per tenant.** The pipeline + services are multi-tenant, so once validation passes across companies, reads move to the new services **globally** — stageable by **capability/endpoint** (e.g. `get_aggregations` first), not by company. *Per-tenant* cutover would need **dual ingestion** (both pipelines fed) + **per-tenant frontend routing**; that's a separate decision, not assumed here. Retire **legacy endpoints** once metrics show zero traffic.
 - *Exit:* frontend (via yggdrasil temporarily) reads only `aggregations` + `hierarchy`.
 
 **Cross-cutting** *(throughout switchover).*
@@ -287,7 +303,7 @@ Stepwise, **verify-before-build**. After a shared verification phase, the two bu
 
 **Open:**
 1. **Data-volume sizing** (§10.1.3) — M/N/R/L/S → confirm item-size/cost before schema-freeze.
-2. **`meter-identity` enrichment** (§7) — which fields (reading-type, operational-hours, location, tags?), each stamped-at-write vs read-time.
+2. **`meter-identity` enrichment** (§7) — which fields (reading-type, operational-hours, location, tags, **counter-role**?), each stamped-at-write vs read-time. Counter-role replaces the `TaellerNr` primary/secondary/temperature convention (consumers: `meter_service`, `energy-model-v2`, `consumption-api`, `ok-carwash-api`, `report-runner`) — expose as `resource`+`meter_type`, don't carry the counter number forward.
 3. **Wire formula `eval` into the pipeline** (§5.5) — the prerequisite for cross-sensor physics in the data; run the §10.2 diff harness offline first.
 4. **Rename `logical_meter_data` → `logical_sensor_data`** (S3Tables rename = replace + reload; sequence with column changes).
 5. **Extra columns** — Lane A (temp Σ+count, Σ(flow·temp)+Σflow, flow·Δtemp) + Lane C (`hdd,cdd,energy_cc,cost,co2_scope_*`); Lane B daily (`active_hours,standby_energy`).
@@ -299,3 +315,4 @@ Stepwise, **verify-before-build**. After a shared verification phase, the two bu
 11. **Frontend call pattern** — does it hit `values` (#9) or mostly `aggregate`/`groupby`? Decides how much of §5 is on the critical path.
 12. **Middle-tier collapse (§9.1 done, first pass)** — logic-depth estimate: only `consumption-api` (easy) + `computed-benchmark` (moderate, also eliminate candidate) are subsumable; the rest stay clients that repoint. `import-export` fails the thin-filter despite being only-via-yggdrasil. Remaining: confirm `consumption-api`'s `me2db` reads + `computed-benchmark`'s DB→rollup path; verify each "stays" service has no other thin-reshape endpoints worth folding.
 13. **User sync during switchover (§9.1)** — hierarchy owns users, but while me2db is still authoritative, project user/access changes into `hierarchy_new` by consuming the existing **`me2-events`** CDC topic (`Me2Events` → `me2-event-stream`). Scope the consumer (which `Me2Events` entity types → hierarchy nodes/users/access edges) and the cutover point where the new system becomes source of truth. (Adjacent to counter-measurement scope — transition dependency.)
+14. **Cutover model (§12 Phase 3)** — default is a **shared switch**: cut reads over globally, staged by capability/endpoint, once validation passes across companies. **Per-tenant** cutover (company-by-company live switch) is only viable with **dual ingestion** (old + new pipelines fed in parallel) + **per-tenant frontend routing** — decide whether that's worth building, or whether a global/capability-staged cutover is accepted. Per-company *validation* is independent of this and stays either way.
