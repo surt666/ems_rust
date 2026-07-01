@@ -388,7 +388,10 @@ async fn handler(
                 api::finish(handle_aggregations(client, table, &qs).await, Cors::None)
             }
             "get_measurements" => {
-                api::finish(raw::handle_measurements(athena, &qs).await, Cors::None)
+                // Inject the Athena reader (model::repository::measurements) — the
+                // handler owns only the HTTP/HTML shape, not the data source.
+                let read = |q| model::repository::measurements::query(athena, q);
+                api::finish(raw::handle_measurements(read, &qs).await, Cors::None)
             }
             "get_cost" => api::finish(handle_cost(client, table, &qs).await, Cors::None),
             "get_emissions" => api::finish(handle_emissions(client, table, &qs).await, Cors::None),
@@ -1029,7 +1032,7 @@ async fn handle_alarms(
         version = "0.1.0",
     ),
     paths(handle_aggregations, handle_cost, handle_emissions, handle_benchmark, handle_alarms, raw::handle_measurements),
-    components(schemas(Row, Benchmark, BuildingStat, Alarm, AlarmsResponse, raw::Measurement, api::ErrorResponse, api::ErrorDetail)),
+    components(schemas(Row, Benchmark, BuildingStat, Alarm, AlarmsResponse, model::domain::measurement::Measurement, api::ErrorResponse, api::ErrorDetail)),
     tags(
         (name = "aggregations", description = "Hierarchy consumption rollup (Resource-Insights chart)"),
         (name = "measurements", description = "Raw meter readings (Datatilegnelse)"),

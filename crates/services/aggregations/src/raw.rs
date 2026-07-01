@@ -1,75 +1,32 @@
-//! `/measurements` route of the aggregations lambda (one lambda — limits the
-//! Datadog-instrumented function count). Reads the live `all.raw_data` table via
-//! **Amazon Athena** (the iceberg-rust direct path was ~12s; Athena is ~3.5s — it
-//! does the dedup `GROUP BY` server-side and returns only the small page we render).
-//! Returns an **HTML fragment** of `<tr>` rows for the /measurements (Datatilegnelse)
-//! page to swap in with HTMX.
+//! `/measurements` (Datatilegnelse) HTTP handler.
+//!
+//! The data access lives in `model::repository::measurements` (the Athena
+//! adapter) and is **injected** as `read` — so this module owns only the HTTP
+//! concerns: query-string parsing, `?format` negotiation, the HTMX `<tr>`
+//! fragment + keyset cursor, and the error envelope. A test (or a future Redshift
+//! adapter) substitutes a different `read` without touching this handler.
 //!
 //! GET /measurements?daq_id=<id>&from=<date|rfc3339>&to=<...>&limit=<n>&before=<cursor>
-//!   - newest version per timestamp: `max_by(value, ingested_time)` (Athena, server-side).
-//!   - newest-first: ORDER BY timestamp DESC, then LIMIT.
-//!   - keyset "load more": `before` adds `timestamp < before`; the response emits an
-//!     out-of-band `#m-before` input with the next cursor (oldest ts on the page).
+//!   - newest-first: the reader returns rows ORDER BY timestamp DESC, LIMIT n.
+//!   - keyset "load more": `before` → only timestamps < before; the response emits
+//!     an out-of-band `#m-before` input with the next cursor (oldest ts on page).
 use std::collections::HashMap;
-use std::time::Duration as StdDuration;
+use std::future::Future;
 
-use aws_sdk_athena::types::{QueryExecutionContext, ResultConfiguration};
-use aws_sdk_athena::Client as AthenaClient;
-use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::Utc;
 
 use api::{ApiError, ApiResponse, Format};
-use serde::Serialize;
-use utoipa::ToSchema;
+use model::domain::measurement::{Measurement, MeasurementQuery};
 
 const DEFAULT_LIMIT: usize = 100;
 const MAX_LIMIT: usize = 500;
-const POLL_MS: u64 = 300;
-const MAX_POLLS: u32 = 90; // ~27s ceiling, under the 30s lambda timeout
-
-struct Cfg {
-    workgroup: String,
-    output: String,
-    catalog: String,
-    database: String,
-    table: String,
-}
-
-fn cfg() -> Cfg {
-    let env = |k: &str, d: &str| {
-        std::env::var(k)
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| d.into())
-    };
-    Cfg {
-        workgroup: env("ATHENA_WORKGROUP", "daq-workgroup"),
-        output: env(
-            "ATHENA_OUTPUT",
-            "s3://daq-athena-query-results-891377204778-eu-central-1/",
-        ),
-        catalog: env("ATHENA_CATALOG", "s3tablescatalog/measurements"),
-        database: env("ATHENA_DATABASE", "all"),
-        table: env("ATHENA_TABLE", "raw_data"),
-    }
-}
-
-/// One raw meter reading: the newest version (`max_by(value, ingested_time)`)
-/// for a given timestamp. The JSON shape of the `/measurements` route.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct Measurement {
-    /// Reading timestamp, `"YYYY-MM-DD HH:MM:SS"` (UTC, from Athena).
-    pub timestamp: String,
-    /// Formatted reading value.
-    pub value: String,
-    pub unit: String,
-}
 
 /// `GET /meterdata/query/get_measurements?...` — newest raw readings for one sensor.
 ///
 /// `?format=html` (default) returns the `<tr>` fragment the Datatilegnelse page
 /// swaps in with HTMX; `?format=json` returns the `[Measurement]` array. Errors
 /// follow the format: an HTML `<tr>` for `html`, the `{"error":{…}}` envelope for
-/// `json`.
+/// `json`. `read` is the injected data source (Athena in production).
 #[utoipa::path(
     get,
     path = "/meterdata/query/get_measurements",
@@ -88,39 +45,38 @@ pub struct Measurement {
         (status = 500, description = "Athena query failed", body = api::ErrorResponse),
     ),
 )]
-pub async fn handle_measurements(
-    athena: &AthenaClient,
+pub async fn handle_measurements<R, Fut>(
+    read: R,
     qs: &HashMap<String, String>,
-) -> Result<ApiResponse, ApiError> {
+) -> Result<ApiResponse, ApiError>
+where
+    R: FnOnce(MeasurementQuery) -> Fut,
+    Fut: Future<Output = anyhow::Result<Vec<Measurement>>>,
+{
     let format = Format::resolve(qs.get("format").map(String::as_str), Format::Html);
 
     let daq = qs.get("daq_id").cloned().unwrap_or_default();
     if daq.is_empty() {
         return err(format, 400, "Bad_request", "daq_id required");
     }
-    // Treat empty params (blank date inputs) as absent → default to last 1 day.
-    let now = Utc::now();
+    // Treat empty params (blank date inputs) as absent → the adapter defaults the
+    // window to the last day.
     let param = |k: &str| qs.get(k).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    let to = param("to");
-    let from = param("from");
-    let before = param("before");
     let limit = qs
         .get("limit")
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(DEFAULT_LIMIT)
         .clamp(1, MAX_LIMIT);
-
-    match query_rows(
-        athena,
-        &daq,
-        from.as_deref(),
-        to.as_deref(),
-        before.as_deref(),
+    let query = MeasurementQuery {
+        daq_id: daq,
+        from: param("from"),
+        to: param("to"),
+        before: param("before"),
         limit,
-        now,
-    )
-    .await
-    {
+        now: Utc::now(),
+    };
+
+    match read(query).await {
         Ok(rows) => Ok(match format {
             Format::Json => ApiResponse::json(&rows),
             Format::Html => ApiResponse::html(200, render_fragment(&rows, limit)),
@@ -139,171 +95,6 @@ fn err(format: Format, status: u16, code: &str, message: &str) -> Result<ApiResp
             format!("<tr><td colspan=\"4\">Fejl: {}</td></tr>", esc(message)),
         )),
     }
-}
-
-async fn query_rows(
-    athena: &AthenaClient,
-    daq: &str,
-    from: Option<&str>,
-    to: Option<&str>,
-    before: Option<&str>,
-    limit: usize,
-    now: DateTime<Utc>,
-) -> anyhow::Result<Vec<Measurement>> {
-    let c = cfg();
-    let from_lit = match from {
-        Some(s) => ts_literal(s, false)?,
-        None => (now - Duration::days(1))
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string(),
-    };
-    let to_lit = match to {
-        Some(s) => ts_literal(s, true)?,
-        None => now.format("%Y-%m-%d %H:%M:%S").to_string(),
-    };
-    let before_clause = match before {
-        Some(s) => format!(" AND timestamp < timestamp '{}'", ts_literal(s, false)?),
-        None => String::new(),
-    };
-    // daq_id inlined with single-quote escaping (Presto string literal); timestamps
-    // are reformatted from parsed datetimes and the limit is a validated int — all
-    // injection-safe.
-    let sql = format!(
-        "SELECT timestamp, max_by(value, ingested_time) AS value, max_by(unit, ingested_time) AS unit \
-         FROM \"{db}\".\"{tbl}\" \
-         WHERE daq_id = '{daq}' \
-           AND timestamp >= timestamp '{from}' AND timestamp <= timestamp '{to}'{before} \
-         GROUP BY daq_id, timestamp ORDER BY timestamp DESC LIMIT {limit}",
-        db = c.database,
-        tbl = c.table,
-        daq = daq.replace('\'', "''"),
-        from = from_lit,
-        to = to_lit,
-        before = before_clause,
-        limit = limit,
-    );
-
-    // Start → poll → fetch. No result-reuse — always read the freshest raw_data.
-    let start = athena
-        .start_query_execution()
-        .query_string(sql)
-        .work_group(&c.workgroup)
-        .query_execution_context(
-            QueryExecutionContext::builder()
-                .database(&c.database)
-                .catalog(&c.catalog)
-                .build(),
-        )
-        .result_configuration(
-            ResultConfiguration::builder()
-                .output_location(&c.output)
-                .build(),
-        )
-        // No result-reuse cache: this is a live raw-data viewer, so every load
-        // runs fresh against raw_data (the latest readings always show). Trade-off
-        // is the full Athena latency (~7-10s) on every load.
-        .send()
-        .await?;
-    let qid = start
-        .query_execution_id()
-        .ok_or_else(|| anyhow::anyhow!("no query execution id"))?
-        .to_string();
-
-    let mut polls = 0;
-    loop {
-        let ge = athena
-            .get_query_execution()
-            .query_execution_id(&qid)
-            .send()
-            .await?;
-        let status = ge.query_execution().and_then(|q| q.status());
-        let state = status
-            .and_then(|s| s.state())
-            .map(|s| s.as_str().to_string());
-        match state.as_deref() {
-            Some("SUCCEEDED") => break,
-            Some("FAILED") | Some("CANCELLED") => {
-                let reason = status.and_then(|s| s.state_change_reason()).unwrap_or("");
-                return Err(anyhow::anyhow!(
-                    "athena {}: {}",
-                    state.unwrap_or_default(),
-                    reason
-                ));
-            }
-            _ => {
-                polls += 1;
-                if polls >= MAX_POLLS {
-                    return Err(anyhow::anyhow!(
-                        "athena query timed out after {} polls",
-                        polls
-                    ));
-                }
-                tokio::time::sleep(StdDuration::from_millis(POLL_MS)).await;
-            }
-        }
-    }
-
-    let results = athena
-        .get_query_results()
-        .query_execution_id(&qid)
-        .send()
-        .await?;
-    let mut rows = Vec::new();
-    // First row is the column header → skip it.
-    for r in results
-        .result_set()
-        .map(|rs| rs.rows())
-        .unwrap_or_default()
-        .iter()
-        .skip(1)
-    {
-        let cols = r.data();
-        let cell = |i: usize| {
-            cols.get(i)
-                .and_then(|d| d.var_char_value())
-                .unwrap_or_default()
-        };
-        let raw_ts = cell(0);
-        let value = cell(1)
-            .parse::<f64>()
-            .map(|v| format!("{:.3}", v))
-            .unwrap_or_else(|_| cell(1).to_string());
-        rows.push(Measurement {
-            timestamp: norm_ts(raw_ts),
-            value,
-            unit: cell(2).to_string(),
-        });
-    }
-    Ok(rows)
-}
-
-/// Validate + reformat a from/to/cursor value into a Presto `timestamp` literal
-/// body. Accepts RFC3339, `YYYY-MM-DD HH:MM:SS[.fff]`, or date-only `YYYY-MM-DD`.
-fn ts_literal(s: &str, end_of_day: bool) -> anyhow::Result<String> {
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Ok(dt
-            .with_timezone(&Utc)
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string());
-    }
-    for f in ["%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%d %H:%M:%S"] {
-        if let Ok(ndt) = NaiveDateTime::parse_from_str(s, f) {
-            return Ok(ndt.format("%Y-%m-%d %H:%M:%S").to_string());
-        }
-    }
-    let d = NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")?;
-    let t = if end_of_day {
-        NaiveTime::from_hms_opt(23, 59, 59)
-    } else {
-        NaiveTime::from_hms_opt(0, 0, 0)
-    }
-    .expect("valid time");
-    Ok(d.and_time(t).format("%Y-%m-%d %H:%M:%S").to_string())
-}
-
-/// Athena returns e.g. "2026-06-12 09:04:31.000"; normalize to seconds precision.
-fn norm_ts(s: &str) -> String {
-    s.split('.').next().unwrap_or(s).trim().to_string()
 }
 
 fn fmt_date(ts: &str) -> String {
@@ -350,4 +141,81 @@ fn esc(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use api::ApiBody;
+
+    fn qs(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    fn body_of(resp: &ApiResponse) -> &str {
+        match &resp.body {
+            ApiBody::Json(s) | ApiBody::Html(s) => s,
+        }
+    }
+
+    fn sample() -> Vec<Measurement> {
+        vec![
+            Measurement { timestamp: "2026-06-12 09:04:31".into(), value: "1.500".into(), unit: "kWh".into() },
+            Measurement { timestamp: "2026-06-12 08:04:31".into(), value: "1.250".into(), unit: "kWh".into() },
+        ]
+    }
+
+    /// The handler renders the injected rows — no real Athena needed.
+    #[tokio::test]
+    async fn injected_reader_renders_html_fragment() {
+        let resp = handle_measurements(
+            |_q| async { Ok(sample()) },
+            &qs(&[("daq_id", "daq:x"), ("format", "html")]),
+        )
+        .await
+        .expect("html ok");
+        let body = body_of(&resp);
+        assert!(body.contains("2026-06-12 09:04"), "renders a reading: {body}");
+        assert!(body.contains("id=\"m-before\""), "emits the keyset cursor");
+    }
+
+    /// `?format=json` serializes the injected rows.
+    #[tokio::test]
+    async fn injected_reader_serializes_json() {
+        let resp = handle_measurements(
+            |_q| async { Ok(sample()) },
+            &qs(&[("daq_id", "daq:x"), ("format", "json")]),
+        )
+        .await
+        .expect("json ok");
+        let body = body_of(&resp);
+        assert!(body.contains("\"value\":\"1.500\""), "json rows: {body}");
+    }
+
+    /// The parsed query reaches the reader (daq id + defaulted limit).
+    #[tokio::test]
+    async fn passes_query_to_reader() {
+        let resp = handle_measurements(
+            |q: MeasurementQuery| async move {
+                assert_eq!(q.daq_id, "daq:probe");
+                assert_eq!(q.limit, 100);
+                Ok(vec![])
+            },
+            &qs(&[("daq_id", "daq:probe")]),
+        )
+        .await
+        .expect("ok");
+        assert!(body_of(&resp).contains("Ingen aflæsninger"));
+    }
+
+    /// Missing daq_id short-circuits to 400 without calling the reader.
+    #[tokio::test]
+    async fn missing_daq_id_is_400_before_read() {
+        let resp = handle_measurements(
+            |_q| async { panic!("reader must not run") },
+            &qs(&[("format", "json")]),
+        )
+        .await;
+        assert!(matches!(resp, Err(e) if e.status == 400));
+    }
 }

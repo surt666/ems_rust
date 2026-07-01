@@ -1,5 +1,6 @@
 pub mod formula;
 pub mod ids;
+pub mod measurement;
 pub mod node;
 pub mod schema;
 pub mod sensor;

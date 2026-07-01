@@ -21,9 +21,10 @@ anyhow.workspace = true
 url.workspace = true
 # /measurements route — reads all.raw_data via Amazon Athena (engine v3).
 aws-sdk-athena.workspace = true
-# Shared domain vocabulary (the `Resource` value type — same ubiquitous language
-# as the hierarchy context, so it's shared, not duplicated).
-model = { path = "../../model" }
+# Shared domain model: the `Resource` value type + the measurements read adapter
+# (`repository::measurements`, `athena` feature) — this service owns no data, so
+# its reads live in `model` and are injected into the handlers.
+model = { path = "../../model", features = ["athena"] }
 # Shared typed response/error layer + OpenAPI schema derives.
 api = { path = "../../api" }
 utoipa.workspace = true

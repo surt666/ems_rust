@@ -6,6 +6,10 @@ edition.workspace = true
 [features]
 testing = []
 it = []
+# Pulls the Athena measurements adapter (repository::measurements). Services that
+# read measurements enable this; the hierarchy lambda doesn't, so it never
+# compiles the Athena SDK.
+athena = ["dep:aws-sdk-athena"]
 
 [dependencies]
 serde.workspace = true
@@ -14,6 +18,7 @@ serde_dynamo.workspace = true
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-cognitoidentityprovider.workspace = true
+aws-sdk-athena = { workspace = true, optional = true }
 typed-builder.workspace = true
 strum.workspace = true
 chrono.workspace = true
@@ -21,6 +26,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 rand.workspace = true
+utoipa.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true

@@ -1803,6 +1803,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aws-config",
+ "aws-sdk-athena",
  "aws-sdk-cognitoidentityprovider",
  "aws-sdk-dynamodb",
  "chrono",
@@ -1817,6 +1818,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "typed-builder",
+ "utoipa",
 ]
 
 [[package]]

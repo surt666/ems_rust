@@ -1,6 +1,9 @@
 pub mod cognito;
 pub mod dynamodb;
 
+#[cfg(feature = "athena")]
+pub mod measurements;
+
 #[cfg(any(test, feature = "testing"))]
 pub mod memory;
 
