@@ -65,7 +65,7 @@ export function bucketKey(ts: string, g: Granularity): string {
   if (g === "monthly") return ts.slice(0, 7); // YYYY-MM
   if (g === "yearly") return ts.slice(0, 4); // YYYY
   // weekly → ISO-8601 week: YYYY-Www
-  const d = new Date(ts);
+  const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(ts) ? ts : ts + "Z");
   const day = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   const dayNum = (day.getUTCDay() + 6) % 7; // Mon=0
   day.setUTCDate(day.getUTCDate() - dayNum + 3); // nearest Thursday

@@ -26,6 +26,11 @@ test("bucketKey weekly returns an ISO week key", () => {
   assert.equal(bucketKey("2026-01-01T00:00:00", "weekly"), "2026-W01");
 });
 
+test("bucketKey weekly is UTC-stable for a Monday-midnight timestamp", () => {
+  // 2026-01-05 is Monday of ISO week 02 (Jan 1 2026 is Thursday = W01)
+  assert.equal(bucketKey("2026-01-05T00:00:00", "weekly"), "2026-W02");
+});
+
 test("rollup sums per-resource values into sorted buckets", () => {
   const rows = [
     { purpose: "electricity", unit: "kWh", timestamp: "2026-03-01T00:00:00", value: 10 },
