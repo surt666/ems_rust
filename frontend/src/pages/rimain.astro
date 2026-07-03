@@ -1,149 +1,36 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import AggregationChartWrapper from '../components/AggregationChartWrapper.tsx';
+import AggregationBarChart from '../components/AggregationBarChart.tsx';
 ---
 
-<Layout title="Resource Insights - Overblik">
+<Layout title="Resource Insights - Analyse">
 	<div class="page-container">
-		<h1 class="page-title">Resource Insights - Overblik</h1>
-		<p class="page-description">Overblik over ressourceindsigter og energiforbrug.</p>
-
+		<h1 class="page-title">Resource Insights</h1>
 		<div class="card">
-			<div class="controls-grid">
-				<div class="form-field">
-					<label for="fromDate" class="form-label">Fra dato:</label>
-					<input
-						type="datetime-local"
-						id="fromDate"
-						class="form-input"
-					/>
-				</div>
-
-				<div class="form-field">
-					<label for="toDate" class="form-label">Til dato:</label>
-					<input
-						type="datetime-local"
-						id="toDate"
-						class="form-input"
-					/>
-				</div>
-
-				<div class="form-field">
-					<label for="resolution" class="form-label">Opløsning:</label>
-					<select id="resolution" class="form-select">
-						<option value="hourly" selected>Time</option>
-						<option value="daily">Dag</option>
-					</select>
-				</div>
-
-				<div class="form-field">
-					<label for="purpose" class="form-label">Type:</label>
-					<select id="purpose" class="form-select">
-						<option value="Energy" selected>Energi</option>
-						<option value="Water">Vand</option>
-						<option value="Heat">Varme</option>
-					</select>
-				</div>
-
-				<div class="form-field" style="justify-content: end;">
-					<button id="updateChart" class="btn-primary">
-						Opdater Graf
-					</button>
-				</div>
-			</div>
-
-			<div id="selectedNode" style="margin: 1rem 0; font-size: var(--text-sm); color: var(--text-muted);">
-				<span>Valgt node: </span>
-				<span id="nodeIdDisplay" style="font-family: monospace; font-weight: 600;">Ingen valgt</span>
-			</div>
-
-			<div id="chartContainer">
-				<AggregationChartWrapper client:only="react" />
-			</div>
+			<AggregationBarChart client:only="react" />
 		</div>
 	</div>
 </Layout>
 
-<script>
-	function toUTC(dateTimeLocal: string): string {
-		// The rollup buckets are UTC, so treat the picked wall-clock as UTC — the
-		// calendar date maps to the same UTC day. (Parsing it as *local* shifted a
-		// midnight pick back a day in +offset zones, e.g. picking 2/6 queried from 1/6.)
-		return new Date(dateTimeLocal + 'Z').toISOString();
-	}
-
-	function updateChart() {
-		const fromDate = (document.getElementById('fromDate') as HTMLInputElement).value;
-		const toDate = (document.getElementById('toDate') as HTMLInputElement).value;
-		const resolution = (document.getElementById('resolution') as HTMLSelectElement).value;
-		const purpose = (document.getElementById('purpose') as HTMLSelectElement).value;
-		// The aggregate table is keyed by the node's full hierarchy path, so send
-		// "<ancestor path>#<node id>" (not just the node id).
-		const nodeId = sessionStorage.getItem('selectedNodeId') || '';
-		const nodePath = sessionStorage.getItem('selectedNodePath') || '';
-		const company = sessionStorage.getItem('selectedCompanyId') || '';
-		let levelId = nodePath ? `${nodePath}#${nodeId}` : nodeId;
-		// The rollup is partitioned by the company (HN2); ensure it's present even if
-		// the tree only stored a partial parent path.
-		if (company && levelId && !levelId.includes(company)) levelId = `${company}#${levelId}`;
-
-		const event = new CustomEvent('updateChart', {
-			detail: {
-				startDate: toUTC(fromDate),
-				endDate: toUTC(toDate),
-				resolution: resolution,
-				purpose: purpose,
-				levelId: levelId,
-			},
-		});
-		window.dispatchEvent(event);
-	}
-
-	function toLocalInput(d: Date): string {
-		const pad = (n: number) => String(n).padStart(2, '0');
-		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-	}
-
-	function initRiPage() {
-		// Default range: 1 week back from now → now (only if not already chosen).
-		const now = new Date();
-		const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-		const fromInput = document.getElementById('fromDate') as HTMLInputElement | null;
-		const toInput = document.getElementById('toDate') as HTMLInputElement | null;
-		if (fromInput && !fromInput.value) fromInput.value = toLocalInput(weekAgo);
-		if (toInput && !toInput.value) toInput.value = toLocalInput(now);
-
-		// onclick (not addEventListener) so re-running this on every navigation can't double-bind.
-		const updateButton = document.getElementById('updateChart');
-		if (updateButton) (updateButton as HTMLButtonElement).onclick = updateChart;
-
-		// Load the chart immediately for the default week + currently selected node.
-		updateChart();
-	}
-
-	// Runs on the initial load AND after every Astro view-transition navigation
-	// (DOMContentLoaded does NOT fire on client-side swaps).
-	document.addEventListener('astro:page-load', initRiPage);
-</script>
-
 <style>
-	.controls-grid {
+	.ri-filterbar {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-		gap: 1rem;
-		align-items: end;
+		grid-auto-flow: column;
+		justify-content: start;
+		align-items: center;
+		gap: 1.25rem;
+		margin-bottom: 1rem;
+		flex-wrap: wrap;
 	}
-
-	/* Light theme: use the light color-scheme so the native calendar-picker icon
-	   renders dark and stays visible against the light input. */
-	#fromDate,
-	#toDate {
-		color-scheme: light;
+	.ri-daterange { display: grid; grid-auto-flow: column; align-items: center; gap: 6px; }
+	.ri-daterange .form-input { color-scheme: light; }
+	.ri-resolutions, .ri-resources { display: grid; grid-auto-flow: column; gap: 4px; }
+	.ri-res-btn, .ri-res-chip {
+		background: var(--bg-elevated); border: 1px solid var(--border-medium);
+		color: var(--text-secondary); border-radius: 6px; padding: 6px 12px;
+		font-size: var(--text-sm); font-weight: 600; cursor: pointer;
 	}
-	/* WebKit/Blink: ensure the calendar-picker icon is light + clickable. */
-	#fromDate::-webkit-calendar-picker-indicator,
-	#toDate::-webkit-calendar-picker-indicator {
-		opacity: 0.9;
-		cursor: pointer;
-	}
+	.ri-res-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+	.ri-res-chip { border-width: 2px; }
+	.ri-res-chip.active { color: var(--text-primary); background: #fff; }
 </style>
