@@ -151,7 +151,7 @@ export default function ResourceCards({ levelId, resolution = "daily", days = 30
 
   // Drill into the detailed Resource Insights view for THIS resource.
   const drill = (resource: string) => {
-    const url = `/rimain?measure=consumption&resource=${encodeURIComponent(resource)}&resolution=monthly`;
+    const url = `/rimain/?measure=consumption&resource=${encodeURIComponent(resource)}&resolution=monthly`;
     if (window.emsNavigate) window.emsNavigate(url);
     else window.location.href = url;
   };

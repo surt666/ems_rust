@@ -69,7 +69,7 @@ const ctaRows = [
          rest of this column is still representative/mock pending the schema-driven
          dashboard; this card is the real one, fed by the selected node. -->
     <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
-         _="on click call window.emsNavigate('/rimain?measure=consumption&resolution=monthly')">
+         _="on click call window.emsNavigate('/rimain/?measure=consumption&resolution=monthly')">
       <div class="section-header">
         <h2 class="section-title" style="margin-bottom:0">Forbrug pr. ressource</h2>
         <span class="muted" style="margin-left:auto">seneste 30 dage</span>
@@ -79,7 +79,7 @@ const ctaRows = [
 
     <!-- CO₂e card — real, fed by get_emissions (consumption × emission factor). -->
     <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
-         _="on click call window.emsNavigate('/rimain?measure=co2e&resolution=monthly')">
+         _="on click call window.emsNavigate('/rimain/?measure=co2e&resolution=monthly')">
       <div class="section-header">
         <h2 class="section-title" style="margin-bottom:0">CO₂e</h2>
         <span class="muted" style="margin-left:auto">faktorbaseret · seneste 30 dage</span>
@@ -89,7 +89,7 @@ const ctaRows = [
 
     <!-- Combined cost card — real, fed by get_cost (consumption × tariff). -->
     <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
-         _="on click call window.emsNavigate('/rimain?measure=cost&resolution=monthly')">
+         _="on click call window.emsNavigate('/rimain/?measure=cost&resolution=monthly')">
       <div class="section-header">
         <h2 class="section-title" style="margin-bottom:0">Samlet omkostning</h2>
         <span class="muted" style="margin-left:auto">tariffbaseret · seneste 30 dage</span>
