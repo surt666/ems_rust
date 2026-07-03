@@ -49,11 +49,15 @@ body { background: var(--bg-dark); color: var(--text-primary); }
    (global.css shares --bg-panel between sidebar and cards,
     so we re-darken the chrome explicitly)
    ============================================================ */
-.sidebar,
-.top-nav {
+.sidebar {
   border-color: #2b3a4a;
 }
-.top-nav { background: var(--bg-deepest); }          /* navy chrome */
+/* Top module bar: white to match the live Enity design (only the logo cell +
+   hierarchy panel are teal). */
+.top-nav {
+  background: #ffffff;
+  border-color: var(--border-medium);
+}
 .sidebar { background: #003644; }                    /* Enity brand teal — exact hierarchy-panel bg from ems.enity.io */
 
 .sidebar-label        { color: #7c8a99; }
@@ -150,15 +154,15 @@ body { background: var(--bg-dark); color: var(--text-primary); }
 }
 .hier-select.active:hover { background-color: var(--accent-hover); }
 
-/* ——— Top-nav links sit on dark chrome ——— */
-.nav-link        { color: #7c8a99; }
-.nav-link:hover  { color: #c5ced8; }
-.nav-link.active { color: #ffffff; border-bottom-color: var(--accent); }
+/* ——— Top-nav links sit on the white module bar ——— */
+.nav-link        { color: var(--text-secondary); }
+.nav-link:hover  { color: var(--text-primary); }
+.nav-link.active { color: var(--text-primary); border-bottom-color: var(--accent); }
 
-/* Dropdown menus that open off the dark nav */
-.dropdown-menu { background: var(--bg-deepest); border-color: #2b3a4a; }
-.dropdown-menu .nav-link:hover { background: #1f2c3b; }
-.dropdown-menu .nav-link.active { background: rgba(245,132,31,0.18); }
+/* Dropdown menus that open off the white nav */
+.dropdown-menu { background: #ffffff; border-color: var(--border-medium); box-shadow: 0 6px 20px rgba(0,0,0,0.12); }
+.dropdown-menu .nav-link:hover { background: var(--bg-elevated); }
+.dropdown-menu .nav-link.active { background: rgba(245,132,31,0.12); color: var(--accent); }
 
 /* ============================================================
    CARDS — real borders + soft shadow on the light bg
