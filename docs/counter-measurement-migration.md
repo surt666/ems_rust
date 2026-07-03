@@ -153,6 +153,8 @@ A different bounded context — the identity/hierarchy/metadata registry (its ow
 
 **Target:** → `hierarchy` service + `meter-identity`, **not** the aggregations service. The measurement read path should read from `meter-identity` (identity/hierarchy is already denormalized into the data), never call a meter service at query time. Enrich `meter-identity` as a **lean read projection** (candidates: reading-type, operational-hours, location, tags, and the **counter-role** that replaces `TaellerNr` — primary / secondary / temperature — expressed as `resource` + `meter_type`, not a counter number; add an explicit `primary` marker only when a node has two energy sensors), fed by registry change events; per field decide **stamped-at-write** (point-in-time, like the hierarchy path) vs **looked-up-at-read** (current, e.g. tags) — getting it wrong silently rewrites history.
 
+**Building-level reference data → node metadata.** The per-company **schema** already lets each company declare typed metadata fields on node types (a `building` carries `lat`/`lon` today). So building attributes the read side divides/joins by — **area & heated-area, custom keys (from `keyratio`), operational-hours** — belong as **hierarchy node metadata**, not separate services. This **subsumes `keyratio`'s key-value storage into the hierarchy service** (system keys = typed `building` fields; custom keys = company-declared fields, or a single `custom_keys` JSON map if they churn); the intensity ratio (consumption ÷ key-value) stays a read-time divide in `aggregations` (§5.4). **Caveat — node metadata is current-only** (updated in place, no valid-from history), while `keyratio` values are time-versioned: decide per key between **current-value normalization** (fine for area — rarely changes, often the intended basis) and **historical accuracy** (needs a small temporal side-table, or accept the simplification). Same point-in-time-vs-current call as the enrichment fields above.
+
 ## 8. Raw side: `sensor_measurements` / `raw_data` readers
 
 The analytics/frontend path does **not** read raw (it's all on logical). Consumer read of raw = the **datatilegnelse** view → `get_measurements` over `raw_data` via Athena. Direct raw readers are pipeline/quality (`counter-ingestion` transform, `sensor-measurements-stat-manager`, `-missing-readings-manager`, `-management`, `-ingestion`) → Flink/Glue. **One outlier:** `ok-carwash-api` reads raw via `sensor-measurements-management` (`fetchAdjustedReadings`) for per-car-wash consumption → **MARKED FOR UPDATE**: repoint to `raw_data`/Athena or the logical path.
@@ -219,6 +221,43 @@ Rough sizing + logic shape (src LOC excl. tests). "Subsume" = fold into the comm
 **Estimate:** `consumption-api` (easy) and `computed-benchmark` (moderate) fold in now; the rest **repoint first** and then reach their end-state as their domains are rebuilt — measurement/identity logic **folds into** `aggregations`/`hierarchy`, genuine domains (alarms, reporting/CSRD, ML) **re-home** as clean bounded-context peers, `energy-cost` becomes a reference-data owner then retires. **Repoint alone is not the goal** — it breaks the analysis/meter coupling but, left there, just relocates it. The near-term consolidation is modest; the destination is a small set of context-owning services, loosely coupled, that the frontend composes from — not a fan-out of middle-tier services.
 
 **me2db reads are hierarchy + meter identity — not a migration blocker.** The services that hit `me2db` directly (`consumption-api`, `energy-cost`, `report-runner`, `climate_reporting_service`) pull almost entirely **hierarchy** (`Bygningselement`, `Firma`, `Adresse`, recursive-hierarchy CTEs) and **meter/sensor identity** (`Maaler`, `Taeller`/`FysiskTaeller`, `Energiform`/`EnergiHovedgruppe`, `Grundenhed`/base-unit/meter-type) — exactly what the new **hierarchy service + `meter-identity`** already hold. So these direct me2db reads are **repoint targets, not blockers**: swap to the new identity/hierarchy source. The only residual is **user/access/recipient data** (`Bruger`, `DataadgangBrugerFirma`, profiles, contact-users — mostly `report-runner` for report distribution) + i18n (`sprog`). This isn't a separate context either: the **hierarchy service already owns users** (`U#<email>` rows, access/block edges, Cognito provisioning). During switchover it needs a **sync path** — the ME2 monolith already CDC-streams *all* entity changes (users included) via the `Me2Events` table → **`me2-events`** Kafka topic (`me2-event-stream`); a consumer projecting user/hierarchy changes into `hierarchy_new` keeps the new system in sync until it becomes the source of truth.
+
+**`keyratio` (two services) — reference data, folds into hierarchy.** `keyratio-v3-service` is the current key-value store (custom + system keys per building, time-versioned; `keyratio_url`); the older `keyratio` is `keyratio_legacy_url`, used **only** by the legacy `benchmark` service → **old `keyratio` + `benchmark` retire together** (same legacy pair as `benchmark`→`computed-benchmark`). Like `energy-cost`, `keyratio` is a **reference-data owner**, not a measurement consumer: its key-values become **hierarchy node metadata** (§7, area/heated-area/custom keys) and the intensity ratio a read-time divide (§5.4). So `keyratio-v3`'s *storage* is subsumed into hierarchy metadata rather than kept as a service; the only open question is the current-vs-time-versioned call for keys that change (§7).
+
+### 9.2 Endpoint mapping — old calls → going forward
+
+**Old endpoint families → new:**
+
+| Old call | Going forward |
+|---|---|
+| analysis `aggregate` / `filter-query` / `filter-groupby` / `values` (hour/day) | **aggregations `get_aggregations`** (rollup read) |
+| the `values` compute layer (degree-days, cost, CO2, …) | `get_aggregations` **+ service-side compute** (§5) |
+| analysis `reading-count` / `reading-bounds` / `latest-reading` | columns already in the rollup (`count`, `last_value`/`last_ts`); add a `first` bound |
+| analysis `legacy/consumption`\|`zoom` | **drop** (legacy) |
+| raw readings / datatilegnelse | **aggregations `get_measurements`** (Athena) |
+| meter `queryContext` / `queryIds` / `query` / `buildingQuery` / tags | **hierarchy `/query/{action}`** |
+
+**Per-consumer** (what each calls today on analysis/meter, and going forward). The **frontend "Resource Insights"** module (`lis`: Overblik / Analyse / Energimodel) is the *primary* consumer — served today via yggdrasil, calling `get_aggregations` going forward. `climate_reporting_service` consumes measurement data **indirectly through yggdrasil** (`climateReporting*StatementQuery`), hence no direct analysis calls.
+
+| Consumer | Old analysis calls | Old meter/other | Going forward | Disposition |
+|---|---|---|---|---|
+| **Frontend — Resource Insights** (via yggdrasil) | aggregate, values, groupby, filter-query | meter queryContext | **`get_aggregations`** + hierarchy `/query`; yggdrasil temporary façade | the target |
+| `yggdrasil` (BFF) | all 8 (aggregate, filter/details-query, filter/details-groupby, values, latest-reading, keyValuesSum) | meter (all) | `get_aggregations` / `get_measurements` + hierarchy; **temporary façade** | client (façade) |
+| `consumption-api` | aggregate, values | meter buildingQuery/tags/context | **subsumed** → `get_aggregations` | subsume |
+| `energy-model-service` (v1) | filter-query, values | meter | `get_aggregations` + service compute | client (verify legacy) |
+| `energy-model-v2` | reading-bounds (`.first`) | meter | `get_aggregations` (+ first-bound) + hierarchy | client |
+| `computed-benchmark` | filter-groupby | — | `get_aggregations` (grouped) | client / collapse |
+| `report-runner` | details-query, filter-groupby | meter, me2 | `get_aggregations` + hierarchy | client |
+| `export` | aggregate | meter queryContext/queryIds | `get_aggregations` + hierarchy | client |
+| `import-export` | latest-reading | meter | `get_aggregations` (latest col) + hierarchy | client |
+| `ok-carwash-api` | values | meter query/queryIds; **raw** | `get_aggregations` + `get_measurements` | client (+§8) |
+| `alarm_runner` | filter-query | meter query | `get_aggregations` + hierarchy | client |
+| `missing-manual-readings` | reading-count | meter | count from rollup; **out of scope** (manual workflow) | out of scope |
+| `climate_reporting_service` | — (via yggdrasil `climateReporting*StatementQuery`) | meter queryContext | `get_aggregations` (consumption + `co2_scope_*`) + hierarchy | client |
+| `alarm-management` | — | meter queryContext/queryIds | hierarchy `/query` (identity only) | client (identity) |
+| `energy-cost` | — | meter query | reference-data owner (prices) → retire | out of scope |
+
+**Net:** everything going forward is **`aggregations`** (`get_aggregations` for the rollup, `get_measurements` for raw) **+ `hierarchy` `/query`** — two services, two endpoint families. yggdrasil stays a temporary façade so the frontend cuts over without waiting for every consumer.
 
 ## 10. Verification plan
 
@@ -303,7 +342,7 @@ Stepwise, **verify-before-build**. After a shared verification phase, the two bu
 
 **Open:**
 1. **Data-volume sizing** (§10.1.3) — M/N/R/L/S → confirm item-size/cost before schema-freeze.
-2. **`meter-identity` enrichment** (§7) — which fields (reading-type, operational-hours, location, tags, **counter-role**?), each stamped-at-write vs read-time. Counter-role replaces the `TaellerNr` primary/secondary/temperature convention (consumers: `meter_service`, `energy-model-v2`, `consumption-api`, `ok-carwash-api`, `report-runner`) — expose as `resource`+`meter_type`, don't carry the counter number forward.
+2. **`meter-identity` / node-metadata enrichment** (§7) — which fields (reading-type, operational-hours, location, tags, **counter-role**, **building keys**?), each stamped-at-write vs read-time. Counter-role replaces the `TaellerNr` primary/secondary/temperature convention (consumers: `meter_service`, `energy-model-v2`, `consumption-api`, `ok-carwash-api`, `report-runner`) — expose as `resource`+`meter_type`. Building keys (area/heated-area/custom, from `keyratio`) → node metadata; same current-vs-time-versioned decision.
 3. **Wire formula `eval` into the pipeline** (§5.5) — the prerequisite for cross-sensor physics in the data; run the §10.2 diff harness offline first.
 4. **Rename `logical_meter_data` → `logical_sensor_data`** (S3Tables rename = replace + reload; sequence with column changes).
 5. **Extra columns** — Lane A (temp Σ+count, Σ(flow·temp)+Σflow, flow·Δtemp) + Lane C (`hdd,cdd,energy_cc,cost,co2_scope_*`); Lane B daily (`active_hours,standby_energy`).
