@@ -42,7 +42,9 @@ Illustrator export). Pick the variant by background:
   `/auth/`, not the main app). Ignore for the app UI; **Source Sans Pro** is the app face.
 
 ## Login page extras
-- Left hero background image: `/auth/assets/background-RAWRQ3N7.jpg` (a building photo;
-  local equivalent already in repo as `frontend/public/images/login-building.jpg`).
+- Left hero background image: `/auth/assets/background-RAWRQ3N7.jpg` (glass building at
+  dusk with an on-brand orange bar-chart overlay, 1920×1080). Downloaded to
+  `./brand/login-background.jpg` and wired in as `frontend/public/images/login-building.jpg`
+  (the `.login-brand-bg` source).
 - The `/auth/` app is a distinct SPA (PrimeIcons + Tailwind, `Public Sans`), separate
   from the main authenticated app (`Source Sans Pro`).
