@@ -872,26 +872,28 @@ button {
 .login-brand-bg {
   position: absolute;
   inset: 0;
-  /* Light scrim only behind the bottom text — keeps the photo bright like the
-     live login while the tagline/stats stay legible. Uses the brand teal tone
-     (not navy) so it works with the photo's warm dusk light. */
+  /* Very light scrim at the very bottom edge only — the photo stays bright like
+     the live login; the bottom text carries its own legibility via text-shadow. */
   background:
-    linear-gradient(to top, rgba(0,25,32,0.80) 0%, rgba(0,25,32,0.30) 38%, rgba(0,25,32,0) 68%),
+    linear-gradient(to top, rgba(0,18,24,0.45) 0%, rgba(0,18,24,0.12) 16%, rgba(0,18,24,0) 32%),
     url('/images/login-building.jpg') center/cover no-repeat;
 }
 
 .login-brand-content {
   position: relative;
   z-index: 1;
+  /* legibility on the bright photo without needing a heavy overlay */
+  text-shadow: 0 1px 14px rgba(0,0,0,0.75), 0 1px 3px rgba(0,0,0,0.6);
 }
 
-/* Teal wordmark centered above the login form (matches the live login) */
+/* Large teal wordmark centered above the login form (matches ems.enity.io,
+   where it's ~400px wide / near the full form width) */
 .login-form-logo {
-  width: 240px;
-  max-width: 70%;
+  width: 100%;
+  max-width: 360px;
   height: auto;
   display: block;
-  margin: 0 auto 28px;
+  margin: 0 auto 40px;
 }
 
 .login-brand-tagline {
@@ -902,7 +904,7 @@ button {
 
 .login-brand-description {
   font-size: var(--text-sm);
-  color: var(--text-muted);
+  color: #e6ecef;
   line-height: 1.7;
   max-width: 360px;
 }
@@ -923,7 +925,7 @@ button {
 
 .login-stat-label {
   font-size: var(--text-xs);
-  color: var(--text-muted);
+  color: #d3dade;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-top: 2px;
@@ -938,7 +940,21 @@ button {
 
 .login-form-container {
   width: 100%;
-  max-width: 360px;
+  max-width: 400px;
+}
+
+/* Larger login controls to match ems.enity.io (scoped to the login panel so
+   the app-wide .form-input sizing is untouched). */
+.login-form-panel .form-input {
+  padding: 15px 16px;
+  font-size: var(--text-lg);
+  border-radius: 8px;
+}
+.login-form-panel .form-label {
+  font-size: var(--text-sm);
+}
+.login-form-panel .form {
+  gap: 1.25rem;
 }
 
 .lang-switcher {
@@ -988,11 +1004,11 @@ button {
 .btn-login {
   width: 100%;
   background: var(--accent);
-  color: var(--bg-dark);
+  color: #ffffff;
   font-weight: 600;
-  padding: 11px;
+  padding: 15px;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 8px;
   font-size: var(--text-lg);
   font-family: var(--font);
   cursor: pointer;
