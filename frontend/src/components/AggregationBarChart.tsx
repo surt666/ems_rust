@@ -53,11 +53,13 @@ export default function AggregationBarChart() {
     const run = async () => {
       const lvl = resolveLevelId();
       if (!lvl) { setStatus("error"); setMsg("Ingen node valgt."); return; }
+      // Always fetch ALL resources so every resource is available as a toggle chip;
+      // the clicked `resource` is only the default selection (filtered client-side
+      // via `selected`). Don't filter the API by resource.
       const params = new URLSearchParams({
         level_id: lvl, resolution: apiResolution(resolution),
         start: new Date(from).toISOString(), end: new Date(to + "T23:59:59Z").toISOString(),
       });
-      if (measure === "consumption" && resource) params.set("resource", resource);
       try {
         setStatus("loading");
         const res = await fetch(`${aggBase()}/meterdata/query/${measureDef.action}?${params.toString()}`);
