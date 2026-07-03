@@ -16,6 +16,9 @@ import "../styles/enity-theme.css";
 		<meta name="description" content="EMS Login" />
 		<meta name="viewport" content="width=device-width" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+Pro:ital,wght@0,400;0,600;0,700;1,400&display=swap" />
 		<meta name="generator" content={Astro.generator} />
 		<title>{title}</title>
 	</head>
@@ -24,7 +27,7 @@ import "../styles/enity-theme.css";
 			<div class="login-brand">
 				<div class="login-brand-bg"></div>
 				<div class="login-brand-content">
-					<div class="login-brand-logo">EMS</div>
+					<img class="login-brand-logo" src="/images/logo-app-topleft.svg" alt="Enity EMS" width="220" height="47" />
 					<div class="login-brand-tagline" data-i18n="login.brand_tagline">Energy Management System</div>
 					<p class="login-brand-description" data-i18n="login.brand_description">
 						Overvåg og optimer dit energiforbrug på tværs af bygninger,

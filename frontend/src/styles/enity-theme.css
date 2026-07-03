@@ -54,7 +54,7 @@ body { background: var(--bg-dark); color: var(--text-primary); }
   border-color: #2b3a4a;
 }
 .top-nav { background: var(--bg-deepest); }          /* navy chrome */
-.sidebar { background: #16323a; }                    /* dark teal/petrol (matches the EMS reference) */
+.sidebar { background: #003644; }                    /* Enity brand teal — exact hierarchy-panel bg from ems.enity.io */
 
 .sidebar-label        { color: #7c8a99; }
 /* Rust-generated tree uses .node-name-link; light text so it's visible on the

@@ -61,8 +61,8 @@
   --nav-height: 44px;
   --breadcrumb-height: 32px;
 
-  /* Typography */
-  --font: system-ui, -apple-system, sans-serif;
+  /* Typography — Source Sans Pro is the Enity/EMS app face (matches ems.enity.io) */
+  --font: "Source Sans Pro", Arial, Helvetica, sans-serif;
   --text-xs: 0.6875rem;
   --text-sm: 0.75rem;
   --text-base: 0.875rem;     /* was 0.8125rem (13px → 14px) */
@@ -123,21 +123,16 @@ code {
 /* --- Brand / logo (top-left, above the hierarchy sidebar) --- */
 .brand {
   grid-area: brand;
-  background: #16323a;                 /* match the sidebar teal — one continuous left column */
+  background: #003644;                 /* Enity brand teal — one continuous left column with the sidebar */
   border-bottom: 1px solid var(--border-subtle);
   display: grid;
-  grid-template-columns: auto auto;
   justify-content: start;
   align-items: center;
-  gap: 10px;
   padding: 0 16px;
   text-decoration: none;
 }
-.brand-mark { width: 30px; height: 30px; flex: none; }
-.brand-mark path { fill: #e6edf2; }   /* light peak on the dark teal */
-.brand-text { display: grid; line-height: 1.05; }
-.brand-name { font-weight: 700; font-size: 1.05rem; color: #ffffff; letter-spacing: 0.3px; }
-.brand-sub  { font-size: 0.62rem; color: #7c8a99; letter-spacing: 2.5px; text-transform: uppercase; }
+/* Official Enity wordmark, white variant for the dark teal chrome (public/images/logo-app-topleft.svg) */
+.brand-logo { height: 26px; width: auto; display: block; }
 
 /* --- Top Navigation --- */
 .top-nav {
@@ -888,10 +883,9 @@ button {
 }
 
 .login-brand-logo {
-  font-size: 2rem;
-  font-weight: 800;
-  color: white;
-  letter-spacing: -0.02em;
+  height: 44px;
+  width: auto;
+  display: block;
   margin-bottom: 8px;
 }
 
