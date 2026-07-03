@@ -3026,3 +3026,7 @@ dialog::backdrop {
 .ri-res-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .ri-res-chip { border-width: 2px; }
 .ri-res-chip.active { color: var(--text-primary); background: #fff; }
+
+/* Dashboard consumption cards (ConsumptionCard island) */
+.cc-controls { display: grid; grid-auto-flow: column; justify-content: end; gap: 8px; margin-bottom: 8px; }
+.cc-select { width: auto; padding: 6px 10px; font-size: var(--text-sm); }

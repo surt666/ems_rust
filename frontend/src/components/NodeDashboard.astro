@@ -6,10 +6,7 @@
 // contract. Becomes the node view's default tab once backend-integrated; will
 // eventually vary by hierarchy level via the company schema (see spec
 // 2026-06-24-node-dashboard-schema-driven.md).
-import ResourceChart from "./ResourceChart.tsx";
-import ResourceCards from "./ResourceCards.tsx";
-import CostCard from "./CostCard.tsx";
-import EmissionsCard from "./EmissionsCard.tsx";
+import ConsumptionCard from "./ConsumptionCard.tsx";
 import BenchmarkCard from "./BenchmarkCard.tsx";
 import AlarmsCard from "./AlarmsCard.tsx";
 
@@ -65,38 +62,27 @@ const ctaRows = [
   <div class="nd-col">
     <h3 class="section-title">Forbrugsoverblik</h3>
 
-    <!-- Live per-resource consumption from the aggregations API (ECharts). The
-         rest of this column is still representative/mock pending the schema-driven
-         dashboard; this card is the real one, fed by the selected node. -->
     <div class="card nd-energy">
       <div class="section-header">
-        <h2 class="section-title" style="margin-bottom:0">Forbrug pr. ressource</h2>
-        <span class="muted" style="margin-left:auto">seneste 30 dage</span>
+        <h2 class="section-title" style="margin-bottom:0">Samlet</h2>
       </div>
-      <ResourceChart client:only="react" resolution="daily" days={30} height={280} />
+      <ConsumptionCard client:only="react" resource="combined" title="Samlet" height={240} />
     </div>
 
-    <!-- CO₂e card — real, fed by get_emissions (consumption × emission factor). -->
     <div class="card nd-energy">
-      <div class="section-header">
-        <h2 class="section-title" style="margin-bottom:0">CO₂e</h2>
-        <span class="muted" style="margin-left:auto">faktorbaseret · seneste 30 dage</span>
-      </div>
-      <EmissionsCard client:only="react" resolution="daily" days={30} height={180} />
+      <div class="section-header"><h2 class="section-title" style="margin-bottom:0">Varme</h2></div>
+      <ConsumptionCard client:only="react" resource="district_heating" title="Varme" height={200} />
     </div>
 
-    <!-- Combined cost card — real, fed by get_cost (consumption × tariff). -->
     <div class="card nd-energy">
-      <div class="section-header">
-        <h2 class="section-title" style="margin-bottom:0">Samlet omkostning</h2>
-        <span class="muted" style="margin-left:auto">tariffbaseret · seneste 30 dage</span>
-      </div>
-      <CostCard client:only="react" resolution="daily" days={30} height={200} />
+      <div class="section-header"><h2 class="section-title" style="margin-bottom:0">Vand</h2></div>
+      <ConsumptionCard client:only="react" resource="water" title="Vand" height={200} />
     </div>
 
-    {/* Live per-resource consumption cards (ECharts), fed by the aggregations API —
-         one card per resource present under the selected node (totals + daily trend). */}
-    <ResourceCards client:only="react" resolution="daily" days={30} />
+    <div class="card nd-energy">
+      <div class="section-header"><h2 class="section-title" style="margin-bottom:0">EL</h2></div>
+      <ConsumptionCard client:only="react" resource="electricity" title="EL" height={200} />
+    </div>
   </div>
 </div>
 
