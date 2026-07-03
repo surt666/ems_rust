@@ -872,8 +872,11 @@ button {
 .login-brand-bg {
   position: absolute;
   inset: 0;
+  /* Light scrim only behind the bottom text — keeps the photo bright like the
+     live login while the tagline/stats stay legible. Uses the brand teal tone
+     (not navy) so it works with the photo's warm dusk light. */
   background:
-    linear-gradient(to top, rgba(2,6,23,0.95) 0%, rgba(2,6,23,0.4) 50%, rgba(2,6,23,0.2) 100%),
+    linear-gradient(to top, rgba(0,25,32,0.80) 0%, rgba(0,25,32,0.30) 38%, rgba(0,25,32,0) 68%),
     url('/images/login-building.jpg') center/cover no-repeat;
 }
 
@@ -882,11 +885,13 @@ button {
   z-index: 1;
 }
 
-.login-brand-logo {
-  height: 44px;
-  width: auto;
+/* Teal wordmark centered above the login form (matches the live login) */
+.login-form-logo {
+  width: 240px;
+  max-width: 70%;
+  height: auto;
   display: block;
-  margin-bottom: 8px;
+  margin: 0 auto 28px;
 }
 
 .login-brand-tagline {
