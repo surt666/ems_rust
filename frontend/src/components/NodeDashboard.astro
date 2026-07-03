@@ -6,7 +6,10 @@
 // contract. Becomes the node view's default tab once backend-integrated; will
 // eventually vary by hierarchy level via the company schema (see spec
 // 2026-06-24-node-dashboard-schema-driven.md).
-import ConsumptionCard from "./ConsumptionCard.tsx";
+import ResourceChart from "./ResourceChart.tsx";
+import ResourceCards from "./ResourceCards.tsx";
+import CostCard from "./CostCard.tsx";
+import EmissionsCard from "./EmissionsCard.tsx";
 import BenchmarkCard from "./BenchmarkCard.tsx";
 import AlarmsCard from "./AlarmsCard.tsx";
 
@@ -62,27 +65,41 @@ const ctaRows = [
   <div class="nd-col">
     <h3 class="section-title">Forbrugsoverblik</h3>
 
-    <div class="card nd-energy">
+    <!-- Live per-resource consumption from the aggregations API (ECharts). The
+         rest of this column is still representative/mock pending the schema-driven
+         dashboard; this card is the real one, fed by the selected node. -->
+    <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
+         _="on click call window.emsNavigate('/rimain?measure=consumption&resolution=monthly')">
       <div class="section-header">
-        <h2 class="section-title" style="margin-bottom:0">Samlet</h2>
+        <h2 class="section-title" style="margin-bottom:0">Forbrug pr. ressource</h2>
+        <span class="muted" style="margin-left:auto">seneste 30 dage</span>
       </div>
-      <ConsumptionCard client:only="react" resource="combined" height={240} />
+      <ResourceChart client:only="react" resolution="daily" days={30} height={280} />
     </div>
 
-    <div class="card nd-energy">
-      <div class="section-header"><h2 class="section-title" style="margin-bottom:0">Varme</h2></div>
-      <ConsumptionCard client:only="react" resource="district_heating" height={200} />
+    <!-- CO₂e card — real, fed by get_emissions (consumption × emission factor). -->
+    <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
+         _="on click call window.emsNavigate('/rimain?measure=co2e&resolution=monthly')">
+      <div class="section-header">
+        <h2 class="section-title" style="margin-bottom:0">CO₂e</h2>
+        <span class="muted" style="margin-left:auto">faktorbaseret · seneste 30 dage</span>
+      </div>
+      <EmissionsCard client:only="react" resolution="daily" days={30} height={180} />
     </div>
 
-    <div class="card nd-energy">
-      <div class="section-header"><h2 class="section-title" style="margin-bottom:0">Vand</h2></div>
-      <ConsumptionCard client:only="react" resource="water" height={200} />
+    <!-- Combined cost card — real, fed by get_cost (consumption × tariff). -->
+    <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
+         _="on click call window.emsNavigate('/rimain?measure=cost&resolution=monthly')">
+      <div class="section-header">
+        <h2 class="section-title" style="margin-bottom:0">Samlet omkostning</h2>
+        <span class="muted" style="margin-left:auto">tariffbaseret · seneste 30 dage</span>
+      </div>
+      <CostCard client:only="react" resolution="daily" days={30} height={200} />
     </div>
 
-    <div class="card nd-energy">
-      <div class="section-header"><h2 class="section-title" style="margin-bottom:0">EL</h2></div>
-      <ConsumptionCard client:only="react" resource="electricity" height={200} />
-    </div>
+    {/* Live per-resource consumption cards (ECharts), fed by the aggregations API —
+         one card per resource present under the selected node (totals + daily trend). */}
+    <ResourceCards client:only="react" resolution="daily" days={30} />
   </div>
 </div>
 
@@ -123,6 +140,10 @@ const ctaRows = [
 
   .nd-pos { color: var(--success); }
   .nd-neg { color: var(--danger); }
+
+  /* Consumption graphs drill into the detailed Resource Insights view on click. */
+  .nd-drill { cursor: pointer; transition: box-shadow 0.15s ease; }
+  .nd-drill:hover { box-shadow: 0 2px 10px rgba(0,0,0,0.10); }
 
   @media (max-width: 1100px) {
     .node-dashboard { grid-template-columns: 1fr; }

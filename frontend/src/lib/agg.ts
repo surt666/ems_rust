@@ -1,6 +1,6 @@
-// Shared helpers for the aggregations-API dashboard islands (AggregationBarChart,
-// ConsumptionCard). Each island used to copy these verbatim; keep them here so the
-// rollup-key contract and the resource labels stay in one place.
+// Shared helpers for the aggregations-API islands (AggregationBarChart, ResourceChart,
+// ResourceCards, CostCard, EmissionsCard). Each island used to copy these verbatim; keep
+// them here so the rollup-key contract and the resource labels stay in one place.
 
 /** Base URL of the aggregations HTTP API (empty during local/dev). */
 export const aggBase = (): string => import.meta.env.PUBLIC_AGG_API_BASE_URL || "";
@@ -19,8 +19,8 @@ export const RESOURCE_LABELS: Record<string, string> = {
  * The selected node's full hierarchy path, resolved from sessionStorage. The
  * rollup is keyed by the full path and partitioned by company (HN2), so ensure
  * the company segment is present even when the tree only stored a partial parent
- * path. The same contract every dashboard island (AggregationBarChart,
- * ConsumptionCard) relies on.
+ * path. The same contract every dashboard island (AggregationBarChart and the
+ * dashboard cards) relies on.
  */
 export function resolveLevelId(): string {
   const id = sessionStorage.getItem("selectedNodeId") || "";
