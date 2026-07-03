@@ -20,13 +20,17 @@ function readParams() {
   const p = new URLSearchParams(typeof location !== "undefined" ? location.search : "");
   const now = new Date();
   const y = now.getFullYear();
-  return {
-    measure: (p.get("measure") as Measure) || "consumption",
-    resource: p.get("resource") || "",
-    from: p.get("from") || `${y}-01-01`,
-    to: p.get("to") || `${y}-12-31`,
-    resolution: (p.get("resolution") as Granularity) || "monthly",
-  };
+    const measures = ["consumption", "cost", "co2e"];
+    const resolutions = ["hourly", "daily", "weekly", "monthly", "yearly"];
+    const mp = p.get("measure") || "";
+    const rp = p.get("resolution") || "";
+    return {
+      measure: (measures.includes(mp) ? mp : "consumption") as Measure,
+      resource: p.get("resource") || "",
+      from: p.get("from") || `${y}-01-01`,
+      to: p.get("to") || `${y}-12-31`,
+      resolution: (resolutions.includes(rp) ? rp : "monthly") as Granularity,
+    };
 }
 
 function writeParams(next: Record<string, string>) {
@@ -68,7 +72,7 @@ export default function AggregationBarChart() {
           setSelected((prev) => {
             const kept = prev.filter((r) => present.includes(r));
             if (kept.length) return kept;
-            return resource && present.includes(resource) ? [resource] : present.slice(0, 1);
+            return resource && present.includes(resource) ? [resource] : present;
           });
         }
       } catch (e) {
@@ -77,7 +81,7 @@ export default function AggregationBarChart() {
     };
     run();
     return () => { cancelled = true; };
-  }, [measure, resource, from, to, resolution]);
+  }, [measure, resource, from, to, apiResolution(resolution)]);
 
   const present = useMemo(() => Array.from(new Set(rows.map((r) => r.purpose))), [rows]);
   const active = selected.length ? selected : present;
