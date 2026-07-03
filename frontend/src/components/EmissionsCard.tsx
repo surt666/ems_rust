@@ -78,7 +78,7 @@ export default function EmissionsCard({ levelId, resolution = "daily", days = 30
           </div>
         ))}
       </div>
-      <EChartsChart categories={cats} series={[{ name: "CO₂e", data, color: "#46b97c", type: "bar" }]} unit="ton" height={height} zoom={false} />
+      <EChartsChart categories={cats} series={[{ name: "CO₂e", data, color: "#46b97c", type: "bar" }]} unit="ton" height={height} zoom={true} />
     </>
   );
 }

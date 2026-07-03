@@ -94,7 +94,7 @@ export default function CostCard({ levelId, resolution = "daily", days = 30, hei
           </div>
         )}
       </div>
-      <EChartsChart categories={cats} series={[{ name: "Omkostning", data, color: "#38bdf8", type: "bar" }]} unit="kr." height={height} zoom={false} />
+      <EChartsChart categories={cats} series={[{ name: "Omkostning", data, color: "#38bdf8", type: "bar" }]} unit="kr." height={height} zoom={true} />
     </>
   );
 }

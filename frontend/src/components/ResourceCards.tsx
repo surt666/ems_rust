@@ -193,7 +193,7 @@ export default function ResourceCards({ levelId, resolution = "daily", days = 30
               series={[{ name: c.label, data: c.data, color: c.color, type: "bar" }]}
               unit={c.unit}
               height={180}
-              zoom={false}
+              zoom={true}
             />
           </div>
         );
