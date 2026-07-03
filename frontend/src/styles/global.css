@@ -3026,3 +3026,9 @@ dialog::backdrop {
 .ri-res-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .ri-res-chip { border-width: 2px; }
 .ri-res-chip.active { color: var(--text-primary); background: #fff; }
+
+/* Dashboard consumption graphs drill into the detailed Resource Insights view on
+   click. In global.css (not NodeDashboard's scoped <style>) so it reaches the
+   ResourceCards client:only island cards too. */
+.nd-drill { cursor: pointer; transition: box-shadow 0.15s ease; }
+.nd-drill:hover { box-shadow: 0 2px 10px rgba(0,0,0,0.10); }

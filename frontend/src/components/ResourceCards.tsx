@@ -2,6 +2,10 @@ import { useEffect, useState } from "react";
 import EChartsChart from "./EChartsChart";
 import { RESOURCE_LABELS, aggBase, resolveLevelId } from "../lib/agg";
 
+declare global {
+  interface Window { emsNavigate?: (url: string) => void; }
+}
+
 // Per-resource consumption cards (Varme / Vand / El …), fed by the live
 // aggregations API — the real replacement for the mock `energyCards` block in
 // NodeDashboard. One card per resource present under the selected node: period
@@ -145,6 +149,13 @@ export default function ResourceCards({ levelId, resolution = "daily", days = 30
     };
   }, [levelId, resolution, days]);
 
+  // Drill into the detailed Resource Insights view for THIS resource.
+  const drill = (resource: string) => {
+    const url = `/rimain?measure=consumption&resource=${encodeURIComponent(resource)}&resolution=monthly`;
+    if (window.emsNavigate) window.emsNavigate(url);
+    else window.location.href = url;
+  };
+
   if (state !== "ok") {
     const color = state === "error" ? "#dc2626" : "#6b7280";
     const text = state === "loading" ? "Indlæser…" : state === "empty" ? "Ingen forbrugsdata for perioden." : msg;
@@ -156,7 +167,9 @@ export default function ResourceCards({ levelId, resolution = "daily", days = 30
       {cards.map((c) => {
         const frac = c.total < 100 ? 2 : 0;
         return (
-          <div className="card nd-energy" key={c.resource}>
+          <div className="card nd-energy nd-drill" key={c.resource}
+               onClick={() => drill(c.resource)}
+               title={`Klik for detaljeret ${c.label}-analyse`}>
             <div className="section-header">
               <h2 className="section-title" style={{ marginBottom: 0 }}>
                 {c.label} <span className={`badge energy-${c.badge}`}>{c.label}</span>
