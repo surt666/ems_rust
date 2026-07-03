@@ -51,7 +51,7 @@ export default function AggregationBarChart() {
       if (!lvl) { setStatus("error"); setMsg("Ingen node valgt."); return; }
       const params = new URLSearchParams({
         level_id: lvl, resolution: apiResolution(resolution),
-        start: new Date(from).toISOString(), end: new Date(to + "T23:59:59").toISOString(),
+        start: new Date(from).toISOString(), end: new Date(to + "T23:59:59Z").toISOString(),
       });
       if (measure === "consumption" && resource) params.set("resource", resource);
       try {
@@ -62,10 +62,14 @@ export default function AggregationBarChart() {
         if (cancelled) return;
         setRows(data);
         setStatus(data.length ? "ok" : "empty");
-        // default the resource selector to all present if nothing chosen yet
-        if (!selected.length && data.length) {
+        // reconcile selected on every fetch — keep still-present picks, otherwise default
+        if (data.length) {
           const present = Array.from(new Set(data.map((r) => r.purpose)));
-          setSelected(resource ? [resource] : present.slice(0, 1));
+          setSelected((prev) => {
+            const kept = prev.filter((r) => present.includes(r));
+            if (kept.length) return kept;
+            return resource && present.includes(resource) ? [resource] : present.slice(0, 1);
+          });
         }
       } catch (e) {
         if (!cancelled) { setStatus("error"); setMsg(e instanceof Error ? e.message : "Kunne ikke hente data"); }
@@ -111,12 +115,12 @@ export default function AggregationBarChart() {
         </div>
         <div className="ri-resolutions">
           {RESOLUTIONS.map((r) => (
-            <button className={`ri-res-btn${r.key === resolution ? " active" : ""}`} onClick={() => update({ resolution: r.key })}>{r.label}</button>
+            <button key={r.key} className={`ri-res-btn${r.key === resolution ? " active" : ""}`} onClick={() => update({ resolution: r.key })}>{r.label}</button>
           ))}
         </div>
         <div className="ri-resources">
           {present.map((res) => (
-            <button className={`ri-res-chip${active.includes(res) ? " active" : ""}`}
+            <button key={res} className={`ri-res-chip${active.includes(res) ? " active" : ""}`}
               style={{ borderColor: RESOURCE_COLORS[res] ?? "#ccc" }} onClick={() => toggleResource(res)}>
               {RESOURCE_LABELS[res] ?? res}
             </button>
