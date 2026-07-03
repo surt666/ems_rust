@@ -60,15 +60,6 @@ import "../styles/enity-theme.css";
 </html>
 
 <script>
-	import { Amplify } from 'aws-amplify';
-
-	Amplify.configure({
-		Auth: {
-			Cognito: {
-				region: 'eu-central-1',
-				userPoolId: import.meta.env.PUBLIC_USER_POOL_ID,
-				userPoolClientId: import.meta.env.PUBLIC_USER_POOL_CLIENT_ID,
-			}
-		}
-	});
+	import { configureAmplify } from '../lib/amplify-config';
+	configureAmplify();
 </script>

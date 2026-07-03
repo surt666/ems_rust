@@ -18,9 +18,9 @@ export default defineConfig({
         'Content-Security-Policy': [
           "default-src 'self'",
           "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.quicksight.aws.amazon.com https://*.amazonaws.com https://esm.sh",
-          "style-src 'self' 'unsafe-inline' https://*.quicksight.aws.amazon.com",
+          "style-src 'self' 'unsafe-inline' https://*.quicksight.aws.amazon.com https://fonts.googleapis.com",
           "img-src 'self' data: blob: https://*.quicksight.aws.amazon.com https://*.amazonaws.com",
-          "font-src 'self' data: https://*.quicksight.aws.amazon.com",
+          "font-src 'self' data: https://*.quicksight.aws.amazon.com https://fonts.gstatic.com",
           "connect-src 'self' https://*.quicksight.aws.amazon.com https://*.amazonaws.com wss://*.quicksight.aws.amazon.com https://d368wcanc53tdl.cloudfront.net blob:",
           "frame-src 'self' https://*.quicksight.aws.amazon.com",
           "worker-src 'self' blob:",

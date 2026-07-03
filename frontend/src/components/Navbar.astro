@@ -6,7 +6,11 @@ import {
   DropdownItems,
 } from "astro-navbar";
 
-const currentPath = Astro.url.pathname;
+// Normalise the trailing slash: the directory build makes Astro.url.pathname
+// "/alarms/", but the links/paths below are written without it. Strip it so the
+// server-side active-state match works (this is what the old client-side
+// updateActiveMenuItems script used to paper over).
+const currentPath = Astro.url.pathname.replace(/\/+$/, "") || "/";
 
 const isParentActive = (paths: string[]) => paths.includes(currentPath);
 ---
@@ -197,49 +201,3 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
     background: var(--accent-bg);
   }
 </style>
-
-<script>
-  function updateActiveMenuItems() {
-    const currentPath = window.location.pathname;
-
-    document.querySelectorAll('.nav-link.active').forEach(el => {
-      el.classList.remove('active');
-    });
-
-    document.querySelectorAll('.nav-link').forEach(link => {
-      const href = link.getAttribute('href');
-      if (href === currentPath) {
-        link.classList.add('active');
-      }
-    });
-
-    const parentMenuPaths = {
-      'Oversigt': ['/main', '/statistics'],
-      'Resource Insights': ['/rimain', '/rianalysis', '/rienergymodel'],
-      'Analyse': ['/bbenchmark', '/abenchmark', '/consumption', '/standbyanalysis', '/cooling', '/districtcooling'],
-      'Overvågning': ['/alarms', '/alarmsetup'],
-      'Målere': ['/meters', '/gateways'],
-      'Klimaregnskab': ['/climate', '/csrd', '/emissionfactors'],
-      'Rapportering': ['/customreports', '/buildingreport', '/exportdata'],
-      'Opsætning': ['/userlist']
-    };
-
-    Object.values(parentMenuPaths).forEach(paths => {
-      if (paths.includes(currentPath)) {
-        document.querySelectorAll('.nav-link').forEach(button => {
-          if (button.tagName === 'BUTTON') {
-            const dropdownLinks = button.parentElement?.querySelectorAll('a.nav-link');
-            dropdownLinks?.forEach(link => {
-              if (paths.includes(link.getAttribute('href') || '')) {
-                button.classList.add('active');
-              }
-            });
-          }
-        });
-      }
-    });
-  }
-
-  updateActiveMenuItems();
-  document.addEventListener('astro:page-load', updateActiveMenuItems);
-</script>

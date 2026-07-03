@@ -107,33 +107,16 @@ import "../styles/enity-theme.css";
 
 <script>
 	import 'invokers/compatible';
-	import { Amplify } from 'aws-amplify';
-	import { getCurrentUser, signOut } from 'aws-amplify/auth';
+	import { signOut } from 'aws-amplify/auth';
 	import { navigate } from 'astro:transitions/client';
+	import { configureAmplify } from '../lib/amplify-config';
+	import { applyTranslations } from '../lib/i18n';
 
 	// Expose Astro's view-transition navigate so the hierarchy dropdowns can jump
 	// to /node the same (no-full-reload) way clicking a tree node name does.
 	window.emsNavigate = navigate;
 
-	Amplify.configure({
-		Auth: {
-			Cognito: {
-				region: 'eu-central-1',
-				userPoolId: import.meta.env.PUBLIC_USER_POOL_ID,
-				userPoolClientId: import.meta.env.PUBLIC_USER_POOL_CLIENT_ID,
-			}
-		}
-	});
-
-	function initAuth() {
-		getCurrentUser()
-			.then(() => {
-				window.dispatchEvent(new CustomEvent('user-authenticated'));
-			})
-			.catch(() => {
-				window.dispatchEvent(new CustomEvent('user-logged-out'));
-			});
-	}
+	configureAmplify();
 
 	function setupLogout() {
 		document.getElementById('logout-btn')?.addEventListener('click', async () => {
@@ -142,19 +125,14 @@ import "../styles/enity-theme.css";
 			} catch (error) {
 				console.log('Logout error:', error.message);
 			}
-			window.dispatchEvent(new CustomEvent('user-logged-out'));
 			window.location.href = '/';
 		});
 	}
 
-	import { applyTranslations } from '../lib/i18n';
-
-	initAuth();
 	setupLogout();
 	applyTranslations();
 
 	document.addEventListener('astro:page-load', () => {
-		initAuth();
 		setupLogout();
 		applyTranslations();
 	});

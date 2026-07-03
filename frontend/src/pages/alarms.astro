@@ -94,7 +94,8 @@ import Layout from '../layouts/Layout.astro';
 
 		<!-- Alarms table -->
 		<div class="table-panel" id="alarm-table"
-			_="on recalculate
+			_="on load send recalculate to me
+				on recalculate
 				set count to <.alarm-row:not([hidden])/>
 				put count.length into #alarm-count
 				set selected to <.alarm-select:checked/>
@@ -293,11 +294,3 @@ import Layout from '../layouts/Layout.astro';
 		</div>
 	</div>
 </Layout>
-
-<script>
-	document.addEventListener('astro:page-load', () => {
-		const count = document.querySelectorAll('.alarm-row:not([hidden])').length;
-		const el = document.getElementById('alarm-count');
-		if (el) el.textContent = String(count);
-	});
-</script>
