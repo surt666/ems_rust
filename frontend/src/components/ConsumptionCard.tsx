@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import EChartsChart, { type EChartsSeries } from "./EChartsChart";
 import {
-  MEASURES, apiResolution, rollup, RESOURCE_LABELS, resolveLevelId, aggBase,
+  MEASURES, resolveLevelId, aggBase,
   type Measure,
 } from "../lib/agg";
+
+declare global {
+  interface Window { emsNavigate?: (url: string) => void; }
+}
 
 // One dashboard consumption card (Apache ECharts, monthly bars, this year vs last
 // year). Measure + year dropdowns; clicking the chart drills into Resource
@@ -13,7 +17,6 @@ interface Row { purpose: string; unit: string; timestamp: string; value: number 
 interface Props {
   /** A resource token (electricity/water/…) or "combined" (all resources). */
   resource: string;
-  title: string;
   height?: number;
 }
 
@@ -33,7 +36,7 @@ async function fetchYear(action: string, lvl: string, year: number, resource: st
   return (await res.json()) as Row[];
 }
 
-export default function ConsumptionCard({ resource, title, height = 220 }: Props) {
+export default function ConsumptionCard({ resource, height = 220 }: Props) {
   const [measure, setMeasure] = useState<Measure>(resource === "combined" ? "cost" : "consumption");
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [cur, setCur] = useState<Row[]>([]);
@@ -57,8 +60,9 @@ export default function ConsumptionCard({ resource, title, height = 220 }: Props
         ]);
         if (cancelled) return;
         const keep = (r: Row) => isCombined || r.purpose === resource || filterResource;
-        setCur(c.filter(keep)); setPrev(p.filter(keep));
-        setStatus(c.length ? "ok" : "empty");
+        const filtered = c.filter(keep);
+        setCur(filtered); setPrev(p.filter(keep));
+        setStatus(filtered.length ? "ok" : "empty");
       } catch { if (!cancelled) setStatus("error"); }
     };
     run();
@@ -98,7 +102,7 @@ export default function ConsumptionCard({ resource, title, height = 220 }: Props
           <option value="co2e">CO₂e</option>
         </select>
         <select className="form-select cc-select" value={year} onChange={(e) => setYear(Number((e.target as HTMLSelectElement).value))}>
-          {yearRange().map((y) => <option value={y}>{y}</option>)}
+          {yearRange().map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
       </div>
       {status !== "ok" ? (
