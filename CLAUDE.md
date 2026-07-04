@@ -19,6 +19,29 @@ breaks with a stale nix `GOROOT` in the shell). **Always `cdk diff` before `cdk 
 confirm the changeset is non-destructive (no DynamoDB table / Kinesis stream / Flink app
 *replacement* — only `[~]` updates).
 
+**cdk credential recipe (when `cdk` fails with `Unable to parse environment specification
+"aws:///eu-central-1"` or `no credentials have been configured`).** The SSO *role* creds
+expired and the Go CDK's bundled SDK can't refresh them from the SSO token (the `aws` CLI
+can, which is why `aws sts get-caller-identity` still works). Export fresh temporary creds
+straight into the cdk process, in the same shell call as the `cdk` command:
+
+```bash
+unset GOROOT
+export AWS_PROFILE=stel-sb                                   # or daq_dev
+eval "$(aws configure export-credentials --profile stel-sb --format env)"
+export CDK_DEFAULT_ACCOUNT=339712745226 CDK_DEFAULT_REGION=eu-central-1   # 891377204778 for daq
+cdk diff  <Stack>
+cdk deploy <Stack> --require-approval never
+```
+
+If the SSO *token* itself is expired, the user must first run `aws sso login --profile <p>`
+via the `! ` prefix (interactive; I can't run it).
+
+**Shell-chaining gotcha (the Bash tool runs with `set -e`-style semantics).** Do NOT lead a
+chained command with `pkill`/`pgrep` — or any command whose non-zero exit is normal — because
+that non-zero exit aborts the rest of the chain, so the real work (build / commit / deploy)
+silently never runs. Put cleanup in its own call, or neutralise it: `pkill -f 'astro preview' 2>/dev/null || true`.
+
 | Account | Id | Owns |
 |---|---|---|
 | Hierarchy / backend | `339712745226` | `rust-lambda-hierarchy` API lambda (arm64), `hierarchy_new` table, the cross-account bridge lambda, the **frontend** (S3 + CloudFront) |
