@@ -67,7 +67,7 @@ Where each old call lands in the target; per-consumer usage is in §9.2.
 | access (implicit in every read) | who may see what | **`effective_permission`** (§5.4 access filtering) |
 | **writes** — `insert-update-meter`, `…MetersHierarchyElements`, `updateCustomFieldsValue`, `updatePhysicalCounter`, `updateDatasource`, `addTagsToMeter` | master-data CRUD | **hierarchy `/command`** — outside the measurement *read* scope |
 
-## 3. Already implemented in ems_rust
+## 3. Already implemented in PoC
 
 **Spark/Glue rollup** — `infra/daq/data_pipeline/glue/measurements_aggregate.py` (`MeasurementsAggregateStack`, daq acct `891377204778`, hourly, `LookbackDays` default 1). Spec: `.../specs/2026-06-07-measurements-rollup-view-design.md`.
 - **Source:** `all.logical_meter_data` (event-sourced; `resample_value` where `resample_method='time_proportional'`, dedup newest `ingested_time`).
