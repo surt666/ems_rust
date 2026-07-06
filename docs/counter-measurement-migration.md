@@ -226,7 +226,7 @@ Rough sizing + logic shape (src LOC excl. tests). "Subsume" = fold into the comm
 
 ### 9.2 Endpoint mapping — old calls → going forward
 
-**Old endpoint families → new:**
+**Old *analysis* endpoint families → new:**
 
 | Old call | Going forward |
 |---|---|
@@ -235,7 +235,18 @@ Rough sizing + logic shape (src LOC excl. tests). "Subsume" = fold into the comm
 | analysis `reading-count` / `reading-bounds` / `latest-reading` | columns already in the rollup (`count`, `last_value`/`last_ts`); add a `first` bound |
 | analysis `legacy/consumption`\|`zoom` | **drop** (legacy) |
 | raw readings / datatilegnelse | **aggregations `get_measurements`** (Athena) |
-| meter `queryContext` / `queryIds` / `query` / `buildingQuery` / tags | **hierarchy `/query/{action}`** |
+
+**Old `meter_service` endpoints → new** (most measurement-path meter calls *disappear* — hierarchy/identity is denormalized into the rollup, §7; all new calls are `hierarchy` `GET /query/{action}` unless noted):
+
+| Old meter endpoint (client method) | Resolves | Going forward |
+|---|---|---|
+| `meters/query/context` (queryContext), `meters/query` (query), `ids-from-filter` (queryIds) | filter/context → meters | **`list_children` / `list_sensors` / `company_sensors`** for filter resolution; grouping/hierarchy itself is **gone** (rollup is keyed by node) |
+| `getMeterIdsFromHierarchy`, `hierarchyElementIds…` | node ↔ meter ids | **gone** — hierarchy stamped into each sensor / rollup row |
+| `getMeterTypesByIds`, counter-role | meter type / role | **gone** — `resource` + `meter_type` denormalized (§5.5/§7) |
+| `buildings/query` (buildingQuery), `fetchMeterDetails`, `/hierarchy/:id` | buildings / meter details / subtree | **`get_node` / `list_children` / `get_sensor`** |
+| building custom fields, tags (`getTagsFrom…`) | building metadata / tags | **hierarchy node metadata** (§7) |
+| access (implicit in every read) | who may see what | **`effective_permission`** (§5.4 access filtering) |
+| **writes** — `insert-update-meter`, `…MetersHierarchyElements`, `updateCustomFieldsValue`, `updatePhysicalCounter`, `updateDatasource`, `addTagsToMeter` | master-data CRUD | **hierarchy `/command`** — outside the measurement *read* scope |
 
 **Per-consumer** (what each calls today on analysis/meter, and going forward). The **frontend "Resource Insights"** module (`lis`: Overblik / Analyse / Energimodel) is the *primary* consumer — served today via yggdrasil, calling `get_aggregations` going forward. `climate_reporting_service` consumes measurement data **indirectly through yggdrasil** (`climateReporting*StatementQuery`), hence no direct analysis calls.
 
