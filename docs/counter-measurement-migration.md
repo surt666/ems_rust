@@ -18,7 +18,9 @@
 
 **Migration seam:** `@enity/counter-query` has only 2 importers (`analysis_service`, `counter-ingestion`). Old read side = `analysis_service`; all endpoints are POST query-by-body (CQRS-read-shaped). It turns cumulative readings into consumption in-app (`RunningTotal`/`RunningArea`) then runs a 3-phase `prep→data→compute` pipeline.
 
-## 2. Endpoint request/response patterns (`analysis_service`)
+## 2. Endpoints — analysis & meter (catalog + going-forward mapping)
+
+The `analysis_service` request/response catalog, then the old→new mapping for both `analysis` and `meter_service`.
 
 **pass-through** = straight DB read · **processing** = aggregation/computation. API defs: `emswt/main/packages/analysis-client/src/api-endpoints/`.
 
@@ -38,6 +40,32 @@
 | 12 | `legacy/zoom/query` | legacy body | zoomed series | legacy | raw-URL; callers `benchmark`,`co2-value`,`ems-backend/Web`. Confirm via `enity_analysis_legacy_zoom_count` |
 
 **3 pass-through, 8 processing** (+1 aux to confirm).
+
+### 2.1 Old endpoints → going forward (analysis + meter)
+
+Where each old call lands in the target; per-consumer usage is in §9.2.
+
+**analysis:**
+
+| Old call | Going forward |
+|---|---|
+| analysis `aggregate` / `filter-query` / `filter-groupby` / `values` (hour/day) | **aggregations `get_aggregations`** (rollup read) |
+| the `values` compute layer (degree-days, cost, CO2, …) | `get_aggregations` **+ service-side compute** (§5) |
+| analysis `reading-count` / `reading-bounds` / `latest-reading` | columns already in the rollup (`count`, `last_value`/`last_ts`); add a `first` bound |
+| analysis `legacy/consumption`\|`zoom` | **drop** (legacy) |
+| raw readings / datatilegnelse | **aggregations `get_measurements`** (Athena) |
+
+**meter** — most measurement-path meter calls *disappear* (hierarchy/identity is denormalized into the rollup, §7); new calls are `hierarchy` `GET /query/{action}` unless noted:
+
+| Old meter endpoint (client method) | Resolves | Going forward |
+|---|---|---|
+| `meters/query/context` (queryContext), `meters/query` (query), `ids-from-filter` (queryIds) | filter/context → meters | **`list_children` / `list_sensors` / `company_sensors`** for filter resolution; grouping/hierarchy itself is **gone** (rollup is keyed by node) |
+| `getMeterIdsFromHierarchy`, `hierarchyElementIds…` | node ↔ meter ids | **gone** — hierarchy stamped into each sensor / rollup row |
+| `getMeterTypesByIds`, counter-role | meter type / role | **gone** — `resource` + `meter_type` denormalized (§5.5/§7) |
+| `buildings/query` (buildingQuery), `fetchMeterDetails`, `/hierarchy/:id` | buildings / meter details / subtree | **`get_node` / `list_children` / `get_sensor`** |
+| building custom fields, tags (`getTagsFrom…`) | building metadata / tags | **hierarchy node metadata** (§7) |
+| access (implicit in every read) | who may see what | **`effective_permission`** (§5.4 access filtering) |
+| **writes** — `insert-update-meter`, `…MetersHierarchyElements`, `updateCustomFieldsValue`, `updatePhysicalCounter`, `updateDatasource`, `addTagsToMeter` | master-data CRUD | **hierarchy `/command`** — outside the measurement *read* scope |
 
 ## 3. Already implemented in ems_rust
 
@@ -224,29 +252,9 @@ Rough sizing + logic shape (src LOC excl. tests). "Subsume" = fold into the comm
 
 **`keyratio` (two services) — reference data, folds into hierarchy.** `keyratio-v3-service` is the current key-value store (custom + system keys per building, time-versioned; `keyratio_url`); the older `keyratio` is `keyratio_legacy_url`, used **only** by the legacy `benchmark` service → **old `keyratio` + `benchmark` retire together** (same legacy pair as `benchmark`→`computed-benchmark`). Like `energy-cost`, `keyratio` is a **reference-data owner**, not a measurement consumer: its key-values become **hierarchy node metadata** (§7, area/heated-area/custom keys) and the intensity ratio a read-time divide (§5.4). So `keyratio-v3`'s *storage* is subsumed into hierarchy metadata rather than kept as a service; the only open question is the current-vs-time-versioned call for keys that change (§7).
 
-### 9.2 Endpoint mapping — old calls → going forward
+### 9.2 Per-consumer endpoint usage & disposition
 
-**Old *analysis* endpoint families → new:**
-
-| Old call | Going forward |
-|---|---|
-| analysis `aggregate` / `filter-query` / `filter-groupby` / `values` (hour/day) | **aggregations `get_aggregations`** (rollup read) |
-| the `values` compute layer (degree-days, cost, CO2, …) | `get_aggregations` **+ service-side compute** (§5) |
-| analysis `reading-count` / `reading-bounds` / `latest-reading` | columns already in the rollup (`count`, `last_value`/`last_ts`); add a `first` bound |
-| analysis `legacy/consumption`\|`zoom` | **drop** (legacy) |
-| raw readings / datatilegnelse | **aggregations `get_measurements`** (Athena) |
-
-**Old `meter_service` endpoints → new** (most measurement-path meter calls *disappear* — hierarchy/identity is denormalized into the rollup, §7; all new calls are `hierarchy` `GET /query/{action}` unless noted):
-
-| Old meter endpoint (client method) | Resolves | Going forward |
-|---|---|---|
-| `meters/query/context` (queryContext), `meters/query` (query), `ids-from-filter` (queryIds) | filter/context → meters | **`list_children` / `list_sensors` / `company_sensors`** for filter resolution; grouping/hierarchy itself is **gone** (rollup is keyed by node) |
-| `getMeterIdsFromHierarchy`, `hierarchyElementIds…` | node ↔ meter ids | **gone** — hierarchy stamped into each sensor / rollup row |
-| `getMeterTypesByIds`, counter-role | meter type / role | **gone** — `resource` + `meter_type` denormalized (§5.5/§7) |
-| `buildings/query` (buildingQuery), `fetchMeterDetails`, `/hierarchy/:id` | buildings / meter details / subtree | **`get_node` / `list_children` / `get_sensor`** |
-| building custom fields, tags (`getTagsFrom…`) | building metadata / tags | **hierarchy node metadata** (§7) |
-| access (implicit in every read) | who may see what | **`effective_permission`** (§5.4 access filtering) |
-| **writes** — `insert-update-meter`, `…MetersHierarchyElements`, `updateCustomFieldsValue`, `updatePhysicalCounter`, `updateDatasource`, `addTagsToMeter` | master-data CRUD | **hierarchy `/command`** — outside the measurement *read* scope |
+_Old→new endpoint mapping (analysis + meter) is in §2.1._
 
 **Per-consumer** (what each calls today on analysis/meter, and going forward). The **frontend "Resource Insights"** module (`lis`: Overblik / Analyse / Energimodel) is the *primary* consumer — served today via yggdrasil, calling `get_aggregations` going forward. `climate_reporting_service` consumes measurement data **indirectly through yggdrasil** (`climateReporting*StatementQuery`), hence no direct analysis calls.
 
