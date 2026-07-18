@@ -58,7 +58,7 @@
 
   /* Sizing */
   --sidebar-width: 260px;
-  --nav-height: 44px;
+  --nav-height: 60px;
   --breadcrumb-height: 32px;
 
   /* Typography — Source Sans Pro is the Enity/EMS app face (matches ems.enity.io) */
@@ -164,7 +164,7 @@ code {
   align-items: center;
   gap: 7px;
   padding: 10px 12px;
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   color: var(--text-muted);
   text-decoration: none;
   border-bottom: 2px solid transparent;
