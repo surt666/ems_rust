@@ -11,7 +11,9 @@ import Hierarchy from "../components/Hierarchy.astro";
 import Breadcrumb from "../components/Breadcrumb.astro";
 import SchemaDesigner from "../components/SchemaDesigner.astro";
 
-import "../styles/base.css";
+// base.css is served from public/ at the stable URL /base.css (linked in <head> below)
+// so independent microfrontends can share the exact same design-system base — single
+// source of truth, no copy. global/enity remain bundled component styles.
 import "../styles/global.css";
 import "../styles/enity-theme.css";
 
@@ -21,6 +23,10 @@ import "../styles/enity-theme.css";
 <html lang="da">
         <head>
                 <meta charset="UTF-8" />
+                <!-- Shared design-system base (element defaults) — single source of truth,
+                     served from public/ so microfrontends can link the same file. Loaded
+                     first so component classes (global/enity) override where needed. -->
+                <link rel="stylesheet" href="/base.css" />
                 <meta name="description" content="EMS - Energy Management System" />
                 <meta name="viewport" content="width=device-width" />
                 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />

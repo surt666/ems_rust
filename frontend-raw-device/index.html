@@ -4,12 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Raw Device verifier</title>
-  <!-- Shared design-system base: styles plain semantic HTML (inputs, buttons…) so this
+  <!-- Shared design-system base, loaded from the shell's stable URL — SINGLE source of
+       truth (no copy). It styles plain semantic HTML (inputs, buttons…) so this
        microfrontend needs NO knowledge of the shell's component classes. When composed
-       into the shell via hx-select, the shell already loads the same base, so the form
-       is decorated there too. (This file is a copy of frontend/src/styles/base.css —
-       keep in sync; a hosted shared stylesheet would remove the copy.) -->
-  <link rel="stylesheet" href="base.css" />
+       into the shell via hx-select, the shell already loads the same base. -->
+  <link rel="stylesheet" href="https://d24beiqs2cj89y.cloudfront.net/base.css" />
   <script src="htmx.min.js"></script>
   <style>
     /* MFE-only page layout (not shell-coupled) — just centres the standalone view. */
