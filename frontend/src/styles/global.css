@@ -147,7 +147,10 @@ code {
 
 .nav-menu {
   display: grid;
-  grid-template-columns: repeat(10, auto);
+  /* One auto-sized column per item, single row — so adding/removing top-level items
+     doesn't wrap to a second row (which would overflow the fixed-height nav bar). */
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
   gap: 0;
   align-items: center;
 }
