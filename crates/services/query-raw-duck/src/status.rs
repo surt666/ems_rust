@@ -25,7 +25,10 @@ impl StatusQuery {
         if gatewayid.is_none() && meterid.is_none() {
             return Err("provide a gatewayid and/or meterid".into());
         }
-        let days = get("days").and_then(|s| s.trim().parse::<i64>().ok()).unwrap_or(7).clamp(1, 60);
+        // No `days` control in the MFE, and the lake only retains 14 days (bucket
+        // expiration) — so default to the full retention window and cap there. Querying
+        // further back can only scan empty partitions.
+        let days = get("days").and_then(|s| s.trim().parse::<i64>().ok()).unwrap_or(14).clamp(1, 14);
         let since = (Utc::now() - Duration::days(days)).format("%Y-%m-%d").to_string();
         Ok(StatusQuery { gatewayid, meterid, since, days })
     }
