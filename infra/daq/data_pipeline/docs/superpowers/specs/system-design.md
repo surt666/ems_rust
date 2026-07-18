@@ -371,7 +371,7 @@ The raw measurement is stored in the `raw_data` Iceberg table before any enrichm
 
 ```
 RawMeasurement := {
-  daq_id:        String           -- physical sensor identifier ("protocol:schematype:customer:gatewayid:meterserial:sensorid")
+  daq_id:        String           -- physical sensor identifier ("daq:protocol:schematype:apiprovider|company|gatewayid|metermanufacturer:meterid:sensorid")
   timestamp:     DateTime<UTC>    -- event time from the device
   value:         Double           -- raw reading (cumulative for counters, instantaneous for gauges)
   unit:          String           -- physical unit as reported by device (pre-normalization)

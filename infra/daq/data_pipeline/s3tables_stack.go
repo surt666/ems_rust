@@ -17,7 +17,33 @@ func NewS3TablesStack(scope constructs.Construct, id string, props *awscdk.Stack
 		Namespace:       jsii.String("all"),
 		TableName:       jsii.String("raw_data"),
 		OpenTableFormat: jsii.String("ICEBERG"),
-		IcebergMetadata: rawIcebergMetadata(),
+		IcebergMetadata: map[string]any{
+			"icebergSchema": map[string]any{
+				"schemaFieldList": []any{
+					field("daq_id", "string", true),
+					field("timestamp", "timestamptz", true),
+					field("value", "double", true),
+					field("unit", "string", true),
+					field("ingested_time", "timestamptz", true),
+				},
+			},
+			"icebergPartitionSpec": map[string]any{
+				"fields": []any{
+					partition(2, "month", "timestamp_month"),
+					partition(1, "bucket[64]", "daq_id_bucket"),
+				},
+			},
+			"icebergSortOrder": map[string]any{
+				"orderId": 1,
+				"fields": []any{
+					map[string]any{"sourceId": 1, "transform": "identity", "direction": "asc", "nullOrder": "nulls-last"}, // daq_id
+					map[string]any{"sourceId": 2, "transform": "identity", "direction": "asc", "nullOrder": "nulls-last"}, // timestamp
+				},
+			},
+			"tableProperties": commonTableProperties(),
+		},
+	}).ApplyRemovalPolicy(awscdk.RemovalPolicy_RETAIN, &awscdk.RemovalPolicyOptions{
+		ApplyToUpdateReplacePolicy: jsii.Bool(true),
 	})
 
 	awss3tables.NewCfnTable(stack, jsii.String("MeterReadings"), &awss3tables.CfnTableProps{
@@ -25,7 +51,47 @@ func NewS3TablesStack(scope constructs.Construct, id string, props *awscdk.Stack
 		Namespace:       jsii.String("all"),
 		TableName:       jsii.String("logical_meter_data"),
 		OpenTableFormat: jsii.String("ICEBERG"),
-		IcebergMetadata: meterReadingsIcebergMetadata(),
+		IcebergMetadata: map[string]any{
+			"icebergSchema": map[string]any{
+				// hn1=partner, hn2=company hard-coded; hn3..hn9 are schema-defined per
+				// company (per ems_ocaml hierarchy model). All ids are ints.
+				"schemaFieldList": []any{
+					field("logical_id", "int", true),
+					field("timestamp", "timestamptz", true),
+					field("value", "double", true),
+					field("unit", "string", true),
+					field("ingested_time", "timestamptz", true),
+					field("hn1", "int", true),
+					field("hn2", "int", true),
+					field("hn3", "int", false),
+					field("hn4", "int", false),
+					field("hn5", "int", false),
+					field("hn6", "int", false),
+					field("hn7", "int", false),
+					field("hn8", "int", false),
+					field("hn9", "int", false),
+					field("purpose", "string", false),
+					field("resample_value", "double", false),
+					field("resample_method", "string", false),
+					field("resample_timestamp", "timestamp", false),
+				},
+			},
+			"icebergPartitionSpec": map[string]any{
+				"fields": []any{
+					partition(2, "month", "timestamp_month"),
+					partition(7, "bucket[4]", "hn2_bucket"),
+				},
+			},
+			"icebergSortOrder": map[string]any{
+				"orderId": 1,
+				"fields": []any{
+					sortField(7), sortField(8), sortField(9), sortField(1), sortField(2),
+				},
+			},
+			"tableProperties": commonTableProperties(),
+		},
+	}).ApplyRemovalPolicy(awscdk.RemovalPolicy_RETAIN, &awscdk.RemovalPolicyOptions{
+		ApplyToUpdateReplacePolicy: jsii.Bool(true),
 	})
 
 	awss3tables.NewCfnTable(stack, jsii.String("Hierarchy"), &awss3tables.CfnTableProps{
@@ -33,108 +99,39 @@ func NewS3TablesStack(scope constructs.Construct, id string, props *awscdk.Stack
 		Namespace:       jsii.String("all"),
 		TableName:       jsii.String("hierarchy"),
 		OpenTableFormat: jsii.String("ICEBERG"),
-		IcebergMetadata: hierarchyIcebergMetadata(),
+		IcebergMetadata: map[string]any{
+			"icebergSchema": map[string]any{
+				"schemaFieldList": []any{
+					field("partner_id", "int", true),
+					field("company_id", "int", false),
+					field("property_id", "int", false),
+					field("building_id", "int", false),
+					field("area_id", "int", false),
+					field("group_id", "int", false),
+					field("name", "string", true),
+					field("type", "string", true),
+					field("ingested_time", "timestamptz", true),
+				},
+			},
+			"icebergPartitionSpec": map[string]any{
+				"fields": []any{
+					partition(1, "identity", "partner_id"),
+					partition(2, "bucket[4]", "company_id_bucket"),
+				},
+			},
+			"icebergSortOrder": map[string]any{
+				"orderId": 1,
+				"fields": []any{
+					sortField(1), sortField(2), sortField(3), sortField(6), sortField(4), sortField(5),
+				},
+			},
+			"tableProperties": commonTableProperties(),
+		},
+	}).ApplyRemovalPolicy(awscdk.RemovalPolicy_RETAIN, &awscdk.RemovalPolicyOptions{
+		ApplyToUpdateReplacePolicy: jsii.Bool(true),
 	})
 
 	return stack
-}
-
-func rawIcebergMetadata() any {
-	return map[string]any{
-		"icebergSchema": map[string]any{
-			"schemaFieldList": []any{
-				field("daq_id", "string", true),
-				field("timestamp", "timestamptz", true),
-				field("value", "double", true),
-				field("unit", "string", true),
-				field("ingested_time", "timestamptz", true),
-			},
-		},
-		"icebergPartitionSpec": map[string]any{
-			"fields": []any{
-				partition(2, "month", "timestamp_month"),
-				partition(1, "bucket[64]", "daq_id_bucket"),
-			},
-		},
-		"tableProperties": commonTableProperties("daq_id ASC NULLS LAST, timestamp ASC NULLS LAST"),
-	}
-}
-
-func meterReadingsIcebergMetadata() any {
-	return map[string]any{
-		"icebergSchema": map[string]any{
-			// hn1=partner, hn2=company hard-coded; hn3..hn9 are schema-defined per
-			// company (per ems_ocaml hierarchy model). All ids are ints.
-			"schemaFieldList": []any{
-				field("logical_id", "int", true),
-				field("timestamp", "timestamptz", true),
-				field("value", "double", true),
-				field("unit", "string", true),
-				field("ingested_time", "timestamptz", true),
-				field("hn1", "int", true),
-				field("hn2", "int", true),
-				field("hn3", "int", false),
-				field("hn4", "int", false),
-				field("hn5", "int", false),
-				field("hn6", "int", false),
-				field("hn7", "int", false),
-				field("hn8", "int", false),
-				field("hn9", "int", false),
-				field("purpose", "string", false),
-				field("resample_value", "double", false),
-				field("resample_method", "string", false),
-				field("resample_timestamp", "timestamp", false),
-			},
-		},
-		"icebergPartitionSpec": map[string]any{
-			"fields": []any{
-				partition(2, "month", "timestamp_month"),
-				partition(7, "bucket[4]", "hn2_bucket"),
-			},
-		},
-		"icebergSortOrder": map[string]any{
-			"orderId": 1,
-			"fields": []any{
-				sortField(7), sortField(8), sortField(9), sortField(1), sortField(2),
-			},
-		},
-		"tableProperties": commonTableProperties(
-			"hn2 ASC NULLS LAST, hn3 ASC NULLS LAST, hn4 ASC NULLS LAST, logical_id ASC NULLS LAST, timestamp ASC NULLS LAST",
-		),
-	}
-}
-
-func hierarchyIcebergMetadata() any {
-	return map[string]any{
-		"icebergSchema": map[string]any{
-			"schemaFieldList": []any{
-				field("partner_id", "int", true),
-				field("company_id", "int", false),
-				field("property_id", "int", false),
-				field("building_id", "int", false),
-				field("area_id", "int", false),
-				field("group_id", "int", false),
-				field("name", "string", true),
-				field("type", "string", true),
-				field("ingested_time", "timestamptz", true),
-			},
-		},
-		"icebergPartitionSpec": map[string]any{
-			"fields": []any{
-				partition(1, "identity", "partner_id"),
-				partition(2, "bucket[4]", "company_id_bucket"),
-			},
-		},
-		"icebergSortOrder": map[string]any{
-			"orderId": 1,
-			"fields": []any{
-				sortField(1), sortField(2), sortField(3), sortField(6), sortField(4), sortField(5),
-			},
-		},
-		"tableProperties": commonTableProperties(
-			"company_id ASC NULLS LAST, property_id ASC NULLS LAST, building_id ASC NULLS LAST, logical_id ASC NULLS LAST, timestamp ASC NULLS LAST",
-		),
-	}
 }
 
 func field(name, t string, required bool) map[string]any {
@@ -151,7 +148,7 @@ func sortField(sourceId int) map[string]any {
 	}
 }
 
-func commonTableProperties(sortOrder string) map[string]any {
+func commonTableProperties() map[string]any {
 	return map[string]any{
 		"write.metadata.delete-after-commit.enabled": "false",
 		"write.metadata.previous-versions-max":       "10",
@@ -159,7 +156,6 @@ func commonTableProperties(sortOrder string) map[string]any {
 		"write.parquet.compression-codec":            "zstd",
 		"format-version":                             "2",
 		"gc.enabled":                                 "false",
-		"write.sort-order":                           sortOrder,
 		"write.distribution-mode":                    "range",
 	}
 }
