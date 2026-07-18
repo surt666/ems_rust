@@ -90,7 +90,9 @@
     "district_cooling": "Fjernkøling",
     "gateways": "Gateways",
     "csrd": "CSRD-rapport",
-    "emission_factors": "Emissionsfaktorer"
+    "emission_factors": "Emissionsfaktorer",
+    "third_party": "3rd Party",
+    "raw_device": "Raw Device"
   },
   "alarms": {
     "title": "Alarmer",

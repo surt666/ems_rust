@@ -90,7 +90,9 @@
     "district_cooling": "District cooling",
     "gateways": "Gateways",
     "csrd": "CSRD report",
-    "emission_factors": "Emission factors"
+    "emission_factors": "Emission factors",
+    "third_party": "3rd Party",
+    "raw_device": "Raw Device"
   },
   "alarms": {
     "title": "Alarms",

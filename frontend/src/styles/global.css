@@ -147,10 +147,12 @@ code {
 
 .nav-menu {
   display: grid;
-  /* One auto-sized column per item, single row — so adding/removing top-level items
-     doesn't wrap to a second row (which would overflow the fixed-height nav bar). */
+  /* One content-sized column per top-level item, all on a single row, packed to the
+     left (justify-content:start keeps items at natural width instead of stretching the
+     tracks to fill). Works for any number of items without wrapping. */
   grid-auto-flow: column;
   grid-auto-columns: max-content;
+  justify-content: start;
   gap: 0;
   align-items: center;
 }
