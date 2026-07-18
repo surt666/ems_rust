@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Raw Device verifier</title>
+  <script src="htmx.min.js"></script>
+  <style>
+    :root { font-family: system-ui, sans-serif; }
+    #raw-device { max-width: 32rem; margin: 2rem auto; padding: 1.5rem;
+      border: 1px solid #d0d5dd; border-radius: 12px; }
+    #raw-device h1 { font-size: 1.25rem; margin: 0 0 1rem; }
+    #rd-form { display: grid; gap: .75rem; }
+    #rd-form label { font-weight: 600; font-size: .875rem; }
+    #rd-form input { padding: .5rem .625rem; border: 1px solid #d0d5dd;
+      border-radius: 8px; font: inherit; }
+    #rd-form button { justify-self: start; padding: .5rem 1rem; border: 0;
+      border-radius: 8px; background: #2563eb; color: #fff; font: inherit; cursor: pointer; }
+    #rd-result { margin-top: 1rem; font-size: .875rem; color: #475467; min-height: 1.25rem; }
+  </style>
+</head>
+<body>
+  <!-- The shell composes THIS div via hx-select="#raw-device"; keep the id stable. -->
+  <div id="raw-device">
+    <h1>Raw Device verifier</h1>
+    <form id="rd-form"
+          hx-on:submit="event.preventDefault();
+            document.getElementById('rd-result').textContent =
+              'Query wiring coming next — daqid: ' + this.daqid.value;">
+      <label for="rd-daqid">Daq ID</label>
+      <input id="rd-daqid" name="daqid" required autocomplete="off"
+             placeholder="e.g. daq:std_json_v1:…" />
+      <button type="submit">Verify</button>
+    </form>
+    <div id="rd-result"></div>
+  </div>
+</body>
+</html>
