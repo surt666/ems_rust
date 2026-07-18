@@ -55,6 +55,12 @@ func main() {
 		TableBucket: tableBucketName,
 	})
 
+	// Raw Device htmx microfrontend (S3 + CloudFront) — composed into the main app shell.
+	NewRawDevicePortalStack(app, "RawDevicePortalStack", &RawDevicePortalStackProps{
+		StackProps:  awscdk.StackProps{Env: defaultEnv()},
+		ShellOrigin: "https://d24beiqs2cj89y.cloudfront.net",
+	})
+
 	NewS3TablesStack(app, "S3TablesStack", &awscdk.StackProps{
 		Env: &awscdk.Environment{
 			Account: jsii.String("891377204778"),
