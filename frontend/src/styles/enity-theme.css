@@ -52,11 +52,15 @@ body { background: var(--bg-dark); color: var(--text-primary); }
 .sidebar {
   border-color: #2b3a4a;
 }
-/* Top module bar: white to match the live Enity design (only the logo cell +
-   hierarchy panel are teal). */
+/* Top nav as an inset rounded card floating on the gray page background — same framing
+   as the content cards (border + subtle shadow + radius + gutter), matching the
+   reference design instead of a full-bleed bar. */
 .top-nav {
   background: #ffffff;
-  border-color: var(--border-medium);
+  margin: 8px;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
 .sidebar { background: #003644; }                    /* Enity brand teal — exact hierarchy-panel bg from ems.enity.io */
 
