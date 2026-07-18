@@ -61,6 +61,10 @@ func main() {
 		ShellOrigin: "https://d24beiqs2cj89y.cloudfront.net",
 	})
 
+	// Experiment: device-liveness heartbeat tap (new IoT rule → new Kinesis → Lambda →
+	// unified S3), fully isolated from the prod Flink stream.
+	NewMeterHeartbeatStack(app, "MeterHeartbeatStack", &awscdk.StackProps{Env: defaultEnv()})
+
 	NewS3TablesStack(app, "S3TablesStack", &awscdk.StackProps{
 		Env: &awscdk.Environment{
 			Account: jsii.String("891377204778"),
