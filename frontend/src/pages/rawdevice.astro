@@ -11,6 +11,7 @@ const mfeUrl = import.meta.env.PUBLIC_RAWDEVICE_MFE_URL || "";
     <!-- Microfrontend composition: fetch the whole MFE page from its own origin and
          swap in ONLY its #raw-device main div. noHeaders keeps it a CORS-simple GET. -->
     <div id="rd-content"
+         style="max-width: 34rem;"
          hx-get={mfeUrl}
          hx-select="#raw-device"
          hx-swap="innerHTML"

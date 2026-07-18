@@ -4,23 +4,24 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Raw Device verifier</title>
+  <!-- Shared design-system base: styles plain semantic HTML (inputs, buttons…) so this
+       microfrontend needs NO knowledge of the shell's component classes. When composed
+       into the shell via hx-select, the shell already loads the same base, so the form
+       is decorated there too. (This file is a copy of frontend/src/styles/base.css —
+       keep in sync; a hosted shared stylesheet would remove the copy.) -->
+  <link rel="stylesheet" href="base.css" />
   <script src="htmx.min.js"></script>
   <style>
-    :root { font-family: system-ui, sans-serif; }
-    #raw-device { max-width: 32rem; margin: 2rem auto; padding: 1.5rem;
-      border: 1px solid #d0d5dd; border-radius: 12px; }
-    #raw-device h1 { font-size: 1.25rem; margin: 0 0 1rem; }
-    #rd-form { display: grid; gap: .75rem; }
-    #rd-form label { font-weight: 600; font-size: .875rem; }
-    #rd-form input { padding: .5rem .625rem; border: 1px solid #d0d5dd;
-      border-radius: 8px; font: inherit; }
-    #rd-form button { justify-self: start; padding: .5rem 1rem; border: 0;
-      border-radius: 8px; background: #2563eb; color: #fff; font: inherit; cursor: pointer; }
-    #rd-result { margin-top: 1rem; font-size: .875rem; color: #475467; min-height: 1.25rem; }
+    /* MFE-only page layout (not shell-coupled) — just centres the standalone view. */
+    body { margin: 0; background: var(--bg-page); }
+    #raw-device { max-width: 30rem; margin: 2.5rem auto; padding: 0 1rem; }
+    #raw-device h1 { font-size: 1.25rem; color: var(--text-primary); margin: 0 0 1rem; }
+    #rd-result { margin-top: .5rem; color: var(--text-muted); min-height: 1.25rem; }
   </style>
 </head>
 <body>
-  <!-- The shell composes THIS div via hx-select="#raw-device"; keep the id stable. -->
+  <!-- Plain semantic HTML: the base stylesheet decorates it. The shell composes just
+       this #raw-device div via hx-select. -->
   <div id="raw-device">
     <h1>Raw Device verifier</h1>
     <form id="rd-form"

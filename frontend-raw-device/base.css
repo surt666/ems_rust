@@ -1,0 +1,106 @@
+/* ============================================================
+   base.css — shared design-system base
+   ------------------------------------------------------------
+   Element-level default styling for semantic HTML (form controls,
+   headings) using the design tokens. The point: any page — the shell
+   OR an independent microfrontend — can write PLAIN semantic HTML
+   (<form>, <label>, <input>, <button type="submit">) and get the
+   Enity look, WITHOUT knowing the shell's component class names.
+
+   - Self-contained: it defines the tokens it uses in :root, so a
+     microfrontend can load JUST this file standalone.
+   - Low specificity (element selectors), so the shell's component
+     classes (.btn-primary, .form-input, .nav-link …) always win —
+     this is a base layer. Import it BEFORE global.css in the shell.
+   ============================================================ */
+
+:root {
+  --accent:        #f5841f;
+  --accent-hover:  #e0740f;
+  --accent-bg:     #fef1e3;
+  --bg-page:       #f4f5f6;
+  --bg-panel:      #ffffff;
+  --bg-elevated:   #eef0f2;
+  --border-medium: #e5e8eb;
+  --text-primary:   #28333d;
+  --text-secondary: #5a6671;
+  --text-muted:     #8a949e;
+  --text-dim:       #aab2ba;
+  --radius-md:  12px;
+  --font: "Source Sans Pro", Arial, Helvetica, sans-serif;
+}
+
+/* Form container: stacked fields with breathing room. */
+form {
+  display: grid;
+  gap: 1rem;
+}
+
+/* Buttons in a stacked form hug their content instead of stretching full-width. */
+form button {
+  justify-self: start;
+}
+
+label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* Text-like inputs, selects, textareas (not checkboxes/radios/range). */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+select,
+textarea {
+  font: inherit;
+  font-family: var(--font);
+  color: var(--text-primary);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  padding: 0.6rem 0.8rem;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(245, 132, 31, 0.15);
+}
+
+input::placeholder {
+  color: var(--text-dim);
+}
+
+/* Default button = neutral; the primary action is the semantic
+   submit button (or a .primary opt-in), so no class is required. */
+button {
+  font-family: var(--font);
+  font-size: 0.875rem;
+  cursor: pointer;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+button:hover {
+  background: var(--border-medium);
+}
+
+button[type="submit"],
+button.primary {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: transparent;
+  font-weight: 600;
+  padding: 0.5rem 1.25rem;
+}
+
+button[type="submit"]:hover,
+button.primary:hover {
+  background: var(--accent-hover);
+}
