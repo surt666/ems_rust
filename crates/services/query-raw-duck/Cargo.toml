@@ -1,0 +1,23 @@
+[package]
+name = "query-raw-duck"
+version = "0.1.0"
+edition.workspace = true
+
+# Bin name = package name so cargo-lambda emits target/lambda/query-raw-duck/bootstrap.
+[[bin]]
+name = "query-raw-duck"
+path = "src/main.rs"
+
+[dependencies]
+lambda_http.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+
+# DuckDB, statically compiled (bundled). The iceberg/httpfs/aws extensions are NOT
+# bundled — they're INSTALLed at runtime from DuckDB's repo into /tmp (the lambda is
+# non-VPC, so it has outbound internet). ATTACH ... (TYPE ICEBERG, ENDPOINT_TYPE
+# S3_TABLES) then reads all.raw_data through DuckDB's mature vectorized reader.
+duckdb = { version = "1", features = ["bundled"] }

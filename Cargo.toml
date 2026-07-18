@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/api", "crates/model", "crates/services/hierarchy", "crates/services/aggregations"]
+members = ["crates/api", "crates/model", "crates/services/hierarchy", "crates/services/aggregations", "crates/services/query-raw-duck"]
 
 [workspace.package]
 edition = "2021"

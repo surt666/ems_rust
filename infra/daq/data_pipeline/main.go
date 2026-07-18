@@ -47,6 +47,14 @@ func main() {
 		LookbackDays: lookbackDays,
 	})
 
+	// DuckDB reader of all.raw_data serving the Datatilegnelse page — its own stack so
+	// it touches neither the RETAIN rollup table nor the aggregations lambda. (Won an
+	// engine benchmark vs a since-removed DataFusion/iceberg-rust arm.)
+	NewQueryRawStack(app, "QueryRawStack", &QueryRawStackProps{
+		StackProps:  awscdk.StackProps{Env: defaultEnv()},
+		TableBucket: tableBucketName,
+	})
+
 	NewS3TablesStack(app, "S3TablesStack", &awscdk.StackProps{
 		Env: &awscdk.Environment{
 			Account: jsii.String("891377204778"),

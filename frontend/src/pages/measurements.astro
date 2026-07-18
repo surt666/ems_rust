@@ -33,28 +33,30 @@ const rows = [
 // representative rows above render so the page still looks correct. `noHeaders`
 // keeps it a simple CORS GET (no preflight); daq_id comes from the URL, the rest
 // from #m-controls.
-// Two backends for the SAME readings contract (identical HTML fragment), but at
-// DIFFERENT paths, so each script picks a full URL:
-//   athenaUrl   = aggregations lambda — CQRS query side: /meterdata/query/get_measurements (default)
+// Backends for the SAME readings contract (identical HTML fragment):
+//   primaryUrl  = DuckDB reader (S3 Tables) when PUBLIC_DUCK_API_BASE_URL is set, else the
+//                 aggregations/Athena lambda — both at /meterdata/query/get_measurements
 //   redshiftUrl = Redshift Spectrum VPC spike lambda (its own API GW, still /measurements)
-const athenaBase = import.meta.env.PUBLIC_AGG_API_BASE_URL || "";
+const duckBase = import.meta.env.PUBLIC_DUCK_API_BASE_URL || "";
+const aggBase = import.meta.env.PUBLIC_AGG_API_BASE_URL || "";
+const primaryBase = duckBase || aggBase;   // DuckDB is the default reader; Athena falls back
 const redshiftBase = import.meta.env.PUBLIC_REDSHIFT_API_BASE_URL || "";
-const athenaUrl = `${athenaBase}/meterdata/query/get_measurements`;
+const primaryUrl = `${primaryBase}/meterdata/query/get_measurements`;
 const redshiftUrl = `${redshiftBase}/measurements`;
-const live = athenaBase !== "";
-const hxBase = athenaUrl;
+const live = primaryBase !== "";
+const hxBase = primaryUrl;
 
 // htmx caches an element's hx-get at process time, so we can't swap backends by
 // mutating the attribute — instead the buttons/checkbox issue an explicit
 // htmx.ajax() to the chosen full URL. `source:#m-rows` pulls hx-include (#m-controls,
 // which carries daq_id/from/to/limit/before) so params are identical either way.
 const pickUrl = redshiftBase
-  ? `set url to '${athenaUrl}'\n set cb to #use-redshift\n if cb then if the checked of cb then set url to '${redshiftUrl}' end end`
-  : `set url to '${athenaUrl}'`;
+  ? `set url to '${primaryUrl}'\n set cb to #use-redshift\n if cb then if the checked of cb then set url to '${redshiftUrl}' end end`
+  : `set url to '${primaryUrl}'`;
 const ajaxReplace = `call window.htmx.ajax('GET', url, {source:'#m-rows', target:'#m-rows', swap:'innerHTML'})`;
 const ajaxAppend = `call window.htmx.ajax('GET', url, {source:'#m-rows', target:'#m-rows', swap:'beforeend'})`;
 const opdaterScript = `on click\n set #m-before.value to ''\n ${pickUrl}\n ${ajaxReplace}`;
-const checkboxScript = `on change\n set #m-before.value to ''\n set url to '${athenaUrl}'\n if my checked then set url to '${redshiftUrl}' end\n ${ajaxReplace}`;
+const checkboxScript = `on change\n set #m-before.value to ''\n set url to '${primaryUrl}'\n if my checked then set url to '${redshiftUrl}' end\n ${ajaxReplace}`;
 // Infinite scroll: when the bottom sentinel scrolls into view, append the next
 // page — but only while there's a cursor (#m-before non-empty; the backend clears
 // it when the last page wasn't full) and not already loading (data-busy guard,
