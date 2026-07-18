@@ -23,14 +23,25 @@
        this #raw-device div via hx-select. -->
   <div id="raw-device">
     <h1>Raw Device verifier</h1>
+    <p id="rd-hint">Is a meter or gateway sending data? Enter a gateway ID and/or a meter
+       ID (independent of decoding — this reads the raw device heartbeat).</p>
+    <!-- hx-get straight to the device-status route on the DuckDB reader (daq account).
+         The gateway owns CORS; the lambda renders the #rd-result fragment. At least one
+         of the two fields must be filled — the backend rejects an all-empty query. -->
     <form id="rd-form"
-          hx-on:submit="event.preventDefault();
-            document.getElementById('rd-result').textContent =
-              'Query wiring coming next — daqid: ' + this.daqid.value;">
-      <label for="rd-daqid">Daq ID</label>
-      <input id="rd-daqid" name="daqid" required autocomplete="off"
-             placeholder="e.g. daq:std_json_v1:…" />
+          hx-get="https://4ex4f0wvia.execute-api.eu-central-1.amazonaws.com/rawdevice/status"
+          hx-target="#rd-result"
+          hx-select="#rd-result"
+          hx-swap="outerHTML"
+          hx-indicator="#rd-busy">
+      <label for="rd-gatewayid">Gateway ID</label>
+      <input id="rd-gatewayid" name="gatewayid" autocomplete="off"
+             placeholder="e.g. 7076ff0056080d1e" />
+      <label for="rd-meterid">Meter ID</label>
+      <input id="rd-meterid" name="meterid" autocomplete="off"
+             placeholder="e.g. the DevEUI / device id" />
       <button type="submit">Verify</button>
+      <span id="rd-busy" class="htmx-indicator">checking…</span>
     </form>
     <div id="rd-result"></div>
   </div>

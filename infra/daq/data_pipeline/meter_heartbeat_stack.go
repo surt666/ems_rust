@@ -27,8 +27,11 @@ func NewMeterHeartbeatStack(scope constructs.Construct, id string, props *awscdk
 	region := *stack.Region()
 	account := *stack.Account()
 
-	// ── Unified heartbeat bucket (JSONL now; Parquet is the harden step). Demo → DESTROY.
+	// ── Unified heartbeat bucket (Parquet, dt-partitioned). Demo → DESTROY.
+	// Stable, explicit name so the read side (query-raw-duck) can reference it without a
+	// cross-stack import — TRIM_HORIZON re-backfills if the bucket is ever recreated.
 	bucket := awss3.NewBucket(stack, jsii.String("HeartbeatBucket"), &awss3.BucketProps{
+		BucketName:        jsii.String("meter-heartbeat-" + account + "-" + region),
 		RemovalPolicy:     awscdk.RemovalPolicy_DESTROY,
 		AutoDeleteObjects: jsii.Bool(true),
 		BlockPublicAccess: awss3.BlockPublicAccess_BLOCK_ALL(),
@@ -70,10 +73,13 @@ func NewMeterHeartbeatStack(scope constructs.Construct, id string, props *awscdk
 	// TRIM_HORIZON: on first deploy, backfill the stream's retention (~24h) so every
 	// device's recent activity shows up immediately (traffic is bursty ~every 15-20 min);
 	// then it tails live. Small at dev volume.
+	// Max the batch so each invocation writes as large a Parquet file as event-driven
+	// allows (one batch = one file). 10k records / 300s window (capped by the 6 MB
+	// invoke payload). Bigger files without a compaction job.
 	fn.AddEventSource(awslambdaeventsources.NewKinesisEventSource(inputStream, &awslambdaeventsources.KinesisEventSourceProps{
 		StartingPosition:  awslambda.StartingPosition_TRIM_HORIZON,
-		BatchSize:         jsii.Number(1000),
-		MaxBatchingWindow: awscdk.Duration_Seconds(jsii.Number(60)),
+		BatchSize:         jsii.Number(10000),
+		MaxBatchingWindow: awscdk.Duration_Seconds(jsii.Number(300)),
 		RetryAttempts:     jsii.Number(3),
 	}))
 

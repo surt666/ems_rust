@@ -17,3 +17,5 @@ chrono.workspace = true
 aws-config.workspace = true
 aws-sdk-s3 = "1"
 anyhow.workspace = true
+arrow = "59"
+parquet = { version = "59", features = ["arrow"] }
