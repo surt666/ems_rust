@@ -13,6 +13,27 @@ import {
 const currentPath = Astro.url.pathname.replace(/\/+$/, "") || "/";
 
 const isParentActive = (paths: string[]) => paths.includes(currentPath);
+
+// Leading icons for the top-level menu items (line icons, matching the reference nav).
+// Inline SVG (the app's convention — no icon lib); `currentColor` so they inherit the
+// nav-link colour incl. the active pill. Rendered via <Fragment set:html> so the icon
+// is a SIBLING of the data-i18n text span (applyTranslations sets textContent on that
+// span, which would otherwise wipe an icon nested in the same element).
+const ico = (inner: string) =>
+  `<svg class="nav-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+const navIcons: Record<string, string> = {
+  overview: ico(`<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>`),
+  resource_insights: ico(`<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/>`),
+  call_to_action: ico(`<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>`),
+  analysis: ico(`<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>`),
+  monitoring: ico(`<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>`),
+  meters: ico(`<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>`),
+  climate: ico(`<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>`),
+  active_control: ico(`<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>`),
+  reporting: ico(`<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>`),
+  setup: ico(`<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/>`),
+  third_party: ico(`<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>`),
+};
 ---
 <Astronav>
   <MenuItems class="block w-full">
@@ -20,8 +41,9 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
       <ul class="nav-menu">
       <li class="relative">
         <Dropdown class="group">
-          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/main', '/statistics']) ? 'active' : ''}`} data-i18n="nav.overview">
-            Oversigt
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/main', '/statistics']) ? 'active' : ''}`}>
+            <Fragment set:html={navIcons.overview} />
+            <span data-i18n="nav.overview">Oversigt</span>
           </button>
           <DropdownItems class="dropdown-items hidden group-open:block">
             <ul class="dropdown-menu">
@@ -33,8 +55,9 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
       </li>
       <li class="relative">
         <Dropdown class="group">
-          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/rimain', '/rianalysis', '/rienergymodel']) ? 'active' : ''}`} data-i18n="nav.resource_insights">
-            Resource Insights
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/rimain', '/rianalysis', '/rienergymodel']) ? 'active' : ''}`}>
+            <Fragment set:html={navIcons.resource_insights} />
+            <span data-i18n="nav.resource_insights">Resource Insights</span>
           </button>
           <DropdownItems class="dropdown-items hidden group-open:block">
             <ul class="dropdown-menu">
@@ -45,11 +68,12 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
           </DropdownItems>
         </Dropdown>
       </li>
-      <li><a href="/callaction" class={`nav-link ${currentPath === '/callaction' ? 'active' : ''}`} data-i18n="nav.call_to_action">Call to action</a></li>
+      <li><a href="/callaction" class={`nav-link ${currentPath === '/callaction' ? 'active' : ''}`}><Fragment set:html={navIcons.call_to_action} /><span data-i18n="nav.call_to_action">Call to action</span></a></li>
       <li class="relative">
         <Dropdown class="group">
-          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/bbenchmark', '/abenchmark', '/consumption', '/standbyanalysis', '/cooling', '/districtcooling']) ? 'active' : ''}`} data-i18n="nav.analysis">
-            Analyse
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/bbenchmark', '/abenchmark', '/consumption', '/standbyanalysis', '/cooling', '/districtcooling']) ? 'active' : ''}`}>
+            <Fragment set:html={navIcons.analysis} />
+            <span data-i18n="nav.analysis">Analyse</span>
           </button>
           <DropdownItems class="dropdown-items hidden group-open:block">
             <ul class="dropdown-menu">
@@ -65,8 +89,9 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
       </li>
       <li class="relative">
         <Dropdown class="group">
-          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/alarms', '/alarmsetup']) ? 'active' : ''}`} data-i18n="nav.monitoring">
-            Overvågning
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/alarms', '/alarmsetup']) ? 'active' : ''}`}>
+            <Fragment set:html={navIcons.monitoring} />
+            <span data-i18n="nav.monitoring">Overvågning</span>
           </button>
           <DropdownItems class="dropdown-items hidden group-open:block">
             <ul class="dropdown-menu">
@@ -78,8 +103,9 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
       </li>
       <li class="relative">
         <Dropdown class="group">
-          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/meters', '/gateways']) ? 'active' : ''}`} data-i18n="nav.meters">
-            Målere
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/meters', '/gateways']) ? 'active' : ''}`}>
+            <Fragment set:html={navIcons.meters} />
+            <span data-i18n="nav.meters">Målere</span>
           </button>
           <DropdownItems class="dropdown-items hidden group-open:block">
             <ul class="dropdown-menu">
@@ -91,8 +117,9 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
       </li>
       <li class="relative">
         <Dropdown class="group">
-          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/climate', '/csrd', '/emissionfactors']) ? 'active' : ''}`} data-i18n="nav.climate">
-            Klimaregnskab
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/climate', '/csrd', '/emissionfactors']) ? 'active' : ''}`}>
+            <Fragment set:html={navIcons.climate} />
+            <span data-i18n="nav.climate">Klimaregnskab</span>
           </button>
           <DropdownItems class="dropdown-items hidden group-open:block">
             <ul class="dropdown-menu">
@@ -103,11 +130,12 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
           </DropdownItems>
         </Dropdown>
       </li>
-      <li><a href="/control" class={`nav-link ${currentPath === '/control' ? 'active' : ''}`} data-i18n="nav.active_control">Aktiv styring</a></li>
+      <li><a href="/control" class={`nav-link ${currentPath === '/control' ? 'active' : ''}`}><Fragment set:html={navIcons.active_control} /><span data-i18n="nav.active_control">Aktiv styring</span></a></li>
       <li class="relative">
         <Dropdown class="group">
-          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/customreports', '/buildingreport', '/exportdata']) ? 'active' : ''}`} data-i18n="nav.reporting">
-            Rapportering
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/customreports', '/buildingreport', '/exportdata']) ? 'active' : ''}`}>
+            <Fragment set:html={navIcons.reporting} />
+            <span data-i18n="nav.reporting">Rapportering</span>
           </button>
           <DropdownItems class="dropdown-items hidden group-open:block">
             <ul class="dropdown-menu">
@@ -120,8 +148,9 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
       </li>
       <li class="relative">
         <Dropdown class="group">
-          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/userlist']) ? 'active' : ''}`} data-i18n="nav.setup">
-            Opsætning
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/userlist']) ? 'active' : ''}`}>
+            <Fragment set:html={navIcons.setup} />
+            <span data-i18n="nav.setup">Opsætning</span>
           </button>
           <DropdownItems class="dropdown-items hidden group-open:block">
             <ul class="dropdown-menu">
@@ -132,8 +161,9 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
       </li>
       <li class="relative">
         <Dropdown class="group">
-          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/rawdevice']) ? 'active' : ''}`} data-i18n="nav.third_party">
-            3rd Party
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/rawdevice']) ? 'active' : ''}`}>
+            <Fragment set:html={navIcons.third_party} />
+            <span data-i18n="nav.third_party">3rd Party</span>
           </button>
           <DropdownItems class="dropdown-items hidden group-open:block">
             <ul class="dropdown-menu">
@@ -199,6 +229,7 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
   }
 
   .dropdown-menu .nav-link {
+    display: block;   /* full-width rows inside the dropdown (top-level items are grid) */
     border-bottom: none;
     border-radius: var(--radius-sm);
     padding: 8px 12px;

@@ -157,7 +157,8 @@ body { background: var(--bg-dark); color: var(--text-primary); }
 /* ——— Top-nav links sit on the white module bar ——— */
 .nav-link        { color: var(--text-secondary); }
 .nav-link:hover  { color: var(--text-primary); }
-.nav-link.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+/* Active top-level item = soft-orange rounded pill (icon + text inherit --accent). */
+.nav-link.active { color: var(--accent); background: var(--accent-bg); border-bottom-color: transparent; }
 
 /* Dropdown menus that open off the white nav */
 .dropdown-menu { background: #ffffff; border-color: var(--border-medium); box-shadow: 0 6px 20px rgba(0,0,0,0.12); }

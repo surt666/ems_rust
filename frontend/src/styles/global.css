@@ -158,13 +158,18 @@ code {
 }
 
 .nav-link {
-  display: block;
-  padding: 12px 12px;
+  /* Grid so a leading icon + label (+ dropdown caret) sit on one row. */
+  display: inline-grid;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
   font-size: var(--text-sm);
   color: var(--text-muted);
   text-decoration: none;
   border-bottom: 2px solid transparent;
-  transition: color 0.15s;
+  border-radius: var(--radius-md);
+  transition: color 0.15s, background-color 0.15s;
   white-space: nowrap;
   background: none;
   border-top: none;
@@ -173,6 +178,13 @@ code {
   font-family: var(--font);
   cursor: pointer;
   line-height: normal;
+}
+
+/* Leading nav icons (inline SVG, inherit nav-link colour via currentColor). */
+.nav-ico {
+  display: block;
+  width: 16px;
+  height: 16px;
 }
 
 .nav-link:hover {
