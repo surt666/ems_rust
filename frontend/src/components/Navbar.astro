@@ -130,6 +130,18 @@ const isParentActive = (paths: string[]) => paths.includes(currentPath);
           </DropdownItems>
         </Dropdown>
       </li>
+      <li class="relative">
+        <Dropdown class="group">
+          <button class={`nav-link nav-dropdown-indicator ${isParentActive(['/rawdevice']) ? 'active' : ''}`} data-i18n="nav.third_party">
+            3rd Party
+          </button>
+          <DropdownItems class="dropdown-items hidden group-open:block">
+            <ul class="dropdown-menu">
+              <li><a href="/rawdevice" class={`nav-link ${currentPath === '/rawdevice' ? 'active' : ''}`} data-i18n="nav.raw_device">Raw Device</a></li>
+            </ul>
+          </DropdownItems>
+        </Dropdown>
+      </li>
       </ul>
       <button id="logout-btn" class="btn-logout" data-i18n="common.logout">
         Logout

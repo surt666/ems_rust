@@ -1,0 +1,23 @@
+---
+import Layout from '../layouts/Layout.astro';
+
+// The Raw Device MFE lives in the daq_dev account; we compose it cross-origin via htmx.
+const mfeUrl = import.meta.env.PUBLIC_RAWDEVICE_MFE_URL || "";
+---
+
+<Layout title="Raw Device">
+  <div class="page-container">
+    <div class="view-header"><h1>Raw Device</h1></div>
+    <!-- Microfrontend composition: fetch the whole MFE page from its own origin and
+         swap in ONLY its #raw-device main div. noHeaders keeps it a CORS-simple GET. -->
+    <div id="rd-content"
+         hx-get={mfeUrl}
+         hx-select="#raw-device"
+         hx-swap="innerHTML"
+         hx-trigger="load"
+         hx-request='{"noHeaders":true}'
+         hx-on::response-error="this.innerHTML = 'Raw Device portal unavailable.'">
+      Loading Raw Device portal…
+    </div>
+  </div>
+</Layout>
