@@ -35,11 +35,12 @@ func NewMeterHeartbeatStack(scope constructs.Construct, id string, props *awscdk
 		RemovalPolicy:     awscdk.RemovalPolicy_DESTROY,
 		AutoDeleteObjects: jsii.Bool(true),
 		BlockPublicAccess: awss3.BlockPublicAccess_BLOCK_ALL(),
+		// Liveness data only matters while recent — expire at 14 days. Straight deletion
+		// (no IA/Glacier transition): these Parquet files are small, and IA bills a 128 KB
+		// minimum per object + per-object transition fees, so transitioning tiny files
+		// costs MORE than it saves. Expiration also caps the read-side glob DuckDB scans.
 		LifecycleRules: &[]*awss3.LifecycleRule{{
-			Transitions: &[]*awss3.Transition{
-				{StorageClass: awss3.StorageClass_INFREQUENT_ACCESS(), TransitionAfter: awscdk.Duration_Days(jsii.Number(30))},
-				{StorageClass: awss3.StorageClass_GLACIER(), TransitionAfter: awscdk.Duration_Days(jsii.Number(120))},
-			},
+			Expiration: awscdk.Duration_Days(jsii.Number(14)),
 		}},
 	})
 
