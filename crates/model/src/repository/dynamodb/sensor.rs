@@ -132,8 +132,10 @@ pub async fn list_sensor_ids(
 // ---------------------------------------------------------------------------
 // list_sensors_under_path
 //
-// Uses the GSI: gsi1pk = "S", gsi1sk begins_with path_prefix.
-// Returns only active rows (sk starts with "active#").
+// Uses the GSI: gsi1pk = "S#HN2#<company>", gsi1sk begins_with path_prefix.
+// The sensor GSI partition is SPARSE — only active sensor rows are projected into it
+// (edges + history carry no gsi1pk), so no active#/type filter is needed. RCU tracks
+// the live-sensor count, not history depth.
 // ---------------------------------------------------------------------------
 
 pub async fn list_sensors_under_path(
@@ -146,11 +148,10 @@ pub async fn list_sensors_under_path(
     // `begins_with(prefix)` to narrow within the company (building/area).
     let partition = codec::sensor_gsi1pk(path_prefix);
     let rows = query_gsi_partition(client, table, &partition, path_prefix).await;
+    // Partition is sparse (active sensors only); `filter_map(.ok())` is just a guard
+    // against any stray/unmigrated row that fails to decode as a Sensor.
     let sensors = rows
         .iter()
-        .filter(|item| {
-            matches!(item.get("sk"), Some(AttributeValue::S(sk)) if sk.starts_with(ACTIVE_SK_PREFIX))
-        })
         .filter_map(|item| codec::sensor_of_item(item).ok())
         .collect();
     Ok(sensors)
@@ -209,13 +210,9 @@ pub async fn transact_replace(
             })
     };
 
-    // History item: same sensor, sk = bare rfc3339Z (no "active#" prefix)
-    let mut history_item = codec::sensor_to_item(&old_sensor);
-    // Override the sk to the history form
-    history_item.insert(
-        "sk".to_string(),
-        AttributeValue::S(SensorSk::History(old_created).to_string()),
-    );
+    // History item: same sensor, sk = history form, and NO GSI projection so the
+    // superseded version stays out of the sparse sensor partition.
+    let history_item = codec::sensor_history_to_item(&old_sensor, old_created);
 
     // New active item
     let new_active_item = codec::sensor_to_item(new_sensor);

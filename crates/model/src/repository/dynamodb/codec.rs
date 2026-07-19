@@ -700,18 +700,6 @@ pub struct AnchorEdgeParams<'a> {
 
 /// Encode a HN-side edge (`has_<label>` / `has_sensor`).
 pub fn anchor_edge_to_item(p: AnchorEdgeParams<'_>) -> Item {
-    let gsi1pk_v: String = match p.kind {
-        EdgeKind::HasSensor => sensor_gsi1pk(p.self_path),
-        EdgeKind::HasLabel(_) => {
-            // gsi1pk is derived from the child's level
-            if let Ok(child_id) = NodeId::parse(p.to_) {
-                node_gsi1pk(child_id.level())
-            } else {
-                panic!("anchor_edge_to_item: bad to_ {:?}", p.to_)
-            }
-        }
-        _ => panic!("anchor_edge_to_item: only HN-side edges"),
-    };
     let mut item: Item = HashMap::new();
     item.insert("pk".to_string(), s(p.from_));
     item.insert(
@@ -722,8 +710,25 @@ pub fn anchor_edge_to_item(p: AnchorEdgeParams<'_>) -> Item {
     item.insert("kind".to_string(), s(p.kind.kind_string()));
     item.insert("name".to_string(), s(p.name));
     item.insert("created".to_string(), s(dt_to_rfc3339z(p.created)));
-    item.insert("gsi1pk".to_string(), s(gsi1pk_v));
-    item.insert("gsi1sk".to_string(), s(p.self_path));
+    // GSI projection is SPARSE. Only node-child edges (`has_<label>`) are indexed,
+    // keyed by the child's level — that's how the subtree walk finds child nodes.
+    // `has_sensor` edges are deliberately NOT projected: the sensor GSI partition
+    // (`S#HN2#<company>`) must hold *only active sensors*, so a company-wide sensor
+    // Query reads no edge/history noise (less RCU, nothing to filter). The edge is
+    // still fully reachable on the base table (`pk=parent, sk=has_sensor#<id>`) —
+    // that's how `list_child_refs` reads it and how delete derives its key.
+    match p.kind {
+        EdgeKind::HasSensor => {}
+        EdgeKind::HasLabel(_) => {
+            let gsi1pk_v = match NodeId::parse(p.to_) {
+                Ok(child_id) => node_gsi1pk(child_id.level()),
+                Err(_) => panic!("anchor_edge_to_item: bad to_ {:?}", p.to_),
+            };
+            item.insert("gsi1pk".to_string(), s(gsi1pk_v));
+            item.insert("gsi1sk".to_string(), s(p.self_path));
+        }
+        _ => panic!("anchor_edge_to_item: only HN-side edges"),
+    }
     item
 }
 
@@ -790,6 +795,19 @@ pub fn sensor_to_item(sn: &Sensor) -> Item {
     if let Some(ref u) = sn.unit {
         item.insert("unit".to_string(), s(u.clone()));
     }
+    item
+}
+
+/// Encode a *history* (superseded) sensor row: identical payload to the active item
+/// but with a bare-timestamp sk and **no GSI projection**. History is queryable on the
+/// base `pk=S#<id>` partition; keeping it out of the sensor GSI keeps that partition
+/// sparse (active sensors only). `superseded_created` is the `created` of the version
+/// being retired (its original active timestamp).
+pub fn sensor_history_to_item(sn: &Sensor, superseded_created: DateTime<Utc>) -> Item {
+    let mut item = sensor_to_item(sn);
+    item.insert("sk".to_string(), s(SensorSk::History(superseded_created).to_string()));
+    item.remove("gsi1pk");
+    item.remove("gsi1sk");
     item
 }
 
@@ -1347,6 +1365,48 @@ mod tests {
             self_path: &self_path,
         });
         assert_items_eq(&item, &reencoded, "edge_has_property roundtrip");
+    }
+
+    // -----------------------------------------------------------------------
+    // Sparse sensor GSI: has_sensor edges and history rows must NOT be projected
+    // -----------------------------------------------------------------------
+
+    /// A `has_sensor` edge is NOT indexed — no gsi1pk/gsi1sk — so the sensor GSI
+    /// partition stays sparse (active sensors only). The base-table sk still points at
+    /// the sensor, which is how `list_child_refs` / delete reach it.
+    #[test]
+    fn has_sensor_edge_is_not_in_gsi() {
+        let created: chrono::DateTime<chrono::Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
+        let item = anchor_edge_to_item(AnchorEdgeParams {
+            from_: "HN4#10001",
+            to_: "S#10011",
+            kind: &EdgeKind::HasSensor,
+            name: "",
+            created: &created,
+            self_path: "HN0#root|HN1#10001|HN2#10003|HN3#10004|HN4#10001|S#10011",
+        });
+        assert_eq!(
+            item.get("sk").and_then(|v| if let AttributeValue::S(s) = v { Some(s.as_str()) } else { None }),
+            Some("has_sensor#S#10011"),
+        );
+        assert!(!item.contains_key("gsi1pk"), "has_sensor edge must not carry gsi1pk");
+        assert!(!item.contains_key("gsi1sk"), "has_sensor edge must not carry gsi1sk");
+    }
+
+    /// Active sensor rows ARE in the GSI (that's the anchor); history rows are NOT.
+    #[test]
+    fn active_sensor_indexed_history_not() {
+        let sensor = sensor_of_item(&load_fixture("sensor.json")).expect("decode sensor");
+        let active = sensor_to_item(&sensor);
+        assert!(active.contains_key("gsi1pk"), "active sensor must be indexed");
+        assert!(active.contains_key("gsi1sk"), "active sensor must be indexed");
+
+        let hist = sensor_history_to_item(&sensor, sensor.created);
+        assert!(!hist.contains_key("gsi1pk"), "history row must not carry gsi1pk");
+        assert!(!hist.contains_key("gsi1sk"), "history row must not carry gsi1sk");
+        // sk switched to the bare-timestamp history form (no active# prefix).
+        let sk = hist.get("sk").and_then(|v| if let AttributeValue::S(s) = v { Some(s.as_str()) } else { None }).unwrap();
+        assert!(!sk.starts_with("active#"), "history sk must not be active#, got {sk}");
     }
 
     // -----------------------------------------------------------------------

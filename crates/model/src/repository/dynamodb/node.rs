@@ -460,6 +460,68 @@ pub(crate) async fn query_gsi_partition(
     acc
 }
 
+/// Every base-table key belonging to one sensor, given its active row (the sparse-GSI
+/// anchor): its own rows (active + all history) via the `pk=S#<id>` partition, plus the
+/// parent `has_sensor` edge and the `DAQ#` lock — both derived, no extra query. This is
+/// the subtree analogue of `delete_sensor`, so a company-wide delete cleans everything
+/// (including the daq lock, which the old GSI-sweep never reached).
+async fn sensor_delete_keys(
+    client: &Client,
+    table: &str,
+    active_item: &Item,
+) -> Vec<(AttributeValue, AttributeValue)> {
+    let sensor = match codec::sensor_of_item(active_item) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+    let id = sensor.id;
+    let mut keys: Vec<(AttributeValue, AttributeValue)> = Vec::new();
+
+    // 1. All rows under the sensor's own pk partition (active + history).
+    let resp = client
+        .query()
+        .table_name(table)
+        .key_condition_expression("#pk = :pk")
+        .expression_attribute_names("#pk", "pk")
+        .expression_attribute_values(":pk", AttributeValue::S(id.to_string()))
+        .send()
+        .await;
+    if let Ok(r) = resp {
+        for it in r.items.unwrap_or_default() {
+            if let (Some(pk_v), Some(sk_v)) = (it.get("pk"), it.get("sk")) {
+                keys.push((pk_v.clone(), sk_v.clone()));
+            }
+        }
+    }
+
+    // 2. Parent `has_sensor` edge (derived — no longer in the GSI).
+    keys.push((
+        AttributeValue::S(sensor.parent_id().to_string()),
+        AttributeValue::S(format!("{}{}", HAS_SENSOR_SK_PREFIX, id)),
+    ));
+
+    // 3. DAQ lock held by the active daq, so the daq can be re-attached after delete.
+    if !sensor.daq_id.is_empty() {
+        let lock = codec::daq_lock_key(&sensor.daq_id, id);
+        if let (Some(pk_v), Some(sk_v)) = (lock.get("pk"), lock.get("sk")) {
+            keys.push((pk_v.clone(), sk_v.clone()));
+        }
+    }
+    keys
+}
+
+/// Drop duplicate `(pk, sk)` pairs — the same key can be gathered from more than one
+/// source (e.g. an active row via both the anchor scan and the pk-partition query), and
+/// `BatchWriteItem` rejects duplicate keys within a request.
+fn dedup_keys(keys: &mut Vec<(AttributeValue, AttributeValue)>) {
+    let str_of = |v: &AttributeValue| match v {
+        AttributeValue::S(s) => s.clone(),
+        other => format!("{other:?}"),
+    };
+    let mut seen = std::collections::HashSet::new();
+    keys.retain(|(pk, sk)| seen.insert((str_of(pk), str_of(sk))));
+}
+
 /// Delete a list of `(pk, sk)` pairs in 25-row `BatchWriteItem` chunks.
 async fn batch_delete(client: &Client, table: &str, keys: Vec<(AttributeValue, AttributeValue)>) {
     for chunk in keys.chunks(BATCH_DELETE_CHUNK) {
@@ -550,19 +612,23 @@ pub async fn delete_subtree(
     };
     let mut sensor_count: i64 = 0;
     for partition in &sensor_partitions {
-        let sensor_rows = query_gsi_partition(client, table, partition, &path_prefix).await;
-        for item in &sensor_rows {
-            if let (Some(pk_v), Some(sk_v)) = (item.get("pk"), item.get("sk")) {
-                all_keys.push((pk_v.clone(), sk_v.clone()));
+        // Sparse partition: only active sensor rows (anchors). For each, gather its full
+        // base-table row set (active + history + edge + daq lock). Any stray unmigrated
+        // edge/history row still sitting in the partition is a no-op here — it shares a
+        // pk (history) or a derived key (edge) with an anchor, so it still gets deleted.
+        let anchors = query_gsi_partition(client, table, partition, &path_prefix).await;
+        for item in &anchors {
+            let is_active_sensor = matches!(item.get("type"), Some(AttributeValue::S(t)) if t == "sensor")
+                && matches!(item.get("sk"), Some(AttributeValue::S(sk)) if sk.starts_with(ACTIVE_SK_PREFIX));
+            if !is_active_sensor {
+                continue;
             }
-            if matches!(item.get("type"), Some(AttributeValue::S(t)) if t == "sensor")
-                && matches!(item.get("sk"), Some(AttributeValue::S(sk)) if sk.starts_with(ACTIVE_SK_PREFIX))
-            {
-                sensor_count += 1;
-            }
+            sensor_count += 1;
+            all_keys.extend(sensor_delete_keys(client, table, item).await);
         }
     }
 
+    dedup_keys(&mut all_keys);
     batch_delete(client, table, all_keys).await;
 
     for (lvl, count) in level_node_counts {
