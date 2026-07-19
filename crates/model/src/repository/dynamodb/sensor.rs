@@ -281,83 +281,80 @@ pub async fn transact_replace(
 }
 
 // ---------------------------------------------------------------------------
-// delete_sensor
-//
-// 1. Query all rows under the sensor's pk partition (active + history).
-// 2. Delete each row individually.
-// 3. Delete the parent edge row (has_sensor#<sensor_id>).
-// 4. Decrement the sensor counter by 1.
+// sensor_row_keys / delete_sensor
 // ---------------------------------------------------------------------------
 
+/// Every base-table `(pk, sk)` that belongs to one sensor: its own pk-partition rows
+/// (active + all history), the parent `has_sensor` edge (not in any GSI — derived), and
+/// the active daq's `DAQ#` lock. This is the single authoritative "what rows make up a
+/// sensor" — used by both `delete_sensor` (single) and `delete_subtree` (company-wide),
+/// so the two paths can't drift. The active daq is read from the partition scan, so
+/// callers don't pass it.
+pub(crate) async fn sensor_row_keys(
+    client: &Client,
+    table: &str,
+    sensor_id: &SensorId,
+    parent: &NodeId,
+) -> Result<Vec<(AttributeValue, AttributeValue)>, RepositoryError> {
+    let resp = client
+        .query()
+        .table_name(table)
+        .key_condition_expression("#pk = :pk")
+        .expression_attribute_names("#pk", "pk")
+        .expression_attribute_values(":pk", AttributeValue::S(sensor_id.to_string()))
+        .send()
+        .await
+        .map_err(|e| RepositoryError::Aws(e.to_string()))?;
+    let items = resp.items.unwrap_or_default();
+
+    let mut keys: Vec<(AttributeValue, AttributeValue)> = Vec::new();
+    // 1. The sensor's own partition rows (active + history), plus the active daq (history
+    //    rows kept old daqs but never held a lock — only the active daq does).
+    let mut active_daq: Option<&str> = None;
+    for it in &items {
+        if let (Some(pk_v), Some(sk_v)) = (it.get("pk"), it.get("sk")) {
+            keys.push((pk_v.clone(), sk_v.clone()));
+        }
+        if let (Some(AttributeValue::S(sk)), Some(AttributeValue::S(d))) = (it.get("sk"), it.get("daq_id")) {
+            if sk.starts_with(ACTIVE_SK_PREFIX) {
+                active_daq = Some(d);
+            }
+        }
+    }
+    // 2. Parent `has_sensor` edge.
+    keys.push((
+        AttributeValue::S(parent.to_string()),
+        AttributeValue::S(format!("{}{}", HAS_SENSOR_SK_PREFIX, sensor_id)),
+    ));
+    // 3. The active daq's lock, so the daq can be re-attached after delete.
+    if let Some(daq) = active_daq {
+        let lock = codec::daq_lock_key(daq, *sensor_id);
+        if let (Some(pk_v), Some(sk_v)) = (lock.get("pk"), lock.get("sk")) {
+            keys.push((pk_v.clone(), sk_v.clone()));
+        }
+    }
+    Ok(keys)
+}
+
+/// Delete a single sensor and all its rows (active + history + edge + daq lock), then
+/// decrement the live counter. Row set comes from the shared `sensor_row_keys`.
 pub async fn delete_sensor(
     client: &Client,
     table: &str,
     sensor_id: &SensorId,
     parent: &NodeId,
 ) -> Result<(), RepositoryError> {
-    let id_s = sensor_id.to_string();
-
-    // Query entire pk partition for the sensor (active + all history rows)
-    let resp = client
-        .query()
-        .table_name(table)
-        .key_condition_expression("#pk = :pk")
-        .expression_attribute_names("#pk", "pk")
-        .expression_attribute_values(":pk", AttributeValue::S(id_s.clone()))
-        .send()
-        .await
-        .map_err(|e| RepositoryError::Aws(e.to_string()))?;
-
-    let items = resp.items.unwrap_or_default();
-
-    // The active row's daq owns a lock row to free (history rows kept old daqs
-    // but never held a lock — only the active daq does).
-    let active_daq: Option<String> = items.iter().find_map(|it| match (it.get("sk"), it.get("daq_id")) {
-        (Some(AttributeValue::S(sk)), Some(AttributeValue::S(d))) if sk.starts_with(ACTIVE_SK_PREFIX) => {
-            Some(d.clone())
-        }
-        _ => None,
-    });
-
-    // Delete each sensor row
-    for item in &items {
-        if let (Some(pk_v), Some(sk_v)) = (item.get("pk"), item.get("sk")) {
-            let mut key: HashMap<String, AttributeValue> = HashMap::new();
-            key.insert("pk".to_string(), pk_v.clone());
-            key.insert("sk".to_string(), sk_v.clone());
-            let _ = client
-                .delete_item()
-                .table_name(table)
-                .set_key(Some(key))
-                .send()
-                .await;
-        }
-    }
-
-    // Free the daq lock so the daq can be re-attached elsewhere.
-    if let Some(daq) = active_daq {
+    for (pk_v, sk_v) in sensor_row_keys(client, table, sensor_id, parent).await? {
+        let mut key: HashMap<String, AttributeValue> = HashMap::new();
+        key.insert("pk".to_string(), pk_v);
+        key.insert("sk".to_string(), sk_v);
         let _ = client
             .delete_item()
             .table_name(table)
-            .set_key(Some(codec::daq_lock_key(&daq, *sensor_id)))
+            .set_key(Some(key))
             .send()
             .await;
     }
-
-    // Delete the parent edge row: pk = parent, sk = "has_sensor#<sensor_id>"
-    let edge_sk = format!("{}{}", HAS_SENSOR_SK_PREFIX, id_s);
-    let mut edge_key: HashMap<String, AttributeValue> = HashMap::new();
-    edge_key.insert(
-        "pk".to_string(),
-        AttributeValue::S(parent.to_string()),
-    );
-    edge_key.insert("sk".to_string(), AttributeValue::S(edge_sk));
-    let _ = client
-        .delete_item()
-        .table_name(table)
-        .set_key(Some(edge_key))
-        .send()
-        .await;
 
     // Decrement live counter
     bump_live(client, table, COUNTER_PK_SENSOR, -1).await;

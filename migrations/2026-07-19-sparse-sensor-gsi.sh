@@ -6,10 +6,6 @@ set -euo pipefail
 export AWS_PROFILE=stel-sb
 TABLE=hierarchy_new
 
-strip() {  # $1 = human label, $2..= scan args already built by caller via env
-  :
-}
-
 # Emit "pk<TAB>sk" lines for a scan, following pagination.
 scan_keys() {
   local filter="$1" names="$2" values="$3"

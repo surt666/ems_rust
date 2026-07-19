@@ -17,6 +17,7 @@ use crate::errors::RepositoryError;
 use crate::repository::dynamodb::codec::{
     self, AnchorEdgeParams, Item,
 };
+use crate::repository::dynamodb::sensor;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -460,66 +461,16 @@ pub(crate) async fn query_gsi_partition(
     acc
 }
 
-/// Every base-table key belonging to one sensor, given its active row (the sparse-GSI
-/// anchor): its own rows (active + all history) via the `pk=S#<id>` partition, plus the
-/// parent `has_sensor` edge and the `DAQ#` lock — both derived, no extra query. This is
-/// the subtree analogue of `delete_sensor`, so a company-wide delete cleans everything
-/// (including the daq lock, which the old GSI-sweep never reached).
-async fn sensor_delete_keys(
-    client: &Client,
-    table: &str,
-    active_item: &Item,
-) -> Vec<(AttributeValue, AttributeValue)> {
-    let sensor = match codec::sensor_of_item(active_item) {
-        Ok(s) => s,
-        Err(_) => return vec![],
-    };
-    let id = sensor.id;
-    let mut keys: Vec<(AttributeValue, AttributeValue)> = Vec::new();
-
-    // 1. All rows under the sensor's own pk partition (active + history).
-    let resp = client
-        .query()
-        .table_name(table)
-        .key_condition_expression("#pk = :pk")
-        .expression_attribute_names("#pk", "pk")
-        .expression_attribute_values(":pk", AttributeValue::S(id.to_string()))
-        .send()
-        .await;
-    if let Ok(r) = resp {
-        for it in r.items.unwrap_or_default() {
-            if let (Some(pk_v), Some(sk_v)) = (it.get("pk"), it.get("sk")) {
-                keys.push((pk_v.clone(), sk_v.clone()));
-            }
-        }
-    }
-
-    // 2. Parent `has_sensor` edge (derived — no longer in the GSI).
-    keys.push((
-        AttributeValue::S(sensor.parent_id().to_string()),
-        AttributeValue::S(format!("{}{}", HAS_SENSOR_SK_PREFIX, id)),
-    ));
-
-    // 3. DAQ lock held by the active daq, so the daq can be re-attached after delete.
-    if !sensor.daq_id.is_empty() {
-        let lock = codec::daq_lock_key(&sensor.daq_id, id);
-        if let (Some(pk_v), Some(sk_v)) = (lock.get("pk"), lock.get("sk")) {
-            keys.push((pk_v.clone(), sk_v.clone()));
-        }
-    }
-    keys
-}
-
-/// Drop duplicate `(pk, sk)` pairs — the same key can be gathered from more than one
-/// source (e.g. an active row via both the anchor scan and the pk-partition query), and
-/// `BatchWriteItem` rejects duplicate keys within a request.
+/// Drop duplicate `(pk, sk)` pairs before batch delete — `BatchWriteItem` rejects
+/// duplicate keys within a request. Defensive: the current sources yield disjoint keys,
+/// but a future overlap shouldn't turn into a hard error. pk/sk are always strings
+/// (table keys), so dedup on the inner values; any non-string key is kept, not dropped.
 fn dedup_keys(keys: &mut Vec<(AttributeValue, AttributeValue)>) {
-    let str_of = |v: &AttributeValue| match v {
-        AttributeValue::S(s) => s.clone(),
-        other => format!("{other:?}"),
-    };
     let mut seen = std::collections::HashSet::new();
-    keys.retain(|(pk, sk)| seen.insert((str_of(pk), str_of(sk))));
+    keys.retain(|(pk, sk)| match (pk, sk) {
+        (AttributeValue::S(p), AttributeValue::S(s)) => seen.insert((p.clone(), s.clone())),
+        _ => true,
+    });
 }
 
 /// Delete a list of `(pk, sk)` pairs in 25-row `BatchWriteItem` chunks.
@@ -624,7 +575,14 @@ pub async fn delete_subtree(
                 continue;
             }
             sensor_count += 1;
-            all_keys.extend(sensor_delete_keys(client, table, item).await);
+            // Derive the sensor's id + parent from the anchor, then let the shared
+            // `sensor_row_keys` enumerate its whole row set (active + history + edge +
+            // daq lock) — the same authoritative helper `delete_sensor` uses.
+            if let Ok(sn) = codec::sensor_of_item(item) {
+                if let Ok(keys) = sensor::sensor_row_keys(client, table, &sn.id, &sn.parent_id()).await {
+                    all_keys.extend(keys);
+                }
+            }
         }
     }
 
