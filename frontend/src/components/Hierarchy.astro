@@ -141,14 +141,11 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
           toggle .tree-toggle-expanded on first .tree-toggle in w
           if the @style of list is 'display:none;' then
             set the @style of list to ''
-            if window.hierTree then call window.hierTree.markExpanded(row's @data-id) end
           else
             if the innerHTML of list is '' then
               send loadChildren to w
-              if window.hierTree then call window.hierTree.markExpanded(row's @data-id) end
             else
               set the @style of list to 'display:none;'
-              if window.hierTree then call window.hierTree.markCollapsed(row's @data-id) end
             end
           end">
   <ul id="hier-tree-list" class="nested-list"
@@ -161,11 +158,3 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
       style="cursor: pointer;">
   </ul>
 </div>
-
-<script>
-  // Persist + restore tree expansion so a full page reload (e.g. a sensor-map
-  // pin → /measurements) doesn't fold the tree back to the property level.
-  import { initHierTreeState } from "../lib/hier-tree-state.js";
-  initHierTreeState();
-  document.addEventListener("astro:page-load", initHierTreeState);
-</script>

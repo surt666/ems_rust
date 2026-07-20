@@ -160,7 +160,7 @@ on htmx:afterOnLoad from #m-rows set @data-busy to '0'`;
         {live ? (
           <tbody id="m-rows"
             hx-get={hxBase}
-            hx-trigger="load delay:60ms"
+            hx-trigger="mready"
             hx-include="#m-controls"
             hx-swap="innerHTML"
             hx-indicator="#m-spinner"
@@ -215,6 +215,38 @@ on htmx:afterOnLoad from #m-rows set @data-busy to '0'`;
   }
   @media (max-width: 760px) { .meta-grid { grid-template-columns: 1fr 1fr; } }
 </style>
+
+<script>
+  // This page reads its identity (daq/purpose/…) from the URL. Under a soft
+  // (Astro view-transition) navigation the DOM + htmx run *before* the URL
+  // settles, so params come up blank. Drive the param-read and the data load
+  // off astro:page-load, which fires AFTER the URL is set — on both hard loads
+  // and soft navigations — so /measurements works either way and no navigation
+  // needs a full page reload (keeping the sidebar/tree intact).
+  function loadMeasurements() {
+    if (!document.querySelector('[data-endpoint="/measurements"]')) return; // not this page
+    let tries = 0;
+    const iv = setInterval(() => {
+      const el = document.querySelector(".page-container");
+      const stack = el && el._x_dataStack;
+      if (stack && stack[0]) {
+        stack[0].q = new URLSearchParams(location.search); // refresh Alpine bindings
+        clearInterval(iv);
+        // A soft nav doesn't htmx-process this page (Layout only processes the
+        // node panel), so process it here, then fire the load once Alpine has
+        // flushed the daq_id binding.
+        if (window.htmx) window.htmx.process(el);
+        const rows = document.getElementById("m-rows");
+        requestAnimationFrame(() => {
+          if (rows && window.htmx) window.htmx.trigger(rows, "mready");
+        });
+      } else if (++tries > 40) {
+        clearInterval(iv); // Alpine never mounted — give up quietly
+      }
+    }, 25);
+  }
+  document.addEventListener("astro:page-load", loadMeasurements);
+</script>
 
 <!-- Global: htmx toggles `.htmx-request` at runtime, so these can't be Astro-scoped. -->
 <style is:global>

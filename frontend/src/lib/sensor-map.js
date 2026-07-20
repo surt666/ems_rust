@@ -178,7 +178,12 @@ async function syncMap() {
       title: r.daqid,
       gmpClickable: true,
     });
-    marker.addListener("gmp-click", () => window.location.assign(r.href));
+    // Soft-navigate (Astro view transition) so the sidebar/tree is preserved;
+    // fall back to a full load if the router isn't available.
+    marker.addListener("gmp-click", () => {
+      if (window.emsNavigate) window.emsNavigate(r.href);
+      else window.location.assign(r.href);
+    });
     markers.push(marker);
     bounds.extend(r.coord);
   }
