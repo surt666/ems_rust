@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awskinesis"
@@ -10,6 +12,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambdaeventsources"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsscheduler"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 )
@@ -183,7 +186,77 @@ func NewMeterHeartbeatStack(scope constructs.Construct, id string, props *awscdk
 
 	awscdk.NewCfnOutput(stack, jsii.String("HeartbeatFirehoseName"), &awscdk.CfnOutputProps{
 		Value:       jsii.String("meter-liveness"),
-		Description: jsii.String("Firehose delivery stream → all.heartbeat (upsert)"),
+		Description: jsii.String("Firehose delivery stream → all.heartbeat (append)"),
 	})
+
+	// ── Retention: expire rows older than N days. Iceberg/S3 Tables has no native
+	// partition-TTL, so a daily EventBridge Scheduler fires one Athena DELETE. Firehose
+	// writes files in time order, so the file-level last_seen stats let Iceberg drop whole
+	// old files without rewriting recent ones — cheap. (One query/day, not the heavy
+	// scheduled Glue job we avoided.)
+	const retentionDays = 30
+	athenaResults := "daq-athena-query-results-" + account + "-" + region
+
+	schedRole := awsiam.NewRole(stack, jsii.String("HeartbeatRetentionRole"), &awsiam.RoleProps{
+		AssumedBy: awsiam.NewServicePrincipal(jsii.String("scheduler.amazonaws.com"), nil),
+	})
+	schedRole.AddManagedPolicy(awsiam.ManagedPolicy_FromAwsManagedPolicyName(jsii.String("AmazonS3TablesFullAccess")))
+	schedRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect:    awsiam.Effect_ALLOW,
+		Actions:   jsii.Strings("athena:StartQueryExecution", "athena:GetQueryExecution", "athena:StopQueryExecution"),
+		Resources: jsii.Strings("arn:aws:athena:" + region + ":" + account + ":workgroup/daq-workgroup"),
+	}))
+	schedRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect:  awsiam.Effect_ALLOW,
+		Actions: jsii.Strings("glue:GetTable", "glue:GetDatabase", "glue:UpdateTable", "glue:GetCatalog"),
+		Resources: jsii.Strings(
+			"arn:aws:glue:"+region+":"+account+":catalog",
+			"arn:aws:glue:"+region+":"+account+":catalog/s3tablescatalog",
+			catalogArn,
+			"arn:aws:glue:"+region+":"+account+":database/s3tablescatalog/measurements/*",
+			"arn:aws:glue:"+region+":"+account+":table/s3tablescatalog/measurements/*/*",
+		),
+	}))
+	schedRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect:    awsiam.Effect_ALLOW,
+		Actions:   jsii.Strings("lakeformation:GetDataAccess"),
+		Resources: jsii.Strings("*"),
+	}))
+	schedRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect:    awsiam.Effect_ALLOW,
+		Actions:   jsii.Strings("s3:GetBucketLocation", "s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:ListMultipartUploadParts", "s3:AbortMultipartUpload"),
+		Resources: jsii.Strings("arn:aws:s3:::"+athenaResults, "arn:aws:s3:::"+athenaResults+"/*"),
+	}))
+	// LF "Super" (ALL) on the table — DELETE is a write, same grant Firehose needed.
+	schedLf := awslakeformation.NewCfnPermissions(stack, jsii.String("HeartbeatRetentionLf"), &awslakeformation.CfnPermissionsProps{
+		DataLakePrincipal: &awslakeformation.CfnPermissions_DataLakePrincipalProperty{DataLakePrincipalIdentifier: schedRole.RoleArn()},
+		Resource: &awslakeformation.CfnPermissions_ResourceProperty{
+			TableResource: &awslakeformation.CfnPermissions_TableResourceProperty{
+				DatabaseName: jsii.String("all"), Name: jsii.String("heartbeat"),
+				CatalogId: jsii.String(s3tablesCatalogId),
+			},
+		},
+		Permissions: jsii.Strings("ALL"),
+	})
+
+	deleteInput := fmt.Sprintf(
+		`{"QueryString":"DELETE FROM \"all\".\"heartbeat\" WHERE last_seen < current_timestamp - interval '%d' day",`+
+			`"WorkGroup":"daq-workgroup",`+
+			`"QueryExecutionContext":{"Database":"all","Catalog":"s3tablescatalog/measurements"},`+
+			`"ResultConfiguration":{"OutputLocation":"s3://%s/"}}`,
+		retentionDays, athenaResults,
+	)
+	sched := awsscheduler.NewCfnSchedule(stack, jsii.String("HeartbeatRetention"), &awsscheduler.CfnScheduleProps{
+		Name:               jsii.String("meter-heartbeat-retention"),
+		ScheduleExpression: jsii.String("rate(1 day)"),
+		FlexibleTimeWindow: &awsscheduler.CfnSchedule_FlexibleTimeWindowProperty{Mode: jsii.String("OFF")},
+		Target: &awsscheduler.CfnSchedule_TargetProperty{
+			Arn:     jsii.String("arn:aws:scheduler:::aws-sdk:athena:startQueryExecution"),
+			RoleArn: schedRole.RoleArn(),
+			Input:   jsii.String(deleteInput),
+		},
+	})
+	sched.AddDependency(schedLf)
+
 	return stack
 }
