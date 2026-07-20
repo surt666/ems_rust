@@ -9,6 +9,11 @@
        microfrontend needs NO knowledge of the shell's component classes. When composed
        into the shell via hx-select, the shell already loads the same base. -->
   <link rel="stylesheet" href="https://d24beiqs2cj89y.cloudfront.net/base.css" />
+  <!-- htmx 2 flipped selfRequestsOnly to default TRUE, which blocks this portal's
+       deliberate cross-origin GET to the daq device-status API (a different origin than
+       this bucket). Allow it — matching the shell's htmx 1.9.x behaviour. Must precede
+       the htmx script so it's read at init. -->
+  <meta name="htmx-config" content='{"selfRequestsOnly":false}' />
   <script src="htmx.min.js"></script>
   <style>
     /* MFE-only page layout (not shell-coupled) — just centres the standalone view. */
