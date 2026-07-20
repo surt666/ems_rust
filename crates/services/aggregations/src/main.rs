@@ -371,7 +371,6 @@ async fn handler(
     event: Request,
     client: &Client,
     table: &str,
-    liveness_table: &str,
     athena: &aws_sdk_athena::Client,
 ) -> Result<Response<Body>, Error> {
     let qs: HashMap<String, String> = event
@@ -400,7 +399,7 @@ async fn handler(
             "get_benchmark" => api::finish(handle_benchmark(client, table, &qs).await, Cors::None),
             "get_alarms" => api::finish(handle_alarms(client, table, &qs).await, Cors::None),
             "get_liveness" => {
-                api::finish(liveness::handle_liveness(client, liveness_table, &qs).await, Cors::None)
+                api::finish(liveness::handle_liveness(athena, &qs).await, Cors::None)
             }
             other => api::to_http(
                 ApiError::not_found(format!("unknown query action {other:?}")).into_response(),
@@ -1064,10 +1063,8 @@ async fn main() -> Result<(), Error> {
     let athena = aws_sdk_athena::Client::new(&cfg);
     let table =
         std::env::var("ROLLUP_TABLE").unwrap_or_else(|_| "measurements_aggregate".to_string());
-    let liveness_table =
-        std::env::var("LIVENESS_TABLE").unwrap_or_else(|_| "meter-liveness".to_string());
 
-    run(service_fn(|req| handler(req, &client, &table, &liveness_table, &athena))).await
+    run(service_fn(|req| handler(req, &client, &table, &athena))).await
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────

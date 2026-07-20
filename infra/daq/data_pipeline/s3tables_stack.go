@@ -131,6 +131,44 @@ func NewS3TablesStack(scope constructs.Construct, id string, props *awscdk.Stack
 		ApplyToUpdateReplacePolicy: jsii.Bool(true),
 	})
 
+	// Device-liveness latest-state table, written by Firehose (upsert on customerid+meterid,
+	// so one row per device — not an append log). Read by the aggregations lambda's
+	// get_liveness via Athena. NO time partition: it's latest-state (bounded by device
+	// count), read by customer.
+	awss3tables.NewCfnTable(stack, jsii.String("Heartbeat"), &awss3tables.CfnTableProps{
+		TableBucketArn:  jsii.String(measurementsBucketArn),
+		Namespace:       jsii.String("all"),
+		TableName:       jsii.String("heartbeat"),
+		OpenTableFormat: jsii.String("ICEBERG"),
+		IcebergMetadata: map[string]any{
+			"icebergSchema": map[string]any{
+				"schemaFieldList": []any{
+					field("customerid", "string", true),
+					field("meterid", "string", true),
+					field("last_seen", "timestamptz", false),
+					field("event_time", "string", false),
+					field("gatewayid", "string", false),
+					field("schematype", "string", false),
+					field("transport", "string", false),
+				},
+			},
+			"icebergPartitionSpec": map[string]any{
+				"fields": []any{
+					partition(1, "bucket[16]", "customerid_bucket"),
+				},
+			},
+			"icebergSortOrder": map[string]any{
+				"orderId": 1,
+				"fields": []any{
+					sortField(1), sortField(2),
+				},
+			},
+			"tableProperties": commonTableProperties(),
+		},
+	}).ApplyRemovalPolicy(awscdk.RemovalPolicy_DESTROY, &awscdk.RemovalPolicyOptions{
+		ApplyToUpdateReplacePolicy: jsii.Bool(true),
+	})
+
 	return stack
 }
 

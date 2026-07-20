@@ -200,7 +200,6 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		MemorySize:   jsii.Number(512),
 		Environment: &map[string]*string{
 			"ROLLUP_TABLE":     table.TableName(),
-			"LIVENESS_TABLE":   jsii.String("meter-liveness"),
 			"ATHENA_WORKGROUP": jsii.String("daq-workgroup"),
 			"ATHENA_OUTPUT":    jsii.String("s3://" + athenaResults + "/"),
 			"ATHENA_CATALOG":   jsii.String("s3tablescatalog/" + props.TableBucket),
@@ -210,14 +209,6 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		LogRetention: awslogs.RetentionDays_ONE_WEEK,
 	})
 	table.GrantReadData(aggFn)
-
-	// Device-liveness read (get_liveness): read the meter-liveness table owned by
-	// MeterHeartbeatStack. Referenced by its stable ARN (no cross-stack import).
-	aggFn.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
-		Effect:    awsiam.Effect_ALLOW,
-		Actions:   jsii.Strings("dynamodb:GetItem", "dynamodb:Query"),
-		Resources: jsii.Strings("arn:aws:dynamodb:" + region + ":" + account + ":table/meter-liveness"),
-	}))
 
 	// The `/measurements` route queries `all.raw_data` via Athena: needs athena query
 	// exec on the workgroup, Glue catalog read for the s3tables federated catalog, R/W
@@ -267,6 +258,17 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		Resource: &awslakeformation.CfnPermissions_ResourceProperty{
 			TableResource: &awslakeformation.CfnPermissions_TableResourceProperty{
 				DatabaseName: jsii.String("all"), Name: jsii.String("raw_data"),
+				CatalogId: jsii.String(s3tablesCatalogId),
+			},
+		},
+		Permissions: jsii.Strings("SELECT", "DESCRIBE"),
+	})
+	// get_liveness reads all.heartbeat via Athena — needs its own LF SELECT grant.
+	awslakeformation.NewCfnPermissions(stack, jsii.String("HeartbeatLfTablePermissions"), &awslakeformation.CfnPermissionsProps{
+		DataLakePrincipal: aggDl,
+		Resource: &awslakeformation.CfnPermissions_ResourceProperty{
+			TableResource: &awslakeformation.CfnPermissions_TableResourceProperty{
+				DatabaseName: jsii.String("all"), Name: jsii.String("heartbeat"),
 				CatalogId: jsii.String(s3tablesCatalogId),
 			},
 		},

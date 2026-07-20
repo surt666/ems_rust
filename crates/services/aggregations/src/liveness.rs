@@ -1,43 +1,37 @@
-//! Device-liveness read: "is this device sending data?" — reads the latest-state
-//! `meter-liveness` DynamoDB table (written by the meter-heartbeat lambda). Keyed
-//! `pk=customerid, sk=meterid`, so a lookup is a `GetItem` (one device) or a
-//! `Query(pk=customerid)` (all of a customer's meters) — O(1), no scan.
-//!
-//! Serves the Raw Device MFE: HTML fragment (default) or JSON.
+//! Device-liveness read: "is this device sending data?" — reads the `all.heartbeat`
+//! Iceberg table (S3 Tables), written append-only by Firehose from the meter-heartbeat
+//! lambda. Aggregates to latest-per-device (`max_by(_, last_seen)` + `GROUP BY`), keyed
+//! by customerid (+ optional meterid). Serves the Raw Device MFE: HTML fragment or JSON.
 
 use std::collections::HashMap;
+use std::time::Duration as StdDuration;
 
-use aws_sdk_dynamodb::{types::AttributeValue, Client};
-use serde::{Deserialize, Serialize};
+use aws_sdk_athena::types::{QueryExecutionContext, ResultConfiguration};
+use aws_sdk_athena::Client as AthenaClient;
+use serde::Serialize;
 
 use api::{ApiError, ApiResponse, Format};
 
-/// One device's latest-seen state. `customerid`/`meterid` are the table keys; the rest
-/// are informational (gateway is *not* a key — a LoRaWAN uplink is heard by many).
-#[derive(Debug, Default, Serialize, Deserialize)]
+const POLL_MS: u64 = 300;
+const MAX_POLLS: u32 = 90; // ~27s ceiling, under the 30s lambda timeout
+
+/// One device's latest-seen state (all cells come back from Athena as strings).
+#[derive(Debug, Default, Serialize)]
 pub struct LivenessRow {
-    #[serde(rename = "pk")]
     pub customerid: String,
-    #[serde(rename = "sk")]
     pub meterid: String,
-    #[serde(default)]
     pub last_seen: String,
-    #[serde(default)]
     pub event_time: String,
-    #[serde(default)]
     pub gatewayid: String,
-    #[serde(default)]
     pub schematype: String,
-    #[serde(default)]
     pub transport: String,
 }
 
 /// `GET …/query/get_liveness?customerid=&meterid=&format=html|json`. `customerid` is
-/// required (the partition); `meterid` narrows to one device. Key values are bound
-/// params (data, not expression), so no injection surface.
+/// required (the read filter); `meterid` narrows to one device. Values are single-quote
+/// escaped for the Presto literal (injection-safe).
 pub async fn handle_liveness(
-    client: &Client,
-    table: &str,
+    athena: &AthenaClient,
     qs: &HashMap<String, String>,
 ) -> Result<ApiResponse, ApiError> {
     let format = Format::resolve(qs.get("format").map(String::as_str), Format::Html);
@@ -48,10 +42,27 @@ pub async fn handle_liveness(
     };
     let meterid = clean("meterid");
 
-    let rows = match &meterid {
-        Some(m) => get_one(client, table, &customerid, m).await?,
-        None => query_customer(client, table, &customerid).await?,
+    let esc = |s: &str| s.replace('\'', "''");
+    let meter_clause = match &meterid {
+        Some(m) => format!(" AND meterid = '{}'", esc(m)),
+        None => String::new(),
     };
+    // Aggregate the append log to the latest row per device.
+    let sql = format!(
+        "SELECT customerid, meterid, \
+                CAST(max(last_seen) AS VARCHAR) AS last_seen, \
+                max_by(event_time, last_seen) AS event_time, \
+                max_by(gatewayid, last_seen)  AS gatewayid, \
+                max_by(schematype, last_seen) AS schematype, \
+                max_by(transport, last_seen)  AS transport \
+         FROM \"all\".\"heartbeat\" \
+         WHERE customerid = '{cust}'{meter} \
+         GROUP BY customerid, meterid ORDER BY 3 DESC LIMIT 500",
+        cust = esc(&customerid),
+        meter = meter_clause,
+    );
+
+    let rows = run_query(athena, &sql).await?;
 
     Ok(match format {
         Format::Json => ApiResponse::json(&rows),
@@ -59,59 +70,94 @@ pub async fn handle_liveness(
     })
 }
 
-/// One device: `GetItem(pk=customerid, sk=meterid)` → 0 or 1 row.
-async fn get_one(
-    client: &Client,
-    table: &str,
-    customerid: &str,
-    meterid: &str,
-) -> Result<Vec<LivenessRow>, ApiError> {
-    let resp = client
-        .get_item()
-        .table_name(table)
-        .key("pk", AttributeValue::S(customerid.to_string()))
-        .key("sk", AttributeValue::S(meterid.to_string()))
-        .send()
-        .await
-        .map_err(|e| ApiError::internal(format!("dynamodb get: {e}")))?;
-    Ok(resp
-        .item
-        .and_then(|it| serde_dynamo::from_item(it).ok())
-        .into_iter()
-        .collect())
+/// Athena config from env (shared with the measurements route), table fixed to `heartbeat`.
+fn athena_env(k: &str, d: &str) -> String {
+    std::env::var(k).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| d.into())
 }
 
-/// All of a customer's meters: `Query(pk=customerid)`.
-async fn query_customer(
-    client: &Client,
-    table: &str,
-    customerid: &str,
-) -> Result<Vec<LivenessRow>, ApiError> {
-    let resp = client
-        .query()
-        .table_name(table)
-        .key_condition_expression("pk = :pk")
-        .expression_attribute_values(":pk", AttributeValue::S(customerid.to_string()))
+/// Start → poll → fetch an Athena query, returning `LivenessRow`s (header skipped).
+async fn run_query(athena: &AthenaClient, sql: &str) -> Result<Vec<LivenessRow>, ApiError> {
+    let workgroup = athena_env("ATHENA_WORKGROUP", "daq-workgroup");
+    let output = athena_env("ATHENA_OUTPUT", "s3://daq-athena-query-results-891377204778-eu-central-1/");
+    let catalog = athena_env("ATHENA_CATALOG", "s3tablescatalog/measurements");
+    let database = athena_env("ATHENA_DATABASE", "all");
+
+    let start = athena
+        .start_query_execution()
+        .query_string(sql)
+        .work_group(&workgroup)
+        .query_execution_context(QueryExecutionContext::builder().database(&database).catalog(&catalog).build())
+        .result_configuration(ResultConfiguration::builder().output_location(&output).build())
         .send()
         .await
-        .map_err(|e| ApiError::internal(format!("dynamodb query: {e}")))?;
-    Ok(resp
-        .items
+        .map_err(|e| ApiError::internal(format!("athena start: {e}")))?;
+    let qid = start
+        .query_execution_id()
+        .ok_or_else(|| ApiError::internal("no athena query id"))?
+        .to_string();
+
+    let mut polls = 0;
+    loop {
+        let ge = athena
+            .get_query_execution()
+            .query_execution_id(&qid)
+            .send()
+            .await
+            .map_err(|e| ApiError::internal(format!("athena poll: {e}")))?;
+        let status = ge.query_execution().and_then(|q| q.status());
+        match status.and_then(|s| s.state()).map(|s| s.as_str()) {
+            Some("SUCCEEDED") => break,
+            Some("FAILED") | Some("CANCELLED") => {
+                let reason = status.and_then(|s| s.state_change_reason()).unwrap_or("");
+                return Err(ApiError::internal(format!("athena failed: {reason}")));
+            }
+            _ => {
+                polls += 1;
+                if polls >= MAX_POLLS {
+                    return Err(ApiError::internal("athena query timed out"));
+                }
+                tokio::time::sleep(StdDuration::from_millis(POLL_MS)).await;
+            }
+        }
+    }
+
+    let results = athena
+        .get_query_results()
+        .query_execution_id(&qid)
+        .send()
+        .await
+        .map_err(|e| ApiError::internal(format!("athena results: {e}")))?;
+    let cell = |r: &aws_sdk_athena::types::Row, i: usize| {
+        r.data().get(i).and_then(|d| d.var_char_value()).unwrap_or_default().to_string()
+    };
+    let rows = results
+        .result_set()
+        .map(|rs| rs.rows())
         .unwrap_or_default()
-        .into_iter()
-        .filter_map(|it| serde_dynamo::from_item(it).ok())
-        .collect())
+        .iter()
+        .skip(1) // header
+        .map(|r| LivenessRow {
+            customerid: cell(r, 0),
+            meterid: cell(r, 1),
+            last_seen: cell(r, 2),
+            event_time: cell(r, 3),
+            gatewayid: cell(r, 4),
+            schematype: cell(r, 5),
+            transport: cell(r, 6),
+        })
+        .collect();
+    Ok(rows)
 }
 
-fn esc(s: &str) -> String {
+fn esc_html(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
 /// The `#rd-result` fragment the Raw Device MFE swaps in.
 fn render_fragment(customerid: &str, meterid: Option<&str>, rows: &[LivenessRow]) -> String {
     let target = match meterid {
-        Some(m) => format!("meter <b>{}</b> (customer <b>{}</b>)", esc(m), esc(customerid)),
-        None => format!("customer <b>{}</b>", esc(customerid)),
+        Some(m) => format!("meter <b>{}</b> (customer <b>{}</b>)", esc_html(m), esc_html(customerid)),
+        None => format!("customer <b>{}</b>", esc_html(customerid)),
     };
     let mut out = String::from("<div id=\"rd-result\">");
     if rows.is_empty() {
@@ -124,18 +170,14 @@ fn render_fragment(customerid: &str, meterid: Option<&str>, rows: &[LivenessRow]
         "<p>\u{2705} {} is reporting — {} meter(s), last seen <b>{}</b>.</p>",
         target,
         rows.len(),
-        esc(last),
+        esc_html(last),
     ));
     out.push_str("<table><thead><tr><th>Meter</th><th>Gateway</th><th>Type</th><th>Transport</th><th>Last seen</th></tr></thead><tbody>");
     for r in rows {
-        let cell = |s: &str| if s.is_empty() { "—".to_string() } else { esc(s) };
+        let c = |s: &str| if s.is_empty() { "—".to_string() } else { esc_html(s) };
         out.push_str(&format!(
             "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-            cell(&r.meterid),
-            cell(&r.gatewayid),
-            cell(&r.schematype),
-            cell(&r.transport),
-            cell(&r.last_seen),
+            c(&r.meterid), c(&r.gatewayid), c(&r.schematype), c(&r.transport), c(&r.last_seen),
         ));
     }
     out.push_str("</tbody></table></div>");
