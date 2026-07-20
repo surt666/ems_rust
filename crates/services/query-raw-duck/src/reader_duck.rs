@@ -148,7 +148,7 @@ pub fn query_status(conn: &Connection, q: &StatusQuery, bucket: &str) -> Result<
     let mut sql = format!(
         "SELECT device_id, gateway_id, schematype, transport, \
                 max(ingest_time) AS last_seen, max(event_time) AS last_event, count(*) AS msgs \
-         FROM read_parquet('s3://{bucket}/heartbeat/**/*.parquet', hive_partitioning=true, union_by_name=true) \
+         FROM read_parquet('s3://{bucket}/heartbeat/**/*.parquet', hive_partitioning=true) \
          WHERE dt >= '{}'",
         q.since
     );
