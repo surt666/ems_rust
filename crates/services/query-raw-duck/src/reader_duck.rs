@@ -10,7 +10,6 @@
 use duckdb::{params, params_from_iter, Connection};
 
 use crate::measurements::{Measurement, MeasurementQuery};
-use crate::status::{StatusQuery, StatusRow};
 use crate::types::{RawQuery, RawRow};
 
 #[derive(Debug, thiserror::Error)]
@@ -139,59 +138,4 @@ pub fn query_measurements(conn: &Connection, q: &MeasurementQuery) -> Result<Vec
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| DuckError::Query(e.to_string()))
-}
-
-/// Device-liveness status from the heartbeat Parquet lake (plain S3 Parquet — DuckDB
-/// reads it directly, no Iceberg/Athena). Filters by gateway_id and/or device_id over
-/// the recent `dt` partitions. `bucket` is env-provided (trusted); ids are bound params.
-pub fn query_status(conn: &Connection, q: &StatusQuery, bucket: &str) -> Result<Vec<StatusRow>, DuckError> {
-    let mut sql = format!(
-        "SELECT device_id, gateway_id, schematype, transport, \
-                max(ingest_time) AS last_seen, max(event_time) AS last_event, count(*) AS msgs \
-         FROM read_parquet('s3://{bucket}/heartbeat/**/*.parquet', hive_partitioning=true) \
-         WHERE dt >= '{}'",
-        q.since
-    );
-    let mut binds: Vec<&str> = Vec::new();
-    if let Some(g) = q.gatewayid.as_deref() {
-        sql.push_str(" AND gateway_id = ?");
-        binds.push(g);
-    }
-    if let Some(m) = q.meterid.as_deref() {
-        sql.push_str(" AND device_id = ?");
-        binds.push(m);
-    }
-    sql.push_str(" GROUP BY device_id, gateway_id, schematype, transport ORDER BY last_seen DESC LIMIT 200");
-
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(s) => s,
-        // An empty lake (no Parquet written yet) makes read_parquet raise "No files found".
-        // That's not an error for a liveness check — it means the device hasn't reported,
-        // so return zero rows and let the caller render the "no data" answer.
-        Err(e) if is_no_files(&e) => return Ok(Vec::new()),
-        Err(e) => return Err(DuckError::Query(e.to_string())),
-    };
-    let rows = match stmt.query_map(params_from_iter(binds.iter()), |row| {
-        Ok(StatusRow {
-            device_id: row.get::<_, Option<String>>(0)?,
-            gateway_id: row.get::<_, Option<String>>(1)?,
-            schematype: row.get::<_, Option<String>>(2)?,
-            transport: row.get::<_, Option<String>>(3)?,
-            last_seen: row.get::<_, Option<String>>(4)?,
-            last_event: row.get::<_, Option<String>>(5)?,
-            msgs: row.get::<_, i64>(6)?,
-        })
-    }) {
-        Ok(r) => r,
-        Err(e) if is_no_files(&e) => return Ok(Vec::new()),
-        Err(e) => return Err(DuckError::Query(e.to_string())),
-    };
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| DuckError::Query(e.to_string()))
-}
-
-/// DuckDB raises this IO error when a read_parquet glob matches no objects — expected
-/// while the heartbeat lake is still empty (or the partition window has no data).
-fn is_no_files(e: &duckdb::Error) -> bool {
-    e.to_string().contains("No files found")
 }

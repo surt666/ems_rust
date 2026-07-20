@@ -2,46 +2,43 @@ package main
 
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awskinesis"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambdaeventsources"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awss3"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 )
 
-// NewMeterHeartbeatStack — EXPERIMENT: a device-liveness tap. A NEW read-all IoT rule was
-// tried but does NOT work: IoT Core for LoRaWAN destinations use ExpressionType=RuleName,
-// so device messages are handed directly to the existing named rules and never hit a
-// broker topic that a new rule could subscribe to. The messages only exist downstream, so
-// we tap the existing DAQ_INPUT_STREAM as a READ-ONLY consumer: nothing on that stream
-// changes (no config/data/policy touched — just an ESM in this stack; removable by
-// destroy). Its messages already carry customerid/schematype (stamped by the producing
+// NewMeterHeartbeatStack — a device-liveness tap. A NEW read-all IoT rule does NOT work:
+// IoT Core for LoRaWAN destinations use ExpressionType=RuleName, so device messages are
+// handed directly to the existing named rules and never hit a broker topic a new rule
+// could subscribe to. The messages only exist downstream, so we tap the existing
+// DAQ_INPUT_STREAM as a READ-ONLY consumer: nothing on that stream changes (just an ESM
+// here). Its messages already carry customerid/schematype (stamped by the producing
 // rules). The Lambda extracts one heartbeat per message (envelope only — NO decode) and
-// writes JSONL to a unified S3 bucket, partitioned by ingest date, for Athena.
-// Prod graduation: switch the ESM to enhanced fan-out to isolate from Flink's throughput.
+// upserts the LATEST state per device into the `meter-liveness` DynamoDB table.
+//
+// Why DynamoDB (not S3/Parquet): liveness is a latest-state lookup. Keyed
+// pk=customerid / sk=meterid, it's one item per device (bounded by device count, not
+// message rate) with O(1) reads — no small files, no compaction, no scan. (The earlier
+// Parquet-lake design died on small-file read latency: thousands of tiny files timed the
+// query out.) Gateway is NOT a key — a LoRaWAN uplink is heard by multiple gateways, so
+// it isn't unique; stored as an informational column.
 func NewMeterHeartbeatStack(scope constructs.Construct, id string, props *awscdk.StackProps) awscdk.Stack {
 	stack := awscdk.NewStack(scope, &id, props)
 	region := *stack.Region()
 	account := *stack.Account()
 
-	// ── Unified heartbeat bucket (Parquet, dt-partitioned). Demo → DESTROY.
-	// Stable, explicit name so the read side (query-raw-duck) can reference it without a
-	// cross-stack import — TRIM_HORIZON re-backfills if the bucket is ever recreated.
-	bucket := awss3.NewBucket(stack, jsii.String("HeartbeatBucket"), &awss3.BucketProps{
-		BucketName:        jsii.String("meter-heartbeat-" + account + "-" + region),
-		RemovalPolicy:     awscdk.RemovalPolicy_DESTROY,
-		AutoDeleteObjects: jsii.Bool(true),
-		BlockPublicAccess: awss3.BlockPublicAccess_BLOCK_ALL(),
-		// Liveness data only matters while recent — expire at 14 days. Straight deletion
-		// (no IA/Glacier transition): these Parquet files are small, and IA bills a 128 KB
-		// minimum per object + per-object transition fees, so transitioning tiny files
-		// costs MORE than it saves. Expiration also caps the read-side glob DuckDB scans.
-		LifecycleRules: &[]*awss3.LifecycleRule{{
-			Expiration: awscdk.Duration_Days(jsii.Number(14)),
-		}},
+	// ── Latest-state liveness table. pk=customerid, sk=meterid. On-demand. Demo → DESTROY.
+	table := awsdynamodb.NewTable(stack, jsii.String("MeterLivenessTable"), &awsdynamodb.TableProps{
+		TableName:    jsii.String("meter-liveness"),
+		PartitionKey: &awsdynamodb.Attribute{Name: jsii.String("pk"), Type: awsdynamodb.AttributeType_STRING},
+		SortKey:      &awsdynamodb.Attribute{Name: jsii.String("sk"), Type: awsdynamodb.AttributeType_STRING},
+		BillingMode:  awsdynamodb.BillingMode_PAY_PER_REQUEST,
+		RemovalPolicy: awscdk.RemovalPolicy_DESTROY,
 	})
 
 	// ── Import the existing Flink input stream (read-only tap; NOT created/modified here). ──
@@ -58,11 +55,11 @@ func NewMeterHeartbeatStack(scope constructs.Construct, id string, props *awscdk
 		Timeout:      awscdk.Duration_Seconds(jsii.Number(60)),
 		MemorySize:   jsii.Number(256),
 		Environment: &map[string]*string{
-			"HEARTBEAT_BUCKET": bucket.BucketName(),
+			"LIVENESS_TABLE": table.TableName(),
 		},
 		LogRetention: awslogs.RetentionDays_ONE_WEEK,
 	})
-	bucket.GrantWrite(fn, nil, nil)
+	table.GrantWriteData(fn)
 	// DAQ_INPUT_STREAM is SSE-KMS (aws/kinesis) — a consumer needs kms:Decrypt to read.
 	// (Imported stream doesn't carry its key, so grant explicitly. Scoped to * for the
 	// experiment; tighten to the aws/kinesis key ARN for prod.)
@@ -71,22 +68,19 @@ func NewMeterHeartbeatStack(scope constructs.Construct, id string, props *awscdk
 		Actions:   jsii.Strings("kms:Decrypt"),
 		Resources: jsii.Strings("*"),
 	}))
-	// TRIM_HORIZON: on first deploy, backfill the stream's retention (~24h) so every
-	// device's recent activity shows up immediately (traffic is bursty ~every 15-20 min);
-	// then it tails live. Small at dev volume.
-	// Max the batch so each invocation writes as large a Parquet file as event-driven
-	// allows (one batch = one file). 10k records / 300s window (capped by the 6 MB
-	// invoke payload). Bigger files without a compaction job.
+	// 60s batching window: batch is deduped to latest-per-device before writing, so a
+	// bigger batch = fewer writes; but keep the window short so a device shows as "alive"
+	// within ~a minute (field techs want near-immediate confirmation). BatchSize caps it.
 	fn.AddEventSource(awslambdaeventsources.NewKinesisEventSource(inputStream, &awslambdaeventsources.KinesisEventSourceProps{
 		StartingPosition:  awslambda.StartingPosition_TRIM_HORIZON,
 		BatchSize:         jsii.Number(10000),
-		MaxBatchingWindow: awscdk.Duration_Seconds(jsii.Number(300)),
+		MaxBatchingWindow: awscdk.Duration_Seconds(jsii.Number(60)),
 		RetryAttempts:     jsii.Number(3),
 	}))
 
-	awscdk.NewCfnOutput(stack, jsii.String("HeartbeatBucketName"), &awscdk.CfnOutputProps{
-		Value:       bucket.BucketName(),
-		Description: jsii.String("Unified heartbeat bucket (JSONL, dt-partitioned) — point Athena here"),
+	awscdk.NewCfnOutput(stack, jsii.String("MeterLivenessTableName"), &awscdk.CfnOutputProps{
+		Value:       table.TableName(),
+		Description: jsii.String("Latest-state liveness table (pk=customerid, sk=meterid)"),
 	})
 	return stack
 }

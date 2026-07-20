@@ -9,11 +9,9 @@ use lambda_http::{run, service_fn, Body, Request, RequestExt, Response};
 
 mod measurements;
 mod reader_duck;
-mod status;
 mod types;
 
 use measurements::{Format, MeasurementQuery};
-use status::StatusQuery;
 use types::{RawQuery, RawRow};
 
 #[tokio::main]
@@ -28,11 +26,6 @@ async fn main() -> Result<(), lambda_http::Error> {
         return selftest(&arn, &region);
     }
 
-    // The heartbeat Parquet lake (device-liveness). Same S3 credentials/extensions as the
-    // iceberg ATTACH — DuckDB reads plain Parquet directly, so no separate secret needed.
-    let heartbeat_bucket: Arc<str> =
-        Arc::from(std::env::var("HEARTBEAT_BUCKET").unwrap_or_default());
-
     // Cold start: build the connection (extensions + ATTACH) once. Blocking DuckDB
     // work, but nothing is concurrent yet.
     let conn = reader_duck::setup(&arn, &region)?;
@@ -40,76 +33,22 @@ async fn main() -> Result<(), lambda_http::Error> {
 
     run(service_fn(move |req: Request| {
         let conn = conn.clone();
-        let heartbeat_bucket = heartbeat_bucket.clone();
-        async move { handle_request(req, conn, heartbeat_bucket).await }
+        async move { handle_request(req, conn).await }
     }))
     .await
 }
 
-/// Route by path: `/rawdevice/status` is the device-liveness endpoint (heartbeat Parquet
-/// lake); `/meterdata/query/get_measurements` is the production Datatilegnelse endpoint
-/// (HTML/JSON per the aggregations contract); anything else is the raw JSON benchmark
-/// endpoint (`/rawdata/query-duck`).
+/// Route by path: `/meterdata/query/get_measurements` is the production Datatilegnelse
+/// endpoint (HTML/JSON per the aggregations contract); anything else is the raw JSON
+/// benchmark endpoint (`/rawdata/query-duck`).
 async fn handle_request(
     req: Request,
     conn: Arc<Mutex<Connection>>,
-    heartbeat_bucket: Arc<str>,
 ) -> Result<Response<Body>, lambda_http::Error> {
-    let path = req.uri().path();
-    if path.contains("status") {
-        handle_status(req, conn, heartbeat_bucket).await
-    } else if path.contains("get_measurements") {
+    if req.uri().path().contains("get_measurements") {
         handle_measurements(req, conn).await
     } else {
         handle_raw(req, conn).await
-    }
-}
-
-/// Device liveness: "is this gateway/meter reporting?" — DuckDB `read_parquet` over the
-/// heartbeat lake. Returns the Raw Device MFE HTML fragment (default) or JSON.
-async fn handle_status(
-    req: Request,
-    conn: Arc<Mutex<Connection>>,
-    heartbeat_bucket: Arc<str>,
-) -> Result<Response<Body>, lambda_http::Error> {
-    let qs = req.query_string_parameters();
-    let get = |k: &str| qs.first(k).map(str::to_owned);
-    let format = Format::resolve(get("format").as_deref());
-
-    if heartbeat_bucket.is_empty() {
-        return Ok(status_error(format, 500, "HEARTBEAT_BUCKET not configured"));
-    }
-    let query = match StatusQuery::parse(get) {
-        Ok(q) => q,
-        Err(e) => return Ok(status_error(format, 400, &e)),
-    };
-
-    let bucket = heartbeat_bucket.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        let conn = conn.lock().map_err(|_| "connection lock poisoned".to_string())?;
-        reader_duck::query_status(&conn, &query, &bucket)
-            .map(|rows| (query, rows))
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string());
-
-    match result {
-        Ok(Ok((query, rows))) => Ok(match format {
-            Format::Json => json_response(200, &rows),
-            Format::Html => html_response(200, status::render_fragment(&query, &rows)),
-        }),
-        Ok(Err(e)) | Err(e) => Ok(status_error(format, 502, &e)),
-    }
-}
-
-fn status_error(format: Format, status: u16, msg: &str) -> Response<Body> {
-    match format {
-        Format::Json => json_response(status, &serde_json::json!({ "error": msg })),
-        Format::Html => html_response(
-            status,
-            format!("<div id=\"rd-result\"><p>\u{26a0} {}</p></div>", status::esc(msg)),
-        ),
     }
 }
 

@@ -56,24 +56,12 @@ func NewQueryRawStack(scope constructs.Construct, id string, props *QueryRawStac
 		MemorySize:   jsii.Number(3008),
 		Environment: &map[string]*string{
 			"TABLE_BUCKET_ARN": jsii.String(tableBucketArn),
-			// Device-liveness lake (plain Parquet, read via DuckDB read_parquet). Written by
-			// the meter-heartbeat lambda; stable name so no cross-stack import is needed.
-			"HEARTBEAT_BUCKET": jsii.String("meter-heartbeat-" + account + "-" + region),
 			// Prepend our bundled libs so the DuckDB extension's libstdc++ resolves.
 			"LD_LIBRARY_PATH": jsii.String("/var/task/lib:/var/runtime/lib:/var/lang/lib:/lib64:/usr/lib64:/opt/lib"),
 		},
 		LogRetention: awslogs.RetentionDays_ONE_WEEK,
 	})
 	grantRawDataAccess(stack, "QueryRawDuck", account, props.TableBucket, fnDuck.Role())
-
-	// Read the heartbeat Parquet lake (device-status route). Plain S3 GET/LIST — the
-	// bucket is owned by MeterHeartbeatStack; referenced by its stable name.
-	heartbeatBucketArn := "arn:aws:s3:::meter-heartbeat-" + account + "-" + region
-	fnDuck.Role().AddToPrincipalPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
-		Effect:    awsiam.Effect_ALLOW,
-		Actions:   jsii.Strings("s3:GetObject", "s3:ListBucket"),
-		Resources: jsii.Strings(heartbeatBucketArn, heartbeatBucketArn+"/*"),
-	}))
 
 	// Public HTTP API — read-only GET routes (query-string params, fixed paths).
 	// GET+OPTIONS lets the gateway answer the CORS preflight itself.
@@ -93,7 +81,7 @@ func NewQueryRawStack(scope constructs.Construct, id string, props *QueryRawStac
 	// Production Datatilegnelse route (same path as the aggregations lambda, different
 	// HTTP API/base) so the frontend only swaps its base URL. Plus a raw JSON route
 	// kept for ad-hoc debugging.
-	for _, p := range []string{"/meterdata/query/get_measurements", "/rawdata/query-duck", "/rawdevice/status"} {
+	for _, p := range []string{"/meterdata/query/get_measurements", "/rawdata/query-duck"} {
 		api.AddRoutes(&awsapigatewayv2.AddRoutesOptions{
 			Path:        jsii.String(p),
 			Methods:     &[]awsapigatewayv2.HttpMethod{awsapigatewayv2.HttpMethod_GET},
