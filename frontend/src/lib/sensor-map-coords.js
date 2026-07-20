@@ -34,8 +34,14 @@ export function placeholderCoord(daqid) {
 
 /** Prefer an explicit finite {lat, lon}; otherwise fall back to the placeholder. */
 export function resolveCoord(explicit, daqid) {
-  const lat = Number(explicit?.lat);
-  const lon = Number(explicit?.lon);
-  if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lng: lon };
+  const latRaw = explicit?.lat;
+  const lonRaw = explicit?.lon;
+  const hasLat = latRaw != null && String(latRaw).trim() !== "";
+  const hasLon = lonRaw != null && String(lonRaw).trim() !== "";
+  if (hasLat && hasLon) {
+    const lat = Number(latRaw);
+    const lon = Number(lonRaw);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lng: lon };
+  }
   return placeholderCoord(daqid);
 }

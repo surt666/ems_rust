@@ -54,6 +54,7 @@ function ensurePanel() {
 }
 
 function showNotice(panel, msg) {
+  panel.hidden = false;
   const canvas = panel.querySelector(".sensor-map__canvas");
   const notice = panel.querySelector(".sensor-map__notice");
   canvas.hidden = true;
@@ -62,6 +63,7 @@ function showNotice(panel, msg) {
 }
 
 function hideNotice(panel) {
+  panel.hidden = false;
   panel.querySelector(".sensor-map__canvas").hidden = false;
   panel.querySelector(".sensor-map__notice").hidden = true;
 }
@@ -131,7 +133,12 @@ async function syncMap() {
   if (rows.length === 0) {
     for (const m of markers) m.map = null;
     markers = [];
-    showNotice(panel, "No sensors to map.");
+    // The list shows a "Loading sensors…" placeholder before its rows swap in.
+    // Only show the empty notice once the list has rendered its terminal
+    // "no sensors" state; otherwise hide the panel to avoid a flash.
+    const settledEmpty = !!document.querySelector('#sensor-list li[data-i18n="node.no_sensors"]');
+    if (settledEmpty) showNotice(panel, "No sensors to map.");
+    else panel.hidden = true;
     return;
   }
 

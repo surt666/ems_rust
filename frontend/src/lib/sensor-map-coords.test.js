@@ -45,3 +45,8 @@ test("resolveCoord falls back to placeholder when lat/lon missing or non-finite"
     placeholderCoord("daq:abc"),
   );
 });
+
+test("resolveCoord falls back to placeholder for empty/blank string coords", () => {
+  assert.deepEqual(resolveCoord({ lat: "", lon: "" }, "daq:abc"), placeholderCoord("daq:abc"));
+  assert.deepEqual(resolveCoord({ lat: "  ", lon: "5" }, "daq:abc"), placeholderCoord("daq:abc"));
+});
