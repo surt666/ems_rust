@@ -27,7 +27,11 @@ function loadGoogleMaps() {
       "&libraries=marker&v=weekly&loading=async&callback=" +
       cb;
     s.async = true;
-    s.onerror = () => reject(new Error("Google Maps failed to load"));
+    s.onerror = () => {
+      mapsPromise = null;
+      s.remove();
+      reject(new Error("Google Maps failed to load"));
+    };
     document.head.appendChild(s);
   });
   return mapsPromise;
@@ -104,7 +108,10 @@ function ensureVisibilityWatcher(canvas) {
   if (watched.has(canvas) || typeof ResizeObserver === "undefined") return;
   watched.add(canvas);
   const ro = new ResizeObserver(() => {
-    if (canvas.clientWidth > 0 && canvas.clientHeight > 0) syncMap();
+    if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
+      ro.disconnect();
+      syncMap();
+    }
   });
   ro.observe(canvas);
 }
@@ -122,6 +129,8 @@ async function syncMap() {
   }
   const rows = readRows();
   if (rows.length === 0) {
+    for (const m of markers) m.map = null;
+    markers = [];
     showNotice(panel, "No sensors to map.");
     return;
   }
