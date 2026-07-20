@@ -110,3 +110,66 @@ import NodeDashboard from "../components/NodeDashboard.astro";
     </div>
   </div>
 </Layout>
+
+<script>
+  // Plot sensors on a Google map at the top of the Data tab's Sensors section.
+  // The module wires its own htmx:afterSwap listener, so it survives the async
+  // sensor-list load; re-init on Astro soft navigations too.
+  import { initSensorMap } from "../lib/sensor-map.js";
+  initSensorMap();
+  document.addEventListener("astro:page-load", initSensorMap);
+</script>
+
+<style is:global>
+  /* Injected by sensor-map.js — the elements are created at runtime and the
+     marker pins live inside Google's map DOM, so these must be global (an
+     Astro-scoped block would not reach them). */
+  #sensor-map-panel {
+    margin-bottom: 1rem;
+  }
+  #sensor-map-panel .sensor-map__canvas {
+    width: 100%;
+    height: 320px;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  #sensor-map-panel .sensor-map__notice {
+    margin: 0;
+    padding: 1rem 0;
+    color: var(--text-muted);
+  }
+  .sensor-pin {
+    display: grid;
+    justify-items: center;
+    cursor: pointer;
+  }
+  .sensor-pin__dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent, #2563eb);
+    border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
+  .sensor-pin__label {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    background: rgba(17, 24, 39, 0.92);
+    color: #fff;
+    font-size: 12px;
+    padding: 3px 7px;
+    border-radius: 6px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.1s ease;
+  }
+  .sensor-pin:hover {
+    z-index: 10;
+  }
+  .sensor-pin:hover .sensor-pin__label {
+    opacity: 1;
+  }
+</style>
