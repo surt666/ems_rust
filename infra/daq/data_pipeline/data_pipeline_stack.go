@@ -27,7 +27,7 @@ type DaqPipelineStackProps struct {
 
 type DaqPipelineStack struct {
 	awscdk.Stack
-	ErrorStream        awskinesis.Stream
+	ErrorStream         awskinesis.Stream
 	SensorIdentityTable awsdynamodb.Table
 }
 
@@ -75,7 +75,7 @@ func NewDaqPipelineStack(scope constructs.Construct, id string, props *DaqPipeli
 			"s3Access": awsiam.NewPolicyDocument(&awsiam.PolicyDocumentProps{
 				Statements: &[]awsiam.PolicyStatement{
 					awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
-						Effect: awsiam.Effect_ALLOW,
+						Effect:  awsiam.Effect_ALLOW,
 						Actions: jsii.Strings("s3:GetObject*", "s3:GetBucket*", "s3:List*"),
 						Resources: jsii.Strings(
 							"arn:aws:s3:::flink-code-"+account+"-"+region,
@@ -224,7 +224,7 @@ func NewDaqPipelineStack(scope constructs.Construct, id string, props *DaqPipeli
 								"AWS_REGION":              jsii.String(region),
 								"ACCOUNT_ID":              jsii.String(account),
 								"TABLE_BUCKET_NAME":       jsii.String(props.TableBucket),
-								"SENSOR_IDENTITY_TABLE":    sensorIdentity.TableName(),
+								"SENSOR_IDENTITY_TABLE":   sensorIdentity.TableName(),
 								"DDB_CHANGE_STREAM":       ddbChangeStream.StreamName(),
 								"ERROR_STREAM":            errorStream.StreamName(),
 								"MAX_OUT_OF_ORDERNESS_MS": jsii.String("3600000"),
@@ -262,8 +262,8 @@ func NewDaqPipelineStack(scope constructs.Construct, id string, props *DaqPipeli
 		})
 
 	return &DaqPipelineStack{
-		Stack:              stack,
-		ErrorStream:        errorStream,
+		Stack:               stack,
+		ErrorStream:         errorStream,
 		SensorIdentityTable: sensorIdentity,
 	}
 }
