@@ -214,6 +214,113 @@ pub fn flatten(g: &CompanyGraph) -> Vec<MatrixRow> {
     out
 }
 
+/// Validate a formula against its company graph. Returns a human-readable
+/// message suitable for a 400 body.
+pub fn validate(g: &CompanyGraph, f: &NodeFormula) -> Result<(), String> {
+    if !f.purpose.declarable() {
+        return Err(format!(
+            "purpose {} is derived by the roll-up job and cannot be declared",
+            f.purpose
+        ));
+    }
+    let Some(node_path) = g.node_path(&f.node) else {
+        return Err(format!("node {} not found in this company", f.node));
+    };
+    let own: Vec<SensorId> = g.own_sensors(&f.node).iter().map(|s| s.id).collect();
+    let children: Vec<NodeId> = g.children(&f.node).map(|n| n.id.clone()).collect();
+    let sep = crate::domain::node::PATH_SEP;
+
+    for t in &f.terms {
+        if !t.coefficient.is_finite() {
+            return Err(format!("coefficient for {} must be finite", t.reference));
+        }
+        match &t.reference {
+            Reference::Node(id) => {
+                if !children.contains(id) {
+                    return Err(format!(
+                        "{id} is not a direct child of {} — a deeper node is already counted \
+                         through the child chain; override the child instead",
+                        f.node
+                    ));
+                }
+            }
+            Reference::Sensor(id) => {
+                let Some(s) = g.sensor(*id) else {
+                    return Err(format!("sensor {id} not found in this company"));
+                };
+                // For Total, a sensor deeper in this node's own subtree already
+                // arrives via the child chain.
+                let deeper =
+                    !own.contains(id) && s.path.starts_with(&format!("{node_path}{sep}"));
+                if f.purpose == Purpose::Total && deeper {
+                    return Err(format!(
+                        "sensor {id} is already counted through {}'s children — override the \
+                         child node instead",
+                        f.node
+                    ));
+                }
+            }
+        }
+    }
+
+    // Derived-ness must be uniform per (energy_type, purpose) in the company: a
+    // series mixing the two would make Unallocated ambiguous.
+    if f.purpose != Purpose::Total {
+        let mine = is_derived(g, f);
+        if let Some(other) = g.formulas.iter().find(|o| {
+            o.energy_type == f.energy_type
+                && o.purpose == f.purpose
+                && o.node != f.node
+                && is_derived(g, o) != mine
+        }) {
+            return Err(format!(
+                "{}/{} is already {} on node {} — a series cannot mix derived and metered \
+                 contributions",
+                f.energy_type,
+                f.purpose,
+                if mine { "metered" } else { "derived" },
+                other.node
+            ));
+        }
+    }
+
+    // A sensor cannot be allocated more than it measured: the signed sum of its
+    // coefficients across all ALLOCATING claims for one energy type is ≤ 1. This
+    // permits a heat-pump split (0.7 + 0.3), the bimåler pattern (+1, −1) and
+    // shared plant across siblings (0.6 + 0.4).
+    if f.purpose != Purpose::Total && !f.purpose.is_outflow() && !is_derived(g, f) {
+        for t in &f.terms {
+            let Reference::Sensor(id) = &t.reference else {
+                continue;
+            };
+            let others: f64 = g
+                .formulas
+                .iter()
+                .filter(|o| {
+                    o.energy_type == f.energy_type
+                        && o.purpose != Purpose::Total
+                        && !o.purpose.is_outflow()
+                        && !is_derived(g, o)
+                        && !(o.node == f.node && o.purpose == f.purpose)
+                })
+                .flat_map(|o| &o.terms)
+                .filter(|ot| ot.reference == t.reference)
+                .map(|ot| ot.coefficient)
+                .sum();
+            let total = others + t.coefficient;
+            if total > 1.0 + f64::EPSILON {
+                return Err(format!(
+                    "sensor {id} would be allocated {total:.2}× its {} reading — coefficients \
+                     across all purposes must sum to at most 1",
+                    f.energy_type
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -669,6 +776,207 @@ mod tests {
         assert_eq!(v(acme, DistrictCooling, Purpose::Unallocated), 0.0);
         assert_eq!(v(acme, Heat, Purpose::SpaceHeating), 125.8);
         assert_eq!(v(acme, Heat, Purpose::Unallocated), 0.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // validate
+    // -----------------------------------------------------------------------
+
+    fn ok() -> NodeFormula {
+        f(
+            (Level::Hn5, 5),
+            EnergyType::Electricity,
+            Purpose::Cooling,
+            &[("S#1", 1.0)],
+        )
+    }
+
+    #[test]
+    fn validate_accepts_a_well_formed_formula() {
+        assert!(validate(&chiller().0, &ok()).is_ok());
+    }
+
+    /// `Total` is the node's own formula and must be declarable; only
+    /// `Unallocated` is job-derived.
+    #[test]
+    fn validate_accepts_total_and_rejects_unallocated() {
+        let (g, _) = chiller();
+        assert!(validate(&g, &NodeFormula { purpose: Purpose::Total, ..ok() }).is_ok());
+        let e = validate(&g, &NodeFormula { purpose: Purpose::Unallocated, ..ok() })
+            .unwrap_err();
+        assert!(e.contains("roll-up job"), "got: {e}");
+    }
+
+    /// Zero is legal — it is how a node excludes a reading.
+    #[test]
+    fn validate_accepts_zero_and_rejects_non_finite() {
+        let (g, _) = chiller();
+        assert!(validate(
+            &g,
+            &NodeFormula {
+                purpose: Purpose::Total,
+                terms: vec![Term {
+                    reference: Reference::parse("S#2").unwrap(),
+                    coefficient: 0.0,
+                }],
+                ..ok()
+            }
+        )
+        .is_ok());
+        let e = validate(
+            &g,
+            &NodeFormula {
+                terms: vec![Term {
+                    reference: Reference::parse("S#1").unwrap(),
+                    coefficient: f64::NAN,
+                }],
+                ..ok()
+            },
+        )
+        .unwrap_err();
+        assert!(e.contains("finite"), "got: {e}");
+    }
+
+    /// Node references must be DIRECT CHILDREN — a deeper node already arrives
+    /// through the chain, so referencing it would double count.
+    #[test]
+    fn validate_rejects_a_node_reference_that_is_not_a_direct_child() {
+        let (g, _) = split_metering();
+        let bad = f(
+            (Level::Hn2, 997),
+            EnergyType::Electricity,
+            Purpose::Total,
+            &[("HN4#1", 0.5)],
+        );
+        assert!(validate(&g, &bad).unwrap_err().contains("direct child"));
+    }
+
+    #[test]
+    fn validate_accepts_a_direct_child_reference() {
+        let (g, _) = split_metering();
+        let good = f(
+            (Level::Hn3, 3),
+            EnergyType::Electricity,
+            Purpose::Total,
+            &[("HN4#1", 0.5)],
+        );
+        assert!(validate(&g, &good).is_ok());
+    }
+
+    /// Sideways SENSOR references are the whole point — accept them.
+    #[test]
+    fn validate_accepts_a_sensor_from_another_branch() {
+        let (g, _) = split_metering();
+        assert!(validate(&g, &g.formulas[0].clone()).is_ok());
+    }
+
+    /// But for `Total`, a sensor deeper in this node's own subtree already
+    /// arrives via the child chain.
+    #[test]
+    fn validate_rejects_a_total_term_naming_a_deeper_descendant_sensor() {
+        let (g, _) = split_metering();
+        let bad = f(
+            (Level::Hn3, 3),
+            EnergyType::Electricity,
+            Purpose::Total,
+            &[("S#10", 0.0)], // S#10 hangs off HN4#1, a child
+        );
+        assert!(validate(&g, &bad).unwrap_err().contains("already counted"));
+    }
+
+    #[test]
+    fn validate_rejects_a_sensor_outside_the_company() {
+        let (g, _) = chiller();
+        let bad = f(
+            (Level::Hn5, 5),
+            EnergyType::Electricity,
+            Purpose::Cooling,
+            &[("S#999", 1.0)],
+        );
+        assert!(validate(&g, &bad).unwrap_err().contains("not found"));
+    }
+
+    /// The ≤ 1 rule allows every legitimate split and catches over-allocation.
+    #[test]
+    fn validate_allows_a_heat_pump_split_summing_to_one() {
+        let (mut g, _) = chiller();
+        g.formulas.retain(|x| x.purpose != Purpose::Cooling);
+        g.formulas.push(f(
+            (Level::Hn5, 5),
+            EnergyType::Electricity,
+            Purpose::SpaceHeating,
+            &[("S#1", 0.7)],
+        ));
+        let dhw = f(
+            (Level::Hn5, 5),
+            EnergyType::Electricity,
+            Purpose::Dhw,
+            &[("S#1", 0.3)],
+        );
+        assert!(validate(&g, &dhw).is_ok(), "0.7 + 0.3 = 1.0");
+    }
+
+    #[test]
+    fn validate_rejects_over_allocation() {
+        let (mut g, _) = chiller();
+        g.formulas.retain(|x| x.purpose != Purpose::Cooling);
+        g.formulas.push(f(
+            (Level::Hn5, 5),
+            EnergyType::Electricity,
+            Purpose::SpaceHeating,
+            &[("S#1", 0.8)],
+        ));
+        let dhw = f(
+            (Level::Hn5, 5),
+            EnergyType::Electricity,
+            Purpose::Dhw,
+            &[("S#1", 0.5)],
+        );
+        assert!(validate(&g, &dhw).unwrap_err().contains("sum"));
+    }
+
+    /// The bimåler pattern nets to 0 for the submeter and 1 for the main.
+    #[test]
+    fn validate_accepts_the_bimaaler_pattern() {
+        let b = format!("{CO}|HN4#9");
+        let mut g = CompanyGraph {
+            nodes: vec![
+                node(Level::Hn2, 997, None, CO),
+                node(Level::Hn4, 9, Some((Level::Hn2, 997)), &b),
+            ],
+            sensors: vec![
+                sensor(30, &b, EnergyType::DistrictHeating),
+                sensor(31, &b, EnergyType::DistrictHeating),
+            ],
+            formulas: vec![],
+        };
+        let dh = EnergyType::DistrictHeating;
+        let dhw = f((Level::Hn4, 9), dh, Purpose::Dhw, &[("S#31", 1.0)]);
+        assert!(validate(&g, &dhw).is_ok());
+        g.formulas.push(dhw);
+        let sh = f(
+            (Level::Hn4, 9),
+            dh,
+            Purpose::SpaceHeating,
+            &[("S#30", 1.0), ("S#31", -1.0)],
+        );
+        assert!(validate(&g, &sh).is_ok(), "S#31 nets to 0, S#30 to 1");
+    }
+
+    /// A series mixing derived and metered contributions would make Unallocated
+    /// ambiguous.
+    #[test]
+    fn validate_rejects_mixed_derived_ness_for_one_series() {
+        let (mut g, _) = chiller();
+        g.sensors
+            .push(sensor(9, &format!("{CO}|HN5#5"), EnergyType::Gas));
+        let mixed = f(
+            (Level::Hn2, 997),
+            EnergyType::Electricity,
+            Purpose::Cooling,
+            &[("S#9", 3.0)], // gas sensor, electricity output → derived
+        );
+        assert!(validate(&g, &mixed).unwrap_err().contains("derived"));
     }
 
     /// flatten() must agree with the recursion it flattens.
