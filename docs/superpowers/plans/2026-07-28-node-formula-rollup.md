@@ -1688,24 +1688,25 @@ In `measurements_aggregate_stack.go`, after the role:
 	}))
 ```
 
-Deploy `MeasurementsAggregateStack`, then prove the trust works end to end before building
-anything on top of it:
+Deploy `MeasurementsAggregateStack`, then verify both sides statically:
 
 ```bash
-CREDS=$(aws sts assume-role --profile daq_dev \
-  --role-arn arn:aws:iam::339712745226:role/HierarchyReaderRole \
-  --role-session-name probe --query 'Credentials' --output json)
-AWS_ACCESS_KEY_ID=$(echo "$CREDS" | jq -r .AccessKeyId) \
-AWS_SECRET_ACCESS_KEY=$(echo "$CREDS" | jq -r .SecretAccessKey) \
-AWS_SESSION_TOKEN=$(echo "$CREDS" | jq -r .SessionToken) \
-aws dynamodb query --region eu-central-1 --table-name hierarchy_new --index-name gsi1 \
-  --key-condition-expression 'gsi1pk = :p' \
-  --expression-attribute-values '{":p":{"S":"W#HN2#10003"}}' \
-  --query 'Count'
+aws iam get-role --profile stel-sb --role-name HierarchyReaderRole \
+  --query 'Role.AssumeRolePolicyDocument.Statement[].Principal.AWS' --output text
+# arn:aws:iam::891377204778:role/MeasurementsAggregateGlueRole
+aws iam get-role-policy --profile daq_dev --role-name MeasurementsAggregateGlueRole \
+  --policy-name "$(aws iam list-role-policies --profile daq_dev \
+    --role-name MeasurementsAggregateGlueRole --query 'PolicyNames[0]' --output text)" \
+  --query 'PolicyDocument.Statement[?Action==`sts:AssumeRole`].Resource' --output json
+# includes arn:aws:iam::339712745226:role/HierarchyReaderRole
 ```
 
-Expect `42` (SeedCo01's matrix, seeded in Task 8). A `0` means the GSI keys are wrong; an
-`AccessDenied` means the trust policy or the grant has not propagated.
+**There is deliberately no live probe here.** `HierarchyReaderRole` trusts *only*
+`MeasurementsAggregateGlueRole`, which in turn is only assumable by `glue.amazonaws.com` — so
+no human credential can exercise this path, and any command that appears to would mean the trust
+is too wide. The end-to-end proof is the first `measurements-aggregate` run in Task 11 Step 5,
+which assumes the role for real; treat an `AccessDenied` there as this step's failure, not that
+one's.
 
 - [ ] **Step 4: Back up the table before replacing it**
 
@@ -1766,7 +1767,54 @@ aws sqs get-queue-attributes --profile stel-sb \
   --attribute-names ApproximateNumberOfMessages --query 'Attributes' --output json
 ```
 
-- [ ] **Step 6: Stop Flink, deploy both accounts, restart**
+- [ ] **Step 6: Break the cross-stack export deadlock (do this BEFORE Step 7)**
+
+Renaming the table drops three exports — `…MeterIdentity…Arn`, `…Ref…`, `…StreamArn` — that
+`LateRecomputationStack` and `OcamlBridgeWriterRoleStack` still import. CloudFormation refuses:
+
+```
+Delete canceled. Cannot delete export DaqPipelineStack:ExportsOutputFnGetAttMeterIdentity…Arn…
+as it is in use by LateRecomputationStack and OcamlBridgeWriterRoleStack.
+```
+
+The consumers cannot move first either — the `SensorIdentity` exports do not exist until
+`DaqPipelineStack` deploys. Deploying the producer alone rolls back to `UPDATE_ROLLBACK_COMPLETE`
+(clean, and safe while Flink is stopped — but it is a wasted cycle).
+
+Break it with a transitional deploy. In `data_pipeline_stack.go`, keep the old table resource and
+re-declare the legacy export **names** explicitly with unchanged values:
+
+```go
+	legacyMeterIdentity := awsdynamodb.NewTable(stack, jsii.String("MeterIdentity"), /* …unchanged props… */)
+	awscdk.NewCfnOutput(stack, jsii.String("LegacyMeterIdentityArn"), &awscdk.CfnOutputProps{
+		Value:      legacyMeterIdentity.TableArn(),
+		ExportName: jsii.String("DaqPipelineStack:ExportsOutputFnGetAttMeterIdentity2F42C403ArnF8DDA39D"),
+	})
+	// …same for …ExportsOutputRefMeterIdentity2F42C403A37A0AA6 (TableName)
+	// and  …ExportsOutputFnGetAttMeterIdentity2F42C403StreamArnD3C8C1B9 (TableStreamArn)
+```
+
+Exports are keyed by **name**, so a name present in both the old and new template is neither
+deleted nor updated, and the imports keep resolving while the new exports appear alongside.
+Take the three export names from the failed diff — they embed CFN logical-id hashes and cannot
+be guessed.
+
+Then three deploys, in this order:
+
+1. `cdk deploy DaqPipelineStack` — creates `sensor-identity`, keeps `meter-identity` and its exports.
+2. `cdk deploy S3TablesStack` then `cdk deploy LateRecomputationStack OcamlBridgeWriterRoleStack`
+   — consumers move onto the `SensorIdentity` exports; the legacy ones fall out of use.
+   (`S3TablesStack` first: `LateRecomputationStack`'s Lake Formation grant names `logical_data`.)
+3. Delete the transitional block and `cdk deploy DaqPipelineStack` again — legacy exports are
+   dropped and `meter-identity` reports `DELETE_SKIPPED` (orphaned by `RETAIN`, as intended).
+
+`LateRecomputationStack` will log `DELETE_FAILED` on `GlueLfLogicalMeterPermissions` — it is
+revoking a Lake Formation grant on `logical_meter_data`, which no longer exists. CloudFormation
+retries three times over ~6 minutes and then finishes `UPDATE_COMPLETE` with "One or more
+resources could not be deleted." That is expected; the replacement grant on `logical_data` is
+created regardless.
+
+- [ ] **Step 7: Stop Flink, deploy both accounts, restart**
 
 The Flink app holds `meter-identity` mappings in keyed state and reads the change stream. Stop it
 so it cannot write against a half-renamed world:
@@ -1801,7 +1849,7 @@ aws kinesisanalyticsv2 start-application --profile daq_dev \
   --run-configuration '{"ApplicationRestoreConfiguration":{"ApplicationRestoreType":"RESTORE_FROM_LATEST_SNAPSHOT"}}'
 ```
 
-- [ ] **Step 7: Repopulate, verify, delete the orphan**
+- [ ] **Step 8: Repopulate, verify, delete the orphan**
 
 The new table is empty. Re-save every sensor through the UI (or touch each row — a same-value
 `UpdateItem` writes nothing and emits **no** stream record, so change a field and change it back):
@@ -1829,7 +1877,7 @@ Only once the counts match, delete the orphaned table (it still streams into
 aws dynamodb delete-table --profile daq_dev --table-name meter-identity
 ```
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add infra/
@@ -1884,6 +1932,23 @@ Task 9 Step 5), the table schema's `purpose` column → `energy_type`, and the s
 `all.logical_meter_data` → `all.logical_data`.
 
 Run: `cd infra/daq/data_pipeline/flink_app_scala && sbt test 2>&1 | tail -20` → PASS.
+
+**A green suite does not mean this step is right.** Scala field names and DynamoDB/Iceberg
+*wire* names are different things, and a bulk rename conflates them. Doing `purpose` →
+`energyType` across the tree rewrote the DynamoDB attribute literal `"purpose"` into
+`"energyType"` and the Iceberg sink column to `"energyType"`, while `"meter_type"` was never
+renamed at all — and all 118 tests still passed, because the fixtures were rewritten in
+lockstep with the code. Only a cross-artifact check catches it.
+
+The wire names now live once, in `enrichment/LogicalDataSchema.scala`, and
+`LogicalDataSchemaSpec` reads `s3tables_stack.go` to assert the sink's column list matches the
+table's. After renaming, confirm the guard can still fail — revert the column in the Go file,
+run `sbt "testOnly *LogicalDataSchemaSpec"`, expect 2 failures, restore. A guard that cannot
+fail is worth nothing.
+
+Column names on the wire are snake_case (`reading_kind`, `energy_type`); the Scala fields are
+camelCase (`readingKind`, `energyType`). Any camelCase string reaching DynamoDB or Iceberg is
+this bug.
 
 - [ ] **Step 2: Rename the Iceberg table and its one column**
 
