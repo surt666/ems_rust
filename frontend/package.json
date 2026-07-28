@@ -11,10 +11,7 @@
   },
   "dependencies": {
     "@astrojs/alpinejs": "^0.5.0",
-    "@astrojs/react": "^5.0.4",
     "@types/alpinejs": "^3.13.11",
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5",
     "alpinejs": "^3.14.9",
     "amazon-quicksight-embedding-sdk": "^2.10.2",
     "astro": "^6.1.9",
@@ -26,9 +23,7 @@
     "echarts": "^6.1.0",
     "htmx.org": "^1.9.6",
     "hyperscript.org": "^0.9.14",
-    "invokers": "^1.8.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "invokers": "^1.8.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",

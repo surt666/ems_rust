@@ -55,7 +55,7 @@ export const RESOURCE_COLORS: Record<string, string> = {
   heat: "#f5841f",
 };
 
-interface AggRow { energy_type: string; unit: string; timestamp: string; value: number }
+export interface AggRow { energy_type: string; purpose?: string; unit: string; timestamp: string; value: number }
 
 /** Bucket key for a timestamp at a granularity. Timestamps are UTC ISO strings. */
 export function bucketKey(ts: string, g: Granularity): string {
@@ -88,4 +88,58 @@ export function rollup(
     if (r.unit) unitByResource.set(r.energy_type, r.unit);
   }
   return { categories: cats, byResource, unitByResource };
+}
+
+/**
+ * Fetch a node's rows for one aggregations action over the last `days`.
+ *
+ * Shared by the dashboard chart components, which were React islands each
+ * repeating this. Resolves the node the same way every other widget does.
+ * Throws with a readable message so callers can render it.
+ */
+export async function fetchAgg(
+  action: string,
+  { days = 30, resolution = "daily", levelId = "", extra = {} as Record<string, string> } = {},
+): Promise<AggRow[]> {
+  const lvl = levelId || resolveLevelId();
+  if (!lvl) throw new Error("Ingen node valgt.");
+  const end = new Date();
+  const start = new Date(end.getTime() - days * 86400000);
+  const params = new URLSearchParams({
+    level_id: lvl,
+    resolution,
+    start: start.toISOString(),
+    end: end.toISOString(),
+    ...extra,
+  });
+  const res = await fetch(`${aggBase()}/meterdata/query/${action}?${params}`);
+  if (!res.ok) throw new Error(`Fejl: ${res.statusText}`);
+  return (await res.json()) as AggRow[];
+}
+
+/** Pivot rows into one chart series per energy type, on a shared sorted time axis. */
+export function seriesByEnergyType(rows: AggRow[]): {
+  categories: string[];
+  series: { name: string; data: number[]; type: string; color?: string }[];
+  unit: string;
+} {
+  const cats = Array.from(new Set(rows.map((r) => r.timestamp))).sort();
+  const idx = new Map(cats.map((t, i) => [t, i]));
+  const byType = new Map<string, number[]>();
+  let unit = "";
+  for (const r of rows) {
+    if (!byType.has(r.energy_type)) byType.set(r.energy_type, new Array(cats.length).fill(0));
+    byType.get(r.energy_type)![idx.get(r.timestamp)!] = r.value;
+    if (!unit && r.unit) unit = r.unit;
+  }
+  return {
+    categories: cats.map((t) => t.replace("T", " ").slice(0, 16)),
+    series: Array.from(byType.entries()).map(([name, data]) => ({
+      name: RESOURCE_LABELS[name] ?? name,
+      data,
+      type: "line",
+      color: RESOURCE_COLORS[name],
+    })),
+    unit: unit || "kWh",
+  };
 }

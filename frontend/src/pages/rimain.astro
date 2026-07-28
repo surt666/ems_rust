@@ -1,13 +1,13 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import AggregationBarChart from '../components/AggregationBarChart.tsx';
+import AggregationBarChart from '../components/AggregationBarChart.astro';
 ---
 
 <Layout title="Resource Insights - Analyse">
 	<div class="page-container">
 		<h1 class="page-title">Resource Insights</h1>
 		<div class="card">
-			<AggregationBarChart client:only="react" />
+			<AggregationBarChart />
 		</div>
 	</div>
 </Layout>

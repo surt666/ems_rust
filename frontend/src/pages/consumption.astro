@@ -2,14 +2,14 @@
 // Forbrug — flagship consumption analysis (NEW). Per 03-analyse.md §3.2.
 // Composes the shared FilterBar (with page-specific .filter-bar__group slot
 // children) over per-meter ECharts dataZoom time-series ChartCards. Charts are
-// the showcase: zoomable mock series via EChartsChartWrapper. Static today;
+// the showcase: zoomable mock series via Chart. Static today;
 // data-endpoint="/query/consumption" carries the future HTMX contract. The
 // heavy "Henter data – kan tage flere minutter" state is shown as an
 // .empty-state variant, toggled in-page via Alpine (no JS file).
 import Layout from "../layouts/Layout.astro";
 import FilterBar from "../components/FilterBar.astro";
 import FilterOverlay from "../components/FilterOverlay.astro";
-import EChartsChartWrapper from "../components/EChartsChartWrapper.tsx";
+import Chart from "../components/Chart.astro";
 
 const months = ["Jan", "Feb", "Mar", "Apr", "Maj", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dec"];
 
@@ -121,7 +121,7 @@ const varmeSeries = [
             <div class="chart-kpi"><span class="chart-kpi__key">Afvigelse</span><span class="chart-kpi__val">-2,7 %</span></div>
           </div>
           <div class="chart-card__body">
-            <EChartsChartWrapper client:only="react" height={300} categories={months} series={elSeries} unit="MWh" />
+            <Chart height={300} categories={months} series={elSeries} unit="MWh" />
           </div>
         </div>
 
@@ -142,7 +142,7 @@ const varmeSeries = [
             <div class="chart-kpi"><span class="chart-kpi__key">Afvigelse</span><span class="chart-kpi__val">-2,2 %</span></div>
           </div>
           <div class="chart-card__body">
-            <EChartsChartWrapper client:only="react" height={300} categories={months} series={varmeSeries} unit="MWh" />
+            <Chart height={300} categories={months} series={varmeSeries} unit="MWh" />
           </div>
         </div>
       </div>

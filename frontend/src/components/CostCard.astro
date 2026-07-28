@@ -1,0 +1,69 @@
+---
+// Samlet omkostning — consumption × per-energy-type tariff, with the preceding
+// equal-length window for comparison. Two get_cost calls; the deviation between
+// them is what the card is for.
+const { days = 30, resolution = "daily", height = 200 } = Astro.props;
+---
+<div id="cost-card" data-days={days} data-resolution={resolution}>
+  <p class="muted chart-state">Indlæser…</p>
+  <div id="cost-chart" style={`width:100%;height:${height}px`}></div>
+</div>
+
+<script>
+  import { fetchAgg } from "../lib/agg";
+  import { mountChart } from "../lib/echarts-card";
+
+  const dkk = (n) => new Intl.NumberFormat("da-DK", { maximumFractionDigits: 0 }).format(n) + " kr.";
+  const sum = (rows) => rows.reduce((a, r) => a + r.value, 0);
+
+  async function load() {
+    const root = document.getElementById("cost-card");
+    if (!root || root.dataset.loaded) return;
+    const days = Number(root.dataset.days || 30);
+    const resolution = root.dataset.resolution || "daily";
+    const state = root.querySelector(".chart-state");
+    try {
+      // Current window, and the equal window before it. get_cost is cheap; the
+      // slow benchmark endpoint is deliberately not involved.
+      const [rows, prev] = await Promise.all([
+        fetchAgg("get_cost", { days, resolution }),
+        fetchAgg("get_cost", { days: days * 2, resolution })
+          .then((all) => {
+            const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+            return all.filter((r) => r.timestamp < cutoff);
+          }),
+      ]);
+      if (!rows.length) { state.textContent = "Ingen omkostningsdata."; return; }
+      root.dataset.loaded = "1";
+
+      const total = sum(rows);
+      const prevTotal = prev.length ? sum(prev) : null;
+      const dev = prevTotal && prevTotal > 0 ? ((total - prevTotal) / prevTotal) * 100 : null;
+
+      const cells = [`<div><span class="muted">Periode (seneste ${days} dage)</span><strong class="mono card-total">${dkk(total)}</strong></div>`];
+      if (prevTotal !== null) cells.push(`<div><span class="muted">Forrige periode</span><strong class="mono">${dkk(prevTotal)}</strong></div>`);
+      if (dev !== null) {
+        const cls = dev > 0 ? "dev-up" : "dev-down";
+        cells.push(`<div><span class="muted">Afvigelse</span><strong class="mono ${cls}">${dev > 0 ? "+" : ""}${dev.toFixed(1)} %</strong></div>`);
+      }
+      state.outerHTML = `<div class="card-metrics">${cells.join("")}</div>`;
+
+      // Cost summed across energy types per bucket -> one total-cost series.
+      const byBucket = new Map();
+      for (const r of rows) byBucket.set(r.timestamp, (byBucket.get(r.timestamp) || 0) + r.value);
+      const cats = Array.from(byBucket.keys()).sort();
+      mountChart(document.getElementById("cost-chart"), {
+        categories: cats.map((t) => t.replace("T", " ").slice(0, 16)),
+        series: [{ name: "Omkostning", data: cats.map((t) => Math.round(byBucket.get(t))), type: "line", areaStyle: true }],
+        unit: "DKK",
+        zoom: false,
+      });
+    } catch (e) {
+      state.textContent = e.message;
+      state.classList.add("chart-state--error");
+    }
+  }
+
+  document.addEventListener("astro:page-load", load);
+  load();
+</script>

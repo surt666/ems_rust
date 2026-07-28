@@ -1,0 +1,24 @@
+---
+// Declarative ECharts block — the replacement for <EChartsChartWrapper client:only="react" />.
+//
+// The chart config is serialised into an inline application/json script and picked
+// up by mountDeclaredCharts() in Layout, so a page declares a chart as markup +
+// data and needs no script block of its own.
+//
+// `event` names a window CustomEvent whose detail is merged over the config, which
+// is how page controls update a chart without page-level JS.
+const {
+  categories = [],
+  series = [],
+  unit = "kWh",
+  height = 320,
+  stacked = false,
+  zoom = true,
+  event,
+} = Astro.props;
+const config = JSON.stringify({ categories, series, unit, stacked, zoom });
+---
+<div data-chart data-chart-event={event}>
+  <div data-chart-canvas style={`width:100%;height:${height}px`}></div>
+  <script type="application/json" set:html={config}></script>
+</div>

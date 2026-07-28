@@ -9,7 +9,7 @@
 // for drop-in HTMX wiring later (no live hx-get — renders standalone).
 //
 // No bespoke JS: tab state via Alpine x-data, charts via the React island.
-import EChartsChartWrapper from "./EChartsChartWrapper.tsx";
+import Chart from "./Chart.astro";
 
 export interface CoolingMeter {
   id: string;
@@ -79,8 +79,7 @@ function indexBadge(index: number): string {
 
       <!-- Delta-T chart -->
       <div class="cooling-panel__chart">
-        <EChartsChartWrapper
-          client:only="react"
+        <Chart
           height={260}
           unit="°C"
           categories={m.categories ?? months}

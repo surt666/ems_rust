@@ -2,12 +2,11 @@
 import { defineConfig } from "astro/config";
 
 import alpinejs from "@astrojs/alpinejs";
-import react from "@astrojs/react";
 import htmx from "astro-htmx";
 import hyperscript from "astro-hyperscript";
 
 export default defineConfig({
-  integrations: [alpinejs({ entrypoint: "/src/alpine-entrypoint" }), react(), htmx(), hyperscript()],
+  integrations: [alpinejs({ entrypoint: "/src/alpine-entrypoint" }), htmx(), hyperscript()],
   image: {
     service: { entrypoint: 'astro/assets/services/noop' }
   },

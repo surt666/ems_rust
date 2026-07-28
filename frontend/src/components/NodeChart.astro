@@ -1,0 +1,35 @@
+---
+// Forbrugsudvikling — one line per energy type for the selected node.
+// Plain ECharts; a canvas chart needs data rather than markup, so this is one of
+// the few things on the dashboard that stays client-rendered.
+const { days = 30, resolution = "daily", height = 280 } = Astro.props;
+---
+<div id="node-chart" data-days={days} data-resolution={resolution}
+     style={`width:100%;height:${height}px`}>
+  <p class="muted chart-state">Indlæser…</p>
+</div>
+
+<script>
+  import { fetchAgg, seriesByEnergyType } from "../lib/agg";
+  import { mountChart } from "../lib/echarts-card";
+
+  async function load() {
+    const el = document.getElementById("node-chart");
+    if (!el || el.dataset.loaded) return;
+    try {
+      const rows = await fetchAgg("get_aggregations", {
+        days: Number(el.dataset.days || 30),
+        resolution: el.dataset.resolution || "daily",
+      });
+      if (!rows.length) { el.innerHTML = '<p class="muted chart-state">Ingen data for perioden.</p>'; return; }
+      el.textContent = "";
+      el.dataset.loaded = "1";
+      mountChart(el, { ...seriesByEnergyType(rows), zoom: true });
+    } catch (e) {
+      el.innerHTML = `<p class="chart-state chart-state--error">${e.message}</p>`;
+    }
+  }
+
+  document.addEventListener("astro:page-load", load);
+  load();
+</script>

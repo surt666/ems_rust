@@ -6,10 +6,10 @@
 // contract. Becomes the node view's default tab once backend-integrated; will
 // eventually vary by hierarchy level via the company schema (see spec
 // 2026-06-24-node-dashboard-schema-driven.md).
-import ResourceChart from "./ResourceChart.tsx";
-import ResourceCards from "./ResourceCards.tsx";
-import CostCard from "./CostCard.tsx";
-import EmissionsCard from "./EmissionsCard.tsx";
+import NodeChart from "./NodeChart.astro";
+import ResourceCards from "./ResourceCards.astro";
+import CostCard from "./CostCard.astro";
+import EmissionsCard from "./EmissionsCard.astro";
 import BenchmarkCard from "./BenchmarkCard.astro";
 import AlarmsCard from "./AlarmsCard.astro";
 import PurposeSplit from "./PurposeSplit.astro";
@@ -75,7 +75,7 @@ const ctaRows = [
         <h2 class="section-title" style="margin-bottom:0">Forbrug pr. ressource</h2>
         <span class="muted" style="margin-left:auto">seneste 30 dage</span>
       </div>
-      <ResourceChart client:only="react" resolution="daily" days={30} height={280} />
+      <NodeChart resolution="daily" days={30} height={280} />
     </div>
 
     <!-- CO₂e card — real, fed by get_emissions (consumption × emission factor). -->
@@ -85,7 +85,7 @@ const ctaRows = [
         <h2 class="section-title" style="margin-bottom:0">CO₂e</h2>
         <span class="muted" style="margin-left:auto">faktorbaseret · seneste 30 dage</span>
       </div>
-      <EmissionsCard client:only="react" resolution="daily" days={30} height={180} />
+      <EmissionsCard resolution="daily" days={30} height={180} />
     </div>
 
     <!-- Combined cost card — real, fed by get_cost (consumption × tariff). -->
@@ -95,12 +95,12 @@ const ctaRows = [
         <h2 class="section-title" style="margin-bottom:0">Samlet omkostning</h2>
         <span class="muted" style="margin-left:auto">tariffbaseret · seneste 30 dage</span>
       </div>
-      <CostCard client:only="react" resolution="daily" days={30} height={200} />
+      <CostCard resolution="daily" days={30} height={200} />
     </div>
 
     {/* Live per-resource consumption cards (ECharts), fed by the aggregations API —
          one card per resource present under the selected node (totals + daily trend). */}
-    <ResourceCards client:only="react" resolution="daily" days={30} />
+    <ResourceCards resolution="daily" days={30} />
 
     {/* End-use breakdown — the purpose axis, rendered as HTML by the aggregations
         lambda (get_purpose_split). */}

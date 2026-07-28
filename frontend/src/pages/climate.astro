@@ -1,7 +1,7 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import FilterOverlay from '../components/FilterOverlay.astro';
-import EChartsChartWrapper from '../components/EChartsChartWrapper.tsx';
+import Chart from '../components/Chart.astro';
 
 // Per-category emissions, split by scope — vertical stacked columns.
 const emissionCategories = ['El', 'Fjernvarme', 'Naturgas', 'Vand', 'Transport'];
@@ -95,7 +95,7 @@ const emissionScopes = [
 					<h3 class="climate-card-title">Udledning pr. forbrugstype</h3>
 				</div>
 				<div class="climate-bar-chart">
-					<EChartsChartWrapper client:only="react" height={300} stacked={true} zoom={false}
+					<Chart height={300} stacked={true} zoom={false}
 						unit="t CO₂e" categories={emissionCategories} series={emissionScopes} />
 				</div>
 			</div>

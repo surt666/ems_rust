@@ -119,6 +119,7 @@ import "../styles/enity-theme.css";
 	import { configureAmplify } from '../lib/amplify-config';
 	import { fetchAuthSession } from 'aws-amplify/auth';
 	import { resolveLevelId } from '../lib/agg';
+	import { mountDeclaredCharts } from '../lib/echarts-card';
 	import { applyTranslations } from '../lib/i18n';
 
 	// Expose Astro's view-transition navigate so the hierarchy dropdowns can jump
@@ -194,7 +195,9 @@ import "../styles/enity-theme.css";
 	document.addEventListener('astro:page-load', () => {
 		setupLogout();
 		applyTranslations();
+		mountDeclaredCharts();
 	});
+	mountDeclaredCharts();
 
 	// Re-translate any HTMX-swapped fragment.
 	document.body.addEventListener('htmx:afterSwap', () => applyTranslations());
