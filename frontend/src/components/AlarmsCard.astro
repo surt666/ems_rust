@@ -1,0 +1,20 @@
+---
+// Alarmer — consumption spikes (value > factor × median for its energy type).
+// Rendered server-side by get_alarms?format=html.
+const { days = 30 } = Astro.props;
+const url = `${import.meta.env.PUBLIC_AGG_API_BASE_URL}/meterdata/query/get_alarms`;
+---
+<div
+  hx-get={url}
+  hx-request='{"noHeaders": true}'
+  hx-vals={`js:{
+    level_id: window.emsLevelId(),
+    resolution: 'daily',
+    start: new Date(Date.now() - ${days} * 864e5).toISOString(),
+    end: new Date().toISOString(),
+    format: 'html'
+  }`}
+  hx-trigger="load"
+  hx-swap="innerHTML">
+  <p class="muted">Indlæser…</p>
+</div>

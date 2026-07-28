@@ -10,8 +10,8 @@ import ResourceChart from "./ResourceChart.tsx";
 import ResourceCards from "./ResourceCards.tsx";
 import CostCard from "./CostCard.tsx";
 import EmissionsCard from "./EmissionsCard.tsx";
-import BenchmarkCard from "./BenchmarkCard.tsx";
-import AlarmsCard from "./AlarmsCard.tsx";
+import BenchmarkCard from "./BenchmarkCard.astro";
+import AlarmsCard from "./AlarmsCard.astro";
 import PurposeSplit from "./PurposeSplit.astro";
 
 // Call to action (biggest energy-waste) has no dedicated backend yet — kept
@@ -32,7 +32,7 @@ const ctaRows = [
         <h2 class="section-title" style="margin-bottom:0">Bygningsbenchmark</h2>
         <span class="muted" style="margin-left:auto">seneste 30 dage</span>
       </div>
-      <BenchmarkCard client:only="react" days={30} />
+      <BenchmarkCard days={30} />
     </div>
 
     <!-- Call to action -->
@@ -58,7 +58,7 @@ const ctaRows = [
         <h2 class="section-title" style="margin-bottom:0">Alarmer</h2>
         <a href="/alarms" class="btn-secondary" style="margin-left:auto">Gå til alarmoversigt</a>
       </div>
-      <AlarmsCard client:only="react" days={30} />
+      <AlarmsCard days={30} />
     </div>
   </div>
 

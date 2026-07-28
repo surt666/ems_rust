@@ -3011,3 +3011,41 @@ dialog::backdrop {
    ResourceCards client:only island cards too. */
 .nd-drill { cursor: pointer; transition: box-shadow 0.15s ease; }
 .nd-drill:hover { box-shadow: 0 2px 10px rgba(0,0,0,0.10); }
+
+/* ── Server-rendered dashboard cards (get_benchmark / get_alarms ?format=html) ──
+   These replaced React islands that carried inline styles; the markup now comes
+   from the aggregations lambda, so the styling has to live here. Grid, not flex. */
+.bm { display: grid; gap: 14px; }
+.bm-bar { display: grid; gap: 6px; }
+.bm-bar__head {
+  display: grid; grid-auto-flow: column; justify-content: space-between;
+  font-size: var(--text-xs); color: var(--text-muted);
+}
+.bm-bar__track {
+  position: relative; height: 12px; border-radius: 6px;
+  background: linear-gradient(90deg, #22c55e 0%, #f59e0b 55%, #ef4444 100%);
+}
+.bm-bar__marker {
+  position: absolute; top: -5px; transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left: 5px solid transparent; border-right: 5px solid transparent;
+  border-top: 9px solid var(--text-primary);
+}
+.bm-metrics {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px;
+}
+.bm-metrics > div { display: grid; gap: 2px; font-size: var(--text-sm); }
+.bm-metrics .muted { font-size: var(--text-xs); }
+
+.al-counts {
+  display: grid; grid-auto-flow: column; justify-content: start; gap: 28px;
+  margin-bottom: 8px;
+}
+.al-counts > div { display: grid; gap: 2px; }
+.al-num { font-size: var(--text-2xl); font-weight: 700; color: var(--text-primary); }
+.al-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.al-table th, .al-table td {
+  padding: 4px 8px; border-bottom: 1px solid var(--border, #e5e7eb);
+}
+.al-table th { text-align: left; font-weight: 500; color: var(--text-muted); }
+.al-table .num { text-align: right; }

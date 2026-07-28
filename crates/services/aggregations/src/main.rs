@@ -886,6 +886,129 @@ struct Benchmark {
     buildings: Vec<BuildingStat>,
 }
 
+
+// ── Card fragments (HTML-over-the-wire) ──────────────────────────────────────
+//
+// The node dashboard renders these server-side rather than shipping JSON to a
+// client-side component. Both cards are pure markup — no canvas — so there is
+// nothing a browser framework has to do here.
+
+/// Danish number formatting: thousands separator `.`, decimal comma.
+fn da(n: f64, decimals: usize) -> String {
+    let s = format!("{n:.decimals$}");
+    let (int, frac) = s.split_once('.').unwrap_or((s.as_str(), ""));
+    let neg = int.starts_with('-');
+    let digits: Vec<char> = int.trim_start_matches('-').chars().collect();
+    let mut out = String::new();
+    for (i, c) in digits.iter().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push('.');
+        }
+        out.push(*c);
+    }
+    let mut r = String::new();
+    if neg {
+        r.push('-');
+    }
+    r.push_str(&out);
+    if !frac.is_empty() {
+        r.push(',');
+        r.push_str(frac);
+    }
+    r
+}
+
+/// `get_benchmark?format=html` — two gradient bars (cost, CO₂e) with a marker.
+///
+/// For a building the marker is its own deviation from the company-average
+/// building; for a company or property it is the share of buildings above that
+/// average, because "this node vs itself" would be meaningless.
+fn benchmark_to_html(b: &Benchmark) -> String {
+    if b.building_count == 0 {
+        return "<p class=\"muted\">Ingen benchmarkdata.</p>".to_string();
+    }
+    let co2e_above = b.buildings.iter().filter(|x| x.co2e_kg > b.avg_co2e_kg).count();
+    let n = b.building_count as f64;
+
+    let bar = |title: &str, pos: f64, caption: String| {
+        let pos = pos.clamp(0.0, 1.0) * 100.0;
+        let accent = if pos > 50.0 { "var(--danger)" } else { "var(--success)" };
+        format!(
+            "<div class=\"bm-bar\">\
+               <div class=\"bm-bar__head\"><span>{title}</span>\
+                 <strong class=\"mono\" style=\"color:{accent}\">{caption}</strong></div>\
+               <div class=\"bm-bar__track\"><div class=\"bm-bar__marker\" style=\"left:{pos:.1}%\"></div></div>\
+             </div>",
+            title = esc(title),
+            caption = esc(&caption),
+        )
+    };
+
+    let signed = |v: f64| format!("{}{:.1} %", if v > 0.0 { "+" } else { "" }, v);
+    let (cost_pos, cost_cap) = if b.node_is_building {
+        (0.5 + b.node_cost_dev_pct / 100.0, signed(b.node_cost_dev_pct))
+    } else {
+        (b.above_count as f64 / n, format!("{}/{} over gnm.", b.above_count, b.building_count))
+    };
+    let (co2e_pos, co2e_cap) = if b.node_is_building {
+        (0.5 + b.node_co2e_dev_pct / 100.0, signed(b.node_co2e_dev_pct))
+    } else {
+        (co2e_above as f64 / n, format!("{}/{} over gnm.", co2e_above, b.building_count))
+    };
+
+    format!(
+        "<div class=\"bm\">\
+           {cost}{co2e}\
+           <div class=\"bm-metrics\">\
+             <div><span class=\"muted\">Bygninger</span><strong class=\"mono\">{count}</strong></div>\
+             <div><span class=\"muted\">Gnm. omkostning</span><strong class=\"mono\">{avg_cost} kr.</strong></div>\
+             <div><span class=\"muted\">Merforbrug over gnm.</span><strong class=\"mono\">{excess} kr.</strong></div>\
+             <div><span class=\"muted\">Besparelse under gnm.</span><strong class=\"mono\">{saving} kr.</strong></div>\
+           </div>\
+         </div>",
+        cost = bar("Omkostning vs. gennemsnit", cost_pos, cost_cap),
+        co2e = bar("CO₂e vs. gennemsnit", co2e_pos, co2e_cap),
+        count = b.building_count,
+        avg_cost = da(b.avg_cost_dkk, 0),
+        excess = da(b.above_excess_dkk, 0),
+        saving = da(b.below_saving_dkk, 0),
+    )
+}
+
+/// `get_alarms?format=html` — spike count plus the largest few.
+fn alarms_to_html(r: &AlarmsResponse) -> String {
+    let mut out = format!(
+        "<div class=\"al-counts\">\
+           <div><strong class=\"al-num mono\">{}</strong><span class=\"muted\">Forbrugsspidser</span></div>\
+           <div><strong class=\"al-num mono\">{}</strong><span class=\"muted\">Vises</span></div>\
+         </div>",
+        r.count,
+        r.alarms.len().min(5),
+    );
+    if r.alarms.is_empty() {
+        out.push_str("<p class=\"muted\">Ingen forbrugsspidser i perioden.</p>");
+        return out;
+    }
+    out.push_str("<table class=\"al-table\"><thead><tr>\
+        <th>Energiart</th><th>Tidspunkt</th><th class=\"num\">Værdi</th>\
+        <th class=\"num\">Median</th><th class=\"num\">Faktor</th></tr></thead><tbody>");
+    for a in r.alarms.iter().take(5) {
+        out.push_str(&format!(
+            "<tr><td>{}</td><td class=\"mono\">{}</td>\
+             <td class=\"mono num\">{} {}</td><td class=\"mono num\">{}</td>\
+             <td class=\"mono num\">×{}</td></tr>",
+            esc(&a.resource),
+            esc(&a.timestamp),
+            da(a.value, 0),
+            esc(&a.unit),
+            da(a.median, 0),
+            da(a.ratio, 1),
+        ));
+    }
+    out.push_str("</tbody></table>");
+    out
+}
+
 /// Deviation of `cur` from baseline `base`, in percent (0 if base ~ 0).
 fn pct_change(cur: f64, base: f64) -> f64 {
     if base.abs() < f64::EPSILON {
@@ -898,6 +1021,27 @@ fn pct_change(cur: f64, base: f64) -> f64 {
 /// The meter-bearing node for a leaf node_path (`…|HN4#1|L#9` → `…|HN4#1`), else None.
 fn building_of_leaf(node_path: &str) -> Option<String> {
     node_path.rfind("|L#").map(|i| node_path[..i].to_string())
+}
+
+/// The most granular nodes in a set — those with no descendant node in it.
+///
+/// A benchmark compares like with like, which used to mean "nodes that own a meter",
+/// found via the synthetic `|L#<sensor>` leaf rows the old `ancestor_keys` emitted.
+/// The coefficient matrix has no such rows — sensors are not nodes — so that test
+/// silently matched nothing and every benchmark came back empty.
+///
+/// Leaf-ness is the schema-agnostic version of the same intent: hierarchy levels are
+/// dense depth indices, not fixed type slots (one company's HN4 is a building, another's
+/// is an area), so "deepest node with its own consumption" travels where "HN4" does not.
+fn leaf_node_paths<'a>(paths: impl Iterator<Item = &'a str>) -> std::collections::BTreeSet<String> {
+    let all: std::collections::BTreeSet<String> = paths.map(str::to_string).collect();
+    all.iter()
+        .filter(|p| {
+            let prefix = format!("{p}|");
+            !all.iter().any(|q| q.starts_with(&prefix))
+        })
+        .cloned()
+        .collect()
 }
 
 /// Rollup rows for a company partition (`pk = "HN2#<id>"`) — every descendant
@@ -935,30 +1079,32 @@ fn building_stats(
     start_bucket: &str,
     end_bucket: &str,
 ) -> std::collections::BTreeMap<String, (f64, f64)> {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeMap;
     let in_window = |g: &str, b: &str| g == gran.code() && b >= start_bucket && b <= end_bucket;
-    // Single pass (one parse_sk per item): leaf rows reveal which node_paths are
-    // buildings; every non-leaf node's own rows accumulate provisional totals. We
-    // then keep only the building-level entries (property/company rows fall out).
-    let mut building_paths: BTreeSet<String> = BTreeSet::new();
+
+    // Accumulate every node's own cost/CO2e, then keep only the leaf nodes — the
+    // benchmark unit. Property and company rows are roll-ups of those leaves, so
+    // including them would compare a node against its own parts.
     let mut by_path: BTreeMap<String, (f64, f64)> = BTreeMap::new();
     for it in items {
         let (np, et, purpose, g, b) = parse_sk(&it.sk);
         if !in_window(g, b) {
             continue;
         }
-        match building_of_leaf(np) {
-            Some(bldg) => {
-                building_paths.insert(bldg);
-            }
-            None => {
-                let e = by_path.entry(np.to_string()).or_insert((0.0, 0.0));
-                e.0 += it.sum * tariff_dkk_per_unit(et, purpose, &it.unit);
-                e.1 += it.sum * emission_kg_per_unit(et, purpose, &it.unit);
-            }
+        // Legacy leaf rows (`…|L#<sensor>`) are skipped, not folded: the old
+        // ancestor_keys emitted a node's own row *and* a per-sensor leaf row for the
+        // same consumption, so folding would count it twice. The matrix emits no
+        // leaf rows at all, so this only matters for rows predating the rebuild.
+        if building_of_leaf(np).is_some() {
+            continue;
         }
+        let e = by_path.entry(np.to_string()).or_insert((0.0, 0.0));
+        e.0 += it.sum * tariff_dkk_per_unit(et, purpose, &it.unit);
+        e.1 += it.sum * emission_kg_per_unit(et, purpose, &it.unit);
     }
-    by_path.retain(|np, _| building_paths.contains(np));
+
+    let leaves = leaf_node_paths(by_path.keys().map(String::as_str));
+    by_path.retain(|np, _| leaves.contains(np));
     by_path
 }
 
@@ -984,6 +1130,12 @@ async fn handle_benchmark(
     table: &str,
     qs: &HashMap<String, String>,
 ) -> Result<ApiResponse, ApiError> {
+    let format = Format::resolve(qs.get("format").map(String::as_str), Format::Json);
+    let bench_response =
+        |b: &Benchmark| match format {
+            Format::Json => ApiResponse::json(b),
+            Format::Html => ApiResponse::html(200, benchmark_to_html(b)),
+        };
     let (level_id, resolution, start, end) = window_params(qs)?;
     let gran = Gran::from_resolution(&resolution);
     let empty = || Benchmark {
@@ -1002,7 +1154,7 @@ async fn handle_benchmark(
     };
     let (pk, sk_path) = match parse_node_keys(&level_id) {
         Ok(keys) => keys,
-        Err(_) => return Ok(ApiResponse::json(&empty())),
+        Err(_) => return Ok(bench_response(&empty())),
     };
     let (start_bucket, end_bucket) = match (bucket_label(&start, gran), bucket_label(&end, gran)) {
         (Ok(s), Ok(e)) => (s, e),
@@ -1016,7 +1168,7 @@ async fn handle_benchmark(
 
     let n = stats.len();
     if n == 0 {
-        return Ok(ApiResponse::json(&empty()));
+        return Ok(bench_response(&empty()));
     }
     let avg_cost = stats.values().map(|v| v.0).sum::<f64>() / n as f64;
     let avg_co2e = stats.values().map(|v| v.1).sum::<f64>() / n as f64;
@@ -1057,7 +1209,7 @@ async fn handle_benchmark(
         below_saving_dkk: round2(below),
         buildings,
     };
-    Ok(ApiResponse::json(&bench))
+    Ok(bench_response(&bench))
 }
 
 /// One flagged consumption anomaly (a bucket far above the resource's median).
@@ -1154,13 +1306,18 @@ async fn handle_alarms(
         .filter(|f| *f > 1.0)
         .unwrap_or(2.0);
 
+    let format = Format::resolve(qs.get("format").map(String::as_str), Format::Json);
     let rows = fetch_node_rows(client, table, &level_id, &resolution, &start, &end).await?;
     let alarms = detect_spikes(&rows, spike_factor);
-    Ok(ApiResponse::json(&AlarmsResponse {
+    let resp = AlarmsResponse {
         level_id,
         count: alarms.len(),
         alarms,
-    }))
+    };
+    Ok(match format {
+        Format::Json => ApiResponse::json(&resp),
+        Format::Html => ApiResponse::html(200, alarms_to_html(&resp)),
+    })
 }
 
 /// The generated OpenAPI 3.1 document for the JSON surface of this lambda.
@@ -1294,6 +1451,45 @@ mod tests {
         assert!((stats["HN2#1|HN3#1|HN4#2"].0 - 7.5).abs() < 1e-9);
     }
 
+
+    #[test]
+    fn leaf_nodes_are_those_with_no_descendant() {
+        let paths = ["HN2#1", "HN2#1|HN3#1", "HN2#1|HN3#1|HN4#1", "HN2#1|HN3#1|HN4#2", "HN2#1|HN3#2"];
+        let leaves = leaf_node_paths(paths.into_iter());
+        assert_eq!(
+            leaves.into_iter().collect::<Vec<_>>(),
+            vec!["HN2#1|HN3#1|HN4#1", "HN2#1|HN3#1|HN4#2", "HN2#1|HN3#2"],
+            "company and property roll up their children, so only the tips benchmark"
+        );
+    }
+
+    #[test]
+    fn leaf_detection_is_not_fooled_by_a_shared_prefix() {
+        // "HN4#1" must not count as an ancestor of "HN4#10" — the separator matters.
+        let leaves = leaf_node_paths(["HN2#1|HN4#1", "HN2#1|HN4#10"].into_iter());
+        assert_eq!(leaves.len(), 2);
+    }
+
+    #[test]
+    fn building_stats_benchmarks_leaf_nodes_without_legacy_meter_rows() {
+        // Regression: benchmarking used to find buildings via synthetic `|L#<sensor>`
+        // rows, which the coefficient matrix does not emit — so every benchmark came
+        // back empty. Leaf-ness replaces it.
+        let it = |sk: &str, unit: &str, sum: f64| AggItem {
+            sk: sk.to_string(), sum, count: 1, unit: unit.to_string(),
+        };
+        let items = vec![
+            it("HN2#1|HN3#1|HN4#1#electricity#total#d#2026-06-01", "Wh", 1000.0),
+            it("HN2#1|HN3#1|HN4#2#electricity#total#d#2026-06-01", "Wh", 3000.0),
+            it("HN2#1|HN3#1#electricity#total#d#2026-06-01", "Wh", 4000.0),
+            it("HN2#1#electricity#total#d#2026-06-01", "Wh", 4000.0),
+        ];
+        let stats = building_stats(&items, Gran::Day, "2026-06-01", "2026-06-30");
+        assert_eq!(stats.len(), 2, "the two HN4 tips, not the property or company");
+        assert!((stats["HN2#1|HN3#1|HN4#1"].0 - 2.5).abs() < 1e-9);
+        assert!((stats["HN2#1|HN3#1|HN4#2"].0 - 7.5).abs() < 1e-9);
+    }
+
     #[test]
     fn building_of_leaf_strips_meter() {
         assert_eq!(building_of_leaf("HN2#1|HN3#1|HN4#1|L#9").as_deref(), Some("HN2#1|HN3#1|HN4#1"));
@@ -1391,6 +1587,92 @@ mod tests {
     #[test]
     fn test_parse_node_keys_empty_errors() {
         assert!(parse_node_keys("").is_err());
+    }
+
+
+    // Card fragments ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn da_formats_danish_thousands_and_decimal_comma() {
+        assert_eq!(da(1234567.0, 0), "1.234.567");
+        assert_eq!(da(1234.5, 1), "1.234,5");
+        assert_eq!(da(-2500.0, 0), "-2.500");
+        assert_eq!(da(999.0, 0), "999");
+        assert_eq!(da(0.0, 0), "0");
+    }
+
+    fn bench_fixture(node_is_building: bool) -> Benchmark {
+        Benchmark {
+            level_id: "HN2#1".into(),
+            building_count: 4,
+            avg_cost_dkk: 1000.0,
+            avg_co2e_kg: 500.0,
+            node_is_building,
+            node_cost_dev_pct: 20.0,
+            node_co2e_dev_pct: -10.0,
+            above_count: 3,
+            above_excess_dkk: 250.0,
+            below_count: 1,
+            below_saving_dkk: 40.0,
+            buildings: vec![BuildingStat {
+                node_path: "HN2#1|HN3#1|HN4#1".into(),
+                cost_dkk: 1200.0,
+                co2e_kg: 600.0,
+                cost_dev_pct: 20.0,
+            }],
+        }
+    }
+
+    #[test]
+    fn benchmark_html_marks_a_buildings_own_deviation() {
+        let html = benchmark_to_html(&bench_fixture(true));
+        assert!(html.contains("+20.0 %"), "{html}");
+        assert!(html.contains("left:70.0%"), "0.5 + 20/100 -> 70%: {html}");
+    }
+
+    #[test]
+    fn benchmark_html_marks_a_companys_share_above_average() {
+        // "this node vs itself" is meaningless for a company, so it shows how many
+        // of its buildings are above the average instead.
+        let html = benchmark_to_html(&bench_fixture(false));
+        assert!(html.contains("3/4 over gnm."), "{html}");
+        assert!(html.contains("left:75.0%"), "3 of 4 -> 75%: {html}");
+    }
+
+    #[test]
+    fn benchmark_html_says_so_when_there_are_no_buildings() {
+        let mut b = bench_fixture(false);
+        b.building_count = 0;
+        assert!(benchmark_to_html(&b).contains("Ingen benchmarkdata"));
+    }
+
+    #[test]
+    fn alarms_html_lists_at_most_five_and_reports_the_full_count() {
+        let alarm = |i: usize| Alarm {
+            resource: "electricity".into(),
+            timestamp: format!("2026-07-0{i}"),
+            value: 4000.0,
+            median: 1000.0,
+            ratio: 4.0,
+            unit: "Wh".into(),
+        };
+        let resp = AlarmsResponse {
+            level_id: "HN2#1".into(),
+            count: 7,
+            alarms: (1..=7).map(alarm).collect(),
+        };
+        let html = alarms_to_html(&resp);
+        assert_eq!(html.matches("<tr><td>").count(), 5, "caps the table at 5");
+        assert!(html.contains(">7<"), "but still reports all 7: {html}");
+        assert!(html.contains("4.000 Wh"), "danish formatting: {html}");
+    }
+
+    #[test]
+    fn alarms_html_handles_an_empty_period() {
+        let resp = AlarmsResponse { level_id: "HN2#1".into(), count: 0, alarms: vec![] };
+        let html = alarms_to_html(&resp);
+        assert!(html.contains("Ingen forbrugsspidser"));
+        assert!(!html.contains("<table"));
     }
 
     // parse_sk ─────────────────────────────────────────────────────────────────
