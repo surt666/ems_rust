@@ -1,89 +1,35 @@
 ---
-// Forbrugsoverblik — one card per energy type present under the node: period
-// total, daily average, and a sparkline. Clicking drills into Resource Insights.
+// Forbrugsoverblik — one card per energy type: period total, daily average, and
+// a sparkline, all rendered by the aggregations lambda
+// (get_aggregations?format=chart&view=cards). Each card carries its own chart
+// config, which Layout's mountDeclaredCharts draws after the swap.
 const { days = 30, resolution = "daily" } = Astro.props;
+const url = `${import.meta.env.PUBLIC_AGG_API_BASE_URL}/meterdata/query/get_aggregations`;
 ---
-<div id="resource-cards" class="rc-grid" data-days={days} data-resolution={resolution}>
+<div
+  id="resource-cards"
+  class="rc-grid"
+  hx-get={url}
+  hx-vals={`js:{
+    level_id: window.emsLevelId(),
+    resolution: '${resolution}',
+    start: new Date(Date.now() - ${days} * 864e5).toISOString(),
+    end: new Date().toISOString(),
+    format: 'chart',
+    view: 'cards'
+  }`}
+  hx-trigger="load"
+  hx-swap="innerHTML">
   <p class="muted chart-state">Indlæser…</p>
 </div>
 
 <script>
-  import { fetchAgg, RESOURCE_LABELS, RESOURCE_COLORS } from "../lib/agg";
-  import { mountChart } from "../lib/echarts-card";
-
-  // Energy carriers first, then volumes — a stable, human order.
-  const ORDER = ["electricity", "district_heating", "heat", "gas", "district_cooling", "water"];
-  const num = (n, d) => new Intl.NumberFormat("da-DK", { maximumFractionDigits: d }).format(n);
-
-  async function load() {
-    const root = document.getElementById("resource-cards");
-    if (!root || root.dataset.loaded) return;
-    const days = Number(root.dataset.days || 30);
-    try {
-      const rows = await fetchAgg("get_aggregations", { days, resolution: root.dataset.resolution || "daily" });
-      if (!rows.length) { root.innerHTML = '<p class="muted chart-state">Ingen forbrugsdata for perioden.</p>'; return; }
-      root.dataset.loaded = "1";
-
-      const byType = new Map();
-      for (const r of rows) {
-        if (!byType.has(r.energy_type)) byType.set(r.energy_type, []);
-        byType.get(r.energy_type).push(r);
-      }
-      const cards = Array.from(byType.entries())
-        .map(([type, rs]) => {
-          rs.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-          const total = rs.reduce((s, r) => s + r.value, 0);
-          return {
-            type,
-            label: RESOURCE_LABELS[type] ?? type,
-            color: RESOURCE_COLORS[type] ?? "#1f9e8f",
-            unit: rs.find((r) => r.unit)?.unit || "",
-            total,
-            avg: total / rs.length,
-            cats: rs.map((r) => r.timestamp.slice(0, 10)),
-            data: rs.map((r) => Math.round(r.value * 1000) / 1000),
-          };
-        })
-        .sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type));
-
-      root.innerHTML = cards
-        .map((c) => {
-          const dec = c.total < 100 ? 2 : 0;
-          return `<div class="card rc-card" data-type="${c.type}" role="button" tabindex="0"
-                       title="Klik for detaljeret analyse">
-            <div class="rc-card__head">
-              <span class="rc-dot" style="background:${c.color}"></span>
-              <strong>${c.label}</strong>
-            </div>
-            <div class="rc-card__metrics">
-              <div><span class="muted">Periode</span><strong class="mono">${num(c.total, dec)} ${c.unit}</strong></div>
-              <div><span class="muted">Gnm./dag</span><strong class="mono">${num(c.avg, dec)} ${c.unit}</strong></div>
-            </div>
-            <div class="rc-spark" style="width:100%;height:70px"></div>
-          </div>`;
-        })
-        .join("");
-
-      root.querySelectorAll(".rc-card").forEach((el, i) => {
-        const c = cards[i];
-        mountChart(el.querySelector(".rc-spark"), {
-          categories: c.cats,
-          series: [{ name: c.label, data: c.data, type: "line", color: c.color, areaStyle: true }],
-          unit: c.unit,
-          zoom: false,
-        });
-        const drill = () => {
-          const url = `/rimain/?measure=consumption&resource=${encodeURIComponent(c.type)}&resolution=monthly`;
-          if (window.emsNavigate) window.emsNavigate(url); else location.href = url;
-        };
-        el.addEventListener("click", drill);
-        el.addEventListener("keydown", (e) => { if (e.key === "Enter") drill(); });
-      });
-    } catch (e) {
-      root.innerHTML = `<p class="chart-state chart-state--error">${e.message}</p>`;
-    }
-  }
-
-  document.addEventListener("astro:page-load", load);
-  load();
+  // Drill into Resource Insights for the clicked energy type. Delegated, so it
+  // survives the htmx swap that replaces the cards.
+  document.addEventListener("click", (e) => {
+    const card = e.target.closest?.("#resource-cards .rc-card");
+    if (!card) return;
+    const url = `/rimain/?measure=consumption&resource=${encodeURIComponent(card.dataset.type)}&resolution=monthly`;
+    if (window.emsNavigate) window.emsNavigate(url); else location.href = url;
+  });
 </script>

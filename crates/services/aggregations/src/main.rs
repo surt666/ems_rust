@@ -528,6 +528,7 @@ async fn handle_aggregations(
         purpose: &purpose,
     };
 
+    let view = qs.get("view").map(String::as_str).unwrap_or("");
     let rows = if dimension.is_empty() {
         match query_node(client, params).await {
             Ok(items) => to_rows(items, &level_id, &resolution, gran),
@@ -541,6 +542,11 @@ async fn handle_aggregations(
             Err(e) => return Err(ApiError::internal(e.to_string())),
         }
     };
+    // `view=cards` is a chart-shaped rendering with a card layout — one card per
+    // energy type, each embedding its own sparkline — rather than a fourth Format.
+    if format == Format::Chart && view == "cards" {
+        return Ok(ApiResponse::html(200, rows_to_cards(&rows)));
+    }
     Ok(rows_response(&rows, format))
 }
 
@@ -549,7 +555,180 @@ fn rows_response(rows: &[Row], format: Format) -> ApiResponse {
     match format {
         Format::Json => ApiResponse::json(&rows),
         Format::Html => ApiResponse::html(200, rows_to_html(rows)),
+        Format::Chart => ApiResponse::html(200, rows_to_chart(rows, ChartKind::PerEnergyType)),
     }
+}
+
+/// `?format=chart&view=cards` — one card per energy type: period total, daily
+/// average, and a sparkline.
+///
+/// Each card embeds its own `data-chart` block, so a single fragment mounts N
+/// charts. The totals are computed here for the same reason the pivot is: it is
+/// the last arithmetic the browser was doing to data it had fetched as JSON.
+fn rows_to_cards(rows: &[Row]) -> String {
+    use std::collections::BTreeMap;
+
+    if rows.is_empty() {
+        return "<p class=\"muted chart-state\">Ingen forbrugsdata for perioden.</p>".to_string();
+    }
+
+    // Energy carriers first, then volumes — a stable, human order.
+    const ORDER: [&str; 6] = [
+        "electricity", "district_heating", "heat", "gas", "district_cooling", "water",
+    ];
+
+    let mut by_type: BTreeMap<&str, Vec<&Row>> = BTreeMap::new();
+    for r in rows {
+        by_type.entry(r.energy_type.as_str()).or_default().push(r);
+    }
+
+    let mut types: Vec<&str> = by_type.keys().copied().collect();
+    types.sort_by_key(|t| ORDER.iter().position(|o| o == t).unwrap_or(usize::MAX));
+
+    let mut out = String::new();
+    for t in types {
+        let mut rs = by_type.remove(t).unwrap_or_default();
+        rs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        let total: f64 = rs.iter().map(|r| r.value).sum();
+        let avg = if rs.is_empty() { 0.0 } else { total / rs.len() as f64 };
+        let unit = rs.iter().find(|r| !r.unit.is_empty()).map_or("", |r| r.unit.as_str());
+        let decimals = if total < 100.0 { 2 } else { 0 };
+
+        let cats = rs
+            .iter()
+            .map(|r| format!("\"{}\"", esc(r.timestamp.get(..10).unwrap_or(&r.timestamp))))
+            .collect::<Vec<_>>()
+            .join(",");
+        let vals = rs.iter().map(|r| format!("{}", r.value)).collect::<Vec<_>>().join(",");
+
+        out.push_str(&format!(
+            "<div class=\"card rc-card\" data-type=\"{ty}\" role=\"button\" tabindex=\"0\" \
+               title=\"Klik for detaljeret analyse\">\
+               <div class=\"rc-card__head\"><span class=\"rc-dot\" style=\"background:{color}\"></span>\
+                 <strong>{label}</strong></div>\
+               <div class=\"rc-card__metrics\">\
+                 <div><span class=\"muted\">Periode</span><strong class=\"mono\">{total} {unit}</strong></div>\
+                 <div><span class=\"muted\">Gnm./dag</span><strong class=\"mono\">{avg} {unit}</strong></div>\
+               </div>\
+               <div class=\"rc-spark\" data-chart><div data-chart-canvas style=\"width:100%;height:70px\"></div>\
+                 <script type=\"application/json\">{{\"categories\":[{cats}],\"series\":\
+                 [{{\"name\":\"{label}\",\"type\":\"line\",\"color\":\"{color}\",\"areaStyle\":true,\
+                 \"data\":[{vals}]}}],\"unit\":\"{unit}\",\"zoom\":false}}</script></div>\
+             </div>",
+            ty = esc(t),
+            color = energy_color(t),
+            label = esc(energy_label(t)),
+            total = da(total, decimals),
+            avg = da(avg, decimals),
+            unit = esc(unit),
+        ));
+    }
+    out
+}
+
+/// How to fold rows into series.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChartKind {
+    /// One series per energy type — the consumption / emissions view.
+    PerEnergyType,
+    /// Everything summed per bucket into a single series — the cost view, where
+    /// separate carriers would be meaningless once priced in the same currency.
+    Total,
+}
+
+/// Danish labels for the energy types, matching the frontend's RESOURCE_LABELS.
+fn energy_label(t: &str) -> &str {
+    match t {
+        "electricity" => "El",
+        "district_heating" => "Fjernvarme",
+        "district_cooling" => "Fjernkøling",
+        "gas" => "Gas",
+        "water" => "Vand",
+        "heat" => "Varme",
+        other => other,
+    }
+}
+
+fn energy_color(t: &str) -> &str {
+    match t {
+        "electricity" => "#f5841f",
+        "district_heating" => "#ef4444",
+        "district_cooling" => "#38bdf8",
+        "gas" => "#a855f7",
+        "water" => "#1f9e8f",
+        "heat" => "#facc15",
+        _ => "#46b97c",
+    }
+}
+
+/// `?format=chart` — an HTML fragment carrying an ECharts config as inline
+/// `application/json`, which the frontend's `mountDeclaredCharts` picks up.
+///
+/// The pivot from rows to series lives here rather than in the browser. That is
+/// the point of this representation: a chart was the last thing the UI fetched as
+/// JSON and shaped client-side, which meant a second data path with its own auth
+/// handling. Now every widget arrives the same way — over htmx, as markup.
+fn rows_to_chart(rows: &[Row], kind: ChartKind) -> String {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    if rows.is_empty() {
+        return "<p class=\"muted chart-state\">Ingen data for perioden.</p>".to_string();
+    }
+
+    let buckets: BTreeSet<&str> = rows.iter().map(|r| r.timestamp.as_str()).collect();
+    let buckets: Vec<&str> = buckets.into_iter().collect();
+    let index: BTreeMap<&str, usize> =
+        buckets.iter().enumerate().map(|(i, b)| (*b, i)).collect();
+    let unit = rows.iter().find(|r| !r.unit.is_empty()).map_or("", |r| r.unit.as_str());
+
+    // series name -> values aligned to `buckets`
+    let mut series: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
+    for r in rows {
+        let key = match kind {
+            ChartKind::PerEnergyType => r.energy_type.as_str(),
+            ChartKind::Total => "total",
+        };
+        let slot = series.entry(key).or_insert_with(|| vec![0.0; buckets.len()]);
+        if let Some(i) = index.get(r.timestamp.as_str()) {
+            slot[*i] += r.value;
+        }
+    }
+
+    let cats = buckets
+        .iter()
+        .map(|b| format!("\"{}\"", esc(&b.replace('T', " ").chars().take(16).collect::<String>())))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let ser = series
+        .iter()
+        .map(|(name, data)| {
+            let values = data
+                .iter()
+                .map(|v| format!("{v}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let (label, color) = match kind {
+                ChartKind::PerEnergyType => (energy_label(name), energy_color(name)),
+                ChartKind::Total => ("Total", "#f5841f"),
+            };
+            format!(
+                "{{\"name\":\"{}\",\"type\":\"line\",\"color\":\"{}\",\"areaStyle\":{},\"data\":[{}]}}",
+                esc(label),
+                color,
+                kind == ChartKind::Total,
+                values
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+
+    format!(
+        "<div data-chart><div data-chart-canvas style=\"width:100%;height:100%\"></div>\
+         <script type=\"application/json\">{{\"categories\":[{cats}],\"series\":[{ser}],\
+         \"unit\":\"{unit}\",\"zoom\":false}}</script></div>",
+        unit = esc(unit),
+    )
 }
 
 /// A `<tr>` table fragment of rollup rows
@@ -824,7 +1003,13 @@ async fn handle_cost(
     let format = Format::resolve(qs.get("format").map(String::as_str), Format::Json);
     let (level_id, resolution, start, end) = window_params(qs)?;
     let rows = fetch_node_rows(client, table, &level_id, &resolution, &start, &end).await?;
-    Ok(rows_response(&scale_rows(rows, "DKK", tariff_dkk_per_unit), format))
+    let priced = scale_rows(rows, "DKK", tariff_dkk_per_unit);
+    // Once every carrier is in DKK, one line is the answer — separate series would
+    // invite reading "electricity vs heat" off a currency axis.
+    if format == Format::Chart {
+        return Ok(ApiResponse::html(200, rows_to_chart(&priced, ChartKind::Total)));
+    }
+    Ok(rows_response(&priced, format))
 }
 
 /// `GET /meterdata/query/get_emissions` — consumption × per-resource emission
@@ -1134,7 +1319,7 @@ async fn handle_benchmark(
     let bench_response =
         |b: &Benchmark| match format {
             Format::Json => ApiResponse::json(b),
-            Format::Html => ApiResponse::html(200, benchmark_to_html(b)),
+            Format::Html | Format::Chart => ApiResponse::html(200, benchmark_to_html(b)),
         };
     let (level_id, resolution, start, end) = window_params(qs)?;
     let gran = Gran::from_resolution(&resolution);
@@ -1316,7 +1501,7 @@ async fn handle_alarms(
     };
     Ok(match format {
         Format::Json => ApiResponse::json(&resp),
-        Format::Html => ApiResponse::html(200, alarms_to_html(&resp)),
+        Format::Html | Format::Chart => ApiResponse::html(200, alarms_to_html(&resp)),
     })
 }
 
@@ -1589,6 +1774,50 @@ mod tests {
         assert!(parse_node_keys("").is_err());
     }
 
+
+
+    #[test]
+    fn chart_fragment_carries_one_series_per_energy_type() {
+        let rows = vec![
+            row("electricity", "kWh", 10.0, "2026-07-01T00:00:00Z"),
+            row("electricity", "kWh", 12.0, "2026-07-02T00:00:00Z"),
+            row("water", "m3", 3.0, "2026-07-01T00:00:00Z"),
+        ];
+        let html = rows_to_chart(&rows, ChartKind::PerEnergyType);
+        assert!(html.contains("data-chart"), "not a mountable chart block");
+        assert!(html.contains(r#"application/json"#));
+        assert!(html.contains(r#""name":"El""#), "danish label missing: {html}");
+        assert!(html.contains(r#""name":"Vand""#));
+        assert!(html.contains("[10,12]"), "electricity series wrong: {html}");
+        // water has no reading on the 2nd, so it must still align to the axis.
+        assert!(html.contains("[3,0]"), "series not aligned to a shared axis: {html}");
+    }
+
+    #[test]
+    fn cost_chart_sums_carriers_into_one_series() {
+        let rows = vec![
+            row("electricity", "DKK", 10.0, "2026-07-01T00:00:00Z"),
+            row("water", "DKK", 5.0, "2026-07-01T00:00:00Z"),
+        ];
+        let html = rows_to_chart(&rows, ChartKind::Total);
+        assert!(html.contains(r#""name":"Total""#));
+        assert!(html.contains("[15]"), "carriers not summed: {html}");
+        assert_eq!(html.matches(r#""type":"line""#).count(), 1, "should be one series");
+    }
+
+    #[test]
+    fn chart_fragment_says_so_when_there_is_no_data() {
+        let html = rows_to_chart(&[], ChartKind::PerEnergyType);
+        assert!(html.contains("Ingen data"));
+        assert!(!html.contains("data-chart"), "must not mount an empty chart");
+    }
+
+    #[test]
+    fn format_chart_is_negotiated_from_the_query_string() {
+        assert_eq!(Format::resolve(Some("chart"), Format::Json), Format::Chart);
+        assert_eq!(Format::resolve(Some("html"), Format::Json), Format::Html);
+        assert_eq!(Format::resolve(None, Format::Json), Format::Json);
+    }
 
     // Card fragments ────────────────────────────────────────────────────────────
 

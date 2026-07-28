@@ -60,9 +60,11 @@ import "../styles/enity-theme.css";
 						return user ? localStorage.getItem(base + "." + user + ".idToken") || "" : "";
 					} catch { return ""; }
 				}
-				// Same reasoning for fetch: the dashboard card scripts are modules and
-				// may run before Layout's module replaces window.fetch, so the wrapper
-				// has to be installed here, synchronously, before any of them.
+				// The dashboard no longer fetches — it takes server-rendered chart
+				// fragments over htmx. Two callers remain: userlist's delete_user POST
+				// and AggregationBarChart, which needs weekly/monthly re-bucketing the
+				// rollup table cannot serve. Installed inline, before any module, so
+				// ordering cannot leave a request unauthenticated.
 				const ownUrl = (url) => {
 					try {
 						const u = new URL(url, location.origin);
@@ -309,7 +311,12 @@ import "../styles/enity-theme.css";
 	mountDeclaredCharts();
 
 	// Re-translate any HTMX-swapped fragment.
-	document.body.addEventListener('htmx:afterSwap', () => applyTranslations());
+	document.body.addEventListener('htmx:afterSwap', () => {
+		applyTranslations();
+		// Fragments now carry their own chart configs, so a swap can introduce
+		// charts that were not in the initial HTML.
+		mountDeclaredCharts();
+	});
 
 	// View transitions don't auto-process HTMX. After a transition swaps in the
 	// /node page, (re)process its node panel so hx-trigger="load" fires and the

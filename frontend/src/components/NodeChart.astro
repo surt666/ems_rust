@@ -1,35 +1,24 @@
 ---
-// Forbrugsudvikling — one line per energy type for the selected node.
-// Plain ECharts; a canvas chart needs data rather than markup, so this is one of
-// the few things on the dashboard that stays client-rendered.
+// Forbrugsudvikling — one line per energy type.
+//
+// The lambda renders the chart config (get_aggregations?format=chart) as an
+// inline application/json block; Layout's mountDeclaredCharts draws it after the
+// swap. No fetch, no client-side pivoting — same transport as every other widget.
 const { days = 30, resolution = "daily", height = 280 } = Astro.props;
+const url = `${import.meta.env.PUBLIC_AGG_API_BASE_URL}/meterdata/query/get_aggregations`;
 ---
-<div id="node-chart" data-days={days} data-resolution={resolution}
-     style={`width:100%;height:${height}px`}>
+<div
+  id="node-chart"
+  style={`width:100%;height:${height}px`}
+  hx-get={url}
+  hx-vals={`js:{
+    level_id: window.emsLevelId(),
+    resolution: '${resolution}',
+    start: new Date(Date.now() - ${days} * 864e5).toISOString(),
+    end: new Date().toISOString(),
+    format: 'chart'
+  }`}
+  hx-trigger="load"
+  hx-swap="innerHTML">
   <p class="muted chart-state">Indlæser…</p>
 </div>
-
-<script>
-  import { fetchAgg, seriesByEnergyType } from "../lib/agg";
-  import { mountChart } from "../lib/echarts-card";
-
-  async function load() {
-    const el = document.getElementById("node-chart");
-    if (!el || el.dataset.loaded) return;
-    try {
-      const rows = await fetchAgg("get_aggregations", {
-        days: Number(el.dataset.days || 30),
-        resolution: el.dataset.resolution || "daily",
-      });
-      if (!rows.length) { el.innerHTML = '<p class="muted chart-state">Ingen data for perioden.</p>'; return; }
-      el.textContent = "";
-      el.dataset.loaded = "1";
-      mountChart(el, { ...seriesByEnergyType(rows), zoom: true });
-    } catch (e) {
-      el.innerHTML = `<p class="chart-state chart-state--error">${e.message}</p>`;
-    }
-  }
-
-  document.addEventListener("astro:page-load", load);
-  load();
-</script>
