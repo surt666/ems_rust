@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Node-formula roll-up — resource × purpose</title>
+<style>
+  :root{
+    --bg:#0f1620; --panel:#16202c; --panel-2:#1a2632; --line:#26333f;
+    --ink:#dbe4ec; --muted:#7d92a4; --faint:#3a4757;
+    --cyan:#48c9d8; --amber:#e0a552; --violet:#ac8ff0; --green:#74c98e; --rose:#e58b8b;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:"Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;line-height:1.45}
+  .wrap{max-width:1000px;margin:0 auto;padding:26px 18px 60px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+  h1{font-size:26px;line-height:1.15;margin:0 0 6px;font-weight:650;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 22px;max-width:74ch}
+
+  .bar-row{display:grid;grid-auto-flow:column;grid-auto-columns:max-content;gap:8px;
+    align-items:center;margin-bottom:8px;overflow-x:auto;padding-bottom:2px}
+  .bar-row .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-right:4px}
+  .pill{font-family:var(--mono);font-size:13px;padding:7px 13px;border-radius:8px;cursor:pointer;white-space:nowrap;
+    background:var(--panel);border:1px solid var(--line);color:var(--muted);transition:.15s;letter-spacing:.03em}
+  .pill:hover{color:var(--ink);border-color:#33475a}
+  .pill.on{color:#bff2f8;border-color:var(--cyan);background:linear-gradient(180deg,#1d3a41,#183138);
+    box-shadow:0 0 0 1px rgba(72,201,216,.22)}
+  .pill.der{border-style:dashed}
+  .pill.on.der{color:#cdeed6;border-color:var(--green);background:linear-gradient(180deg,#1c3327,#16281d);
+    box-shadow:0 0 0 1px rgba(116,201,142,.22)}
+  .unit{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.08em;padding-left:6px}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-top:18px}
+  .panel h2{font-size:12px;font-family:var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 12px;font-weight:600}
+  .rule{border:1px solid #2f3d4c;background:linear-gradient(180deg,#15222c,#131d26);border-radius:10px;padding:12px 14px;margin:0 0 10px;font-size:13px;line-height:1.6}
+  .rule code{font-family:var(--mono);color:#cfe9ee;background:#0e1922;padding:1px 6px;border-radius:5px;border:1px solid #22333f;font-size:12px}
+  .rule .k{color:var(--violet)} .rule .muted{color:var(--muted)}
+  .rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:9px;margin-top:2px}
+  .card{border:1px solid #2b3846;background:#131e27;border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.55;color:var(--muted)}
+  .card b{color:var(--ink);font-weight:580}
+  .card .hd{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#5f7385;display:block;margin-bottom:4px}
+
+  /* tree */
+  .node{position:relative}
+  .row{display:grid;grid-template-columns:auto 1fr auto;align-items:start;gap:11px;padding:8px 10px;border-radius:9px;transition:background .15s}
+  .row:hover{background:var(--panel-2)}
+  .row.company{background:linear-gradient(180deg,#182634,#152029);border:1px solid #223341}
+  .kids{margin-left:19px;border-left:1px solid var(--line);padding-left:5px}
+  .sw{width:9px;height:9px;border-radius:2px;margin-top:5px}
+  .meta{min-width:0}
+  .name{font-size:14px;font-weight:560;letter-spacing:-.005em;display:grid;grid-auto-flow:column;
+    grid-auto-columns:max-content;align-items:center;gap:8px;justify-content:start}
+  .chip{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:1px 6px}
+  .chip.meter{color:var(--violet);border-color:#3a3157}
+  .chip.custom{color:var(--amber);border-color:#4a3a24}
+  .chip.def{color:#5f7385}
+  .chip.derived{color:var(--green);border-color:#2f5540}
+  .chip.inherit{color:#5f8fa0;border-color:#2b4550}
+  .fx{font-family:var(--mono);font-size:11.5px;margin-top:4px;line-height:1.7;color:var(--muted)}
+  .fx .op{color:#55687a} .fx .term{color:var(--ink)} .fx .neg{color:var(--rose)}
+  .fx .zero{color:#6f8090;text-decoration:line-through;opacity:.75}
+  .fx .ref{color:#66788a} .fx .tot{color:var(--cyan)} .fx.der .tot{color:var(--green)}
+  .fx .coef{color:var(--amber)}
+  .note{color:#6a7f90;font-style:italic}
+
+  /* sensor leaf */
+  .sens{display:grid;grid-template-columns:auto auto auto 1fr;align-items:center;gap:10px;padding:5px 10px;border-radius:8px}
+  .sens:hover{background:#131d27}
+  .sdot{width:6px;height:6px;border-radius:50%;background:#3a5866;margin-left:2px}
+  .sens.off{opacity:.45}
+  .sens.neg .sdot{background:var(--rose)}
+  .sname{font-family:var(--mono);font-size:12px;color:var(--ink)}
+  .sname .id{color:#5f7385;font-size:10px;margin-left:5px}
+  .stag{font-family:var(--mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:0 5px;border-radius:4px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+  .stag.zero{color:#8fa3b2;border-color:#374654}
+  .stag.sub{color:var(--rose);border-color:#4a2f2f}
+  .stag.gen{color:var(--green);border-color:#2f5540}
+  .stag.frac{color:var(--amber);border-color:#4a3a24}
+  .sval{text-align:right;font-family:var(--mono);font-size:12.5px;color:#9fb3c2}
+
+  .right{display:grid;grid-auto-flow:column;align-items:center;gap:12px;padding-top:1px}
+  .spark{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;align-items:end;gap:2px;height:24px;width:46px}
+  .spark i{background:#2b3b48;border-radius:1px 1px 0 0;min-height:2px;transition:.2s}
+  .spark i.cur{background:var(--cyan)} .spark.der i.cur{background:var(--green)}
+  .val{font-family:var(--mono);font-size:15px;text-align:right;min-width:64px;letter-spacing:.02em}
+  @media(max-width:640px){ .spark{display:none} .val{min-width:54px} }
+
+  .legend{display:grid;grid-auto-flow:column;grid-auto-columns:max-content;gap:15px;margin-top:16px;font-size:12px;color:var(--muted);overflow-x:auto}
+  .legend span{display:grid;grid-auto-flow:column;grid-auto-columns:max-content;align-items:center;gap:6px}
+  .legend i{width:9px;height:9px;border-radius:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">Metering model · node formulas</p>
+  <h1>Node-formula roll-up</h1>
+  <p class="sub">Sensors are plain raw values — no formula, no per-sensor factor. A sensor knows only which
+  <b>resource</b> it measures. Hierarchy nodes carry formulas that declare a <b>(resource, purpose)</b> output
+  and combine descendant sensors with coefficients. Pick a resource and a purpose to watch the same tree
+  answer a different question.</p>
+
+  <div class="bar-row" id="resources"><span class="lbl">Resource</span></div>
+  <div class="bar-row" id="purposes"><span class="lbl">Purpose</span></div>
+  <div class="bar-row" id="slots"><span class="lbl">Slot</span></div>
+
+  <div class="panel">
+    <div class="rule">
+      <span class="k">What changed:</span> the formula moved off the sensors and onto the nodes — and split into
+      two independent axes. <span class="muted"><b>Resource</b> (energiart) is what the meter physically measures;
+      it stays on the sensor. <b>Purpose</b> (formål) is what the energy is spent on; it is declared by the node,
+      because the same meter's kWh can be space heating here and DHW there. There is no “metric” axis: CO₂ and cost
+      are derived from <code>(resource, purpose)</code> at read time, so the demo's old per-sensor emission factor
+      is gone.</span>
+    </div>
+    <div class="rules">
+      <div class="card"><span class="hd">Terms are weighted</span>
+        Every term is <b>reference × coefficient</b>. Include = <b>1</b>, subtract = <b>−1</b>,
+        exclude = <b>0</b>, apportion = <b>0.28</b>, convert = <b>10.45</b>. Purely linear, so it commutes
+        with hour/day bucketing.</div>
+      <div class="card"><span class="hd">Overrides only</span>
+        A formula lists only what <b>differs</b> from the default. Any sensor nobody mentions still counts at
+        weight <b>1</b> — so attaching a meter always moves the numbers and nothing is silently dropped.</div>
+      <div class="card"><span class="hd">Total &amp; unallocated</span>
+        The job always emits <b>total</b> (Σ of everything below, honouring weight overrides) and
+        <b>unallocated</b> (total − claimed). Partial instrumentation shows up as a number instead of
+        disappearing.</div>
+      <div class="card"><span class="hd">Claims propagate up</span>
+        A purpose claimed on an area is claimed for its building, property and company too — purpose series roll
+        up the tree exactly like total does. A sensor may be claimed for a given purpose by <b>one</b> node only.</div>
+      <div class="card"><span class="hd">Derived rows</span>
+        When the declared output resource differs from the sensors' — gas m³ × brændværdi × virkningsgrad, or
+        el × COP — the row is <b>derived</b>. It is delivered energy, not metered consumption, so it never folds
+        into any total.</div>
+      <div class="card"><span class="hd">Straight from Energihåndbogen</span>
+        <b>Bimåler:</b> DHW is metered, space heating = total − DHW. <b>GUF/GAF:</b> with no submeter, the
+        degree-day-independent part is a standard <b>28 %</b> of annual heat. Both are just weighted terms.</div>
+    </div>
+    <div id="tree" style="margin-top:12px"></div>
+    <div class="legend">
+      <span><i style="background:var(--violet)"></i>meter node</span>
+      <span><i style="background:var(--amber)"></i>declares a formula</span>
+      <span><i style="background:#5f7385"></i>default Σ</span>
+      <span><i style="background:var(--green)"></i>derived (not in any total)</span>
+      <span><i style="background:var(--rose)"></i>subtracted sensor</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const r2=x=>Math.round(x*100)/100, fmt=n=>r2(n).toLocaleString("en-US");
+
+const RES={
+  electricity:     {label:"Electricity",       unit:"kWh"},
+  district_heating:{label:"District heating",  unit:"kWh"},
+  gas:             {label:"Gas",               unit:"m³"},
+  district_cooling:{label:"District cooling",  unit:"kWh", derived:true},
+  heat:            {label:"Heat (delivered)",  unit:"kWh", derived:true},
+};
+const PUR={total:"Total", unallocated:"Unallocated", space_heating:"Space heating", dhw:"DHW",
+           cooling:"Cooling", lighting:"Lighting", ventilation:"Ventilation",
+           plug_loads:"Plug loads", generation:"Generation"};
+
+// Sensors: raw value series + the resource they measure. Nothing else.
+const SENS={
+  L1 :{name:"Phase L1",       res:"electricity",      v:[30,32,31,33]},
+  L2 :{name:"Phase L2",       res:"electricity",      v:[28,29,30,31]},
+  L3 :{name:"Phase L3",       res:"electricity",      v:[26,27,28,29]},
+  ACC:{name:"Accumulator",    res:"electricity",      v:[40,42,44,46]},
+  cL1:{name:"Chiller L1",     res:"electricity",      v:[13,14,14,15]},
+  cL2:{name:"Chiller L2",     res:"electricity",      v:[14,14,15,15]},
+  cL3:{name:"Chiller L3",     res:"electricity",      v:[13,14,15,16]},
+  IMP:{name:"Grid import",    res:"electricity",      v:[50,55,52,58]},
+  EXP:{name:"Solar export",   res:"electricity",      v:[10,20,15,25]},
+  LGT:{name:"Lighting",       res:"electricity",      v:[22,20,22,24]},
+  AHU:{name:"Air handling",   res:"electricity",      v:[18,18,20,20]},
+  KIT:{name:"Kitchen",        res:"electricity",      v:[15,16,17,18]},
+  HM1:{name:"Heat main",      res:"district_heating", v:[120,118,125,130]},
+  DHW:{name:"DHW submeter",   res:"district_heating", v:[35,34,36,38]},
+  HM2:{name:"Heat main B",    res:"district_heating", v:[90,88,95,99]},
+  GAS:{name:"Gas meter",      res:"gas",              v:[4,4.2,3.9,4.5]},
+};
+
+// Nodes. f = declared formulas: {res, pur, terms:[[sensor, coefficient], …], note?}
+const N={
+  ACME:{name:"Acme Corp",type:"company",ch:["PA","PB"]},
+  PA:{name:"Property A",type:"property",ch:["A1","A2"]},
+  PB:{name:"Property B",type:"property",ch:["B1","B2"]},
+
+  A1:{name:"Building A1",type:"building",ch:["A1a","A1b"],s:["HM1","DHW"],f:[
+    {res:"district_heating",pur:"total",terms:[["DHW",0]],
+     note:"the submeter sits inside the main meter"},
+    {res:"district_heating",pur:"dhw",terms:[["DHW",1]]},
+    {res:"district_heating",pur:"space_heating",terms:[["HM1",1],["DHW",-1]],
+     note:"bimåler, jf. bygningsreglementet"},
+  ]},
+  A1a:{name:"Area A1a",type:"area",ch:["MSB","CHILL"]},
+  MSB:{name:"Main switchboard",type:"meter",s:["L1","L2","L3"]},
+  CHILL:{name:"Chiller meter",type:"meter",s:["ACC","cL1","cL2","cL3"],f:[
+    {res:"electricity",pur:"total",terms:[["cL1",0],["cL2",0],["cL3",0]],
+     note:"phases are already inside the accumulator"},
+    {res:"electricity",pur:"cooling",terms:[["ACC",1]]},
+    {res:"district_cooling",pur:"cooling",terms:[["ACC",3.2]],note:"COP 3,2 jf. datablad"},
+  ]},
+  A1b:{name:"Area A1b",type:"area",s:["IMP","EXP"],f:[
+    {res:"electricity",pur:"generation",terms:[["EXP",1]],
+     note:"outflow — kept out of the consumption total"},
+  ]},
+
+  A2:{name:"Building A2",type:"building",s:["HM2"],f:[
+    {res:"district_heating",pur:"dhw",terms:[["HM2",0.28]],
+     note:"no submeter — GUF standardværdi 28 %"},
+    {res:"district_heating",pur:"space_heating",terms:[["HM2",0.72]],note:"GAF, the remainder"},
+  ]},
+
+  B1:{name:"Building B1",type:"building",s:["LGT","AHU"],f:[
+    {res:"electricity",pur:"lighting",terms:[["LGT",1]]},
+    {res:"electricity",pur:"ventilation",terms:[["AHU",1]]},
+  ]},
+  B2:{name:"Building B2",type:"building",s:["KIT","GAS"],f:[
+    {res:"electricity",pur:"plug_loads",terms:[["KIT",1]]},
+    {res:"heat",pur:"space_heating",terms:[["GAS",10.45]],
+     note:"brændværdi 11,0 kWh/m³ × virkningsgrad 0,95"},
+  ]},
+};
+
+// ── graph helpers ──
+const IDS=Object.keys(N);
+const PARENT={}; IDS.forEach(n=>(N[n].ch||[]).forEach(c=>PARENT[c]=n));
+const SNODE={};  IDS.forEach(n=>(N[n].s ||[]).forEach(s=>SNODE[s]=n));
+const subtree=id=>[id,...(N[id].ch||[]).flatMap(subtree)];
+const chain=id=>{const o=[];let c=id;while(c){o.push(c);c=PARENT[c];}return o;};
+const sensorsUnder=id=>subtree(id).flatMap(n=>N[n].s||[]);
+
+const FORMS=[]; IDS.forEach(n=>(N[n].f||[]).forEach(f=>FORMS.push({...f,node:n})));
+const isDerived=f=>f.terms.some(([ref])=>SENS[ref].res!==f.res);
+const formAt=(node,res,pur)=>FORMS.find(f=>f.node===node&&f.res===res&&f.pur===pur);
+
+// A sensor's weight in `total`: 0 if claimed as generation (an outflow), else the nearest
+// declared total-override on an ancestor, else the default 1.
+function totalWeight(sid){
+  const anc=new Set(chain(SNODE[sid]));
+  const gen=FORMS.find(f=>f.pur==="generation"&&anc.has(f.node)&&f.terms.some(([r])=>r===sid));
+  if(gen) return 0;
+  const ov=FORMS.find(f=>f.pur==="total"&&f.res===SENS[sid].res&&anc.has(f.node)
+                         &&f.terms.some(([r])=>r===sid));
+  return ov?ov.terms.find(([r])=>r===sid)[1]:1;
+}
+
+// Σ of the claims for one purpose declared anywhere at or below `id`.
+function claim(id,res,pur,slot,physicalOnly){
+  const inside=new Set(subtree(id));
+  return FORMS.filter(f=>f.res===res&&f.pur===pur&&inside.has(f.node)
+                         &&!(physicalOnly&&isDerived(f)))
+    .reduce((a,f)=>a+f.terms.reduce((b,[ref,c])=>b+c*SENS[ref].v[slot],0),0);
+}
+const declaredPurposes=res=>[...new Set(FORMS.filter(f=>f.res===res&&f.pur!=="total").map(f=>f.pur))];
+
+function val(id,res,pur,slot){
+  if(pur==="total")
+    return r2(sensorsUnder(id).filter(s=>SENS[s].res===res)
+      .reduce((a,s)=>a+totalWeight(s)*SENS[s].v[slot],0));
+  if(pur==="unallocated"){
+    const claimed=declaredPurposes(res).filter(p=>p!=="generation")
+      .reduce((a,p)=>a+claim(id,res,p,slot,true),0);
+    return r2(val(id,res,"total",slot)-claimed);
+  }
+  return r2(claim(id,res,pur,slot,false));
+}
+
+// ── state + controls ──
+let res="electricity", pur="total", slot=0;
+const $=s=>document.querySelector(s);
+
+function purposeList(){return ["total",...declaredPurposes(res),"unallocated"];}
+
+function buildPills(host,items,isOn,onPick,extraCls){
+  [...host.querySelectorAll(".pill,.unit")].forEach(e=>e.remove());
+  items.forEach(it=>{const b=document.createElement("div");
+    b.className="pill"+(extraCls?extraCls(it):"")+(isOn(it)?" on":"");
+    b.textContent=it.label; b.onclick=()=>onPick(it.key); host.appendChild(b);});
+}
+
+function renderControls(){
+  buildPills($("#resources"),Object.entries(RES).map(([k,v])=>({key:k,label:v.label})),
+    it=>it.key===res, k=>{res=k; if(!purposeList().includes(pur)) pur="total"; render();},
+    it=>RES[it.key].derived?" der":"");
+  const u=document.createElement("span"); u.className="unit";
+  u.textContent="unit · "+RES[res].unit; $("#resources").appendChild(u);
+
+  buildPills($("#purposes"),purposeList().map(k=>({key:k,label:PUR[k]})),
+    it=>it.key===pur, k=>{pur=k; render();});
+
+  buildPills($("#slots"),["00:00","00:15","00:30","00:45"].map((t,i)=>({key:i,label:t})),
+    it=>it.key===slot, k=>{slot=k; render();});
+}
+
+// ── tree rendering ──
+const swatch=t=>t==="company"?"#bff2f8":t==="property"?"#8fb7c9":t==="building"?"var(--cyan)"
+  :t==="meter"?"var(--violet)":"#5f8fa0";
+
+function sparkline(series,der){
+  const max=Math.max(...series.map(Math.abs),1);
+  return `<div class="spark${der?" der":""}">`+series.map((v,i)=>
+    `<i class="${i===slot?"cur":""}" style="height:${Math.max(8,Math.abs(v)/max*100)}%"></i>`).join("")+`</div>`;
+}
+
+function formulaHTML(id){
+  const f=formAt(id,res,pur), tot=val(id,res,pur,slot);
+  const der=f&&isDerived(f);
+  const eq=`<span class="op">=</span> <span class="tot">${fmt(tot)}</span>`;
+  if(!f){
+    if(pur==="total")        return `<div class="fx"><span class="op">Σ</span> everything below ${eq}</div>`;
+    if(pur==="unallocated")  return `<div class="fx"><span class="op">total − claimed</span> ${eq}</div>`;
+    return tot? `<div class="fx"><span class="op">rolled up from below</span> ${eq}</div>`
+              : `<div class="fx"><span class="op">—</span></div>`;
+  }
+  const parts=f.terms.map(([ref,c],i)=>{
+    const v=SENS[ref].v[slot], cls=c<0?"term neg":c===0?"zero":"term";
+    const sign=c<0?`<span class="op neg">−</span>`:(i===0?"":`<span class="op">+</span>`);
+    const coef=(Math.abs(c)===1)?"":`<span class="coef">${Math.abs(c)}×</span>`;
+    return `${sign} ${coef}<span class="${cls}">${fmt(v)}</span><span class="ref"> ${SENS[ref].name}</span>`;
+  }).join(" ");
+  const note=f.note?` &nbsp;<span class="note">— ${f.note}</span>`:"";
+  const head=pur==="total"?`<span class="op">Σ below, overridden:</span> `:"";
+  return `<div class="fx${der?" der":""}">${head}${parts} ${eq}${note}</div>`;
+}
+
+function sensorRows(id){
+  const own=(N[id].s||[]).filter(s=>SENS[s].res===res);
+  const f=formAt(id,res,pur);
+  return own.map(sid=>{
+    const v=SENS[sid].v[slot];
+    let tag="", cls="";
+    if(pur==="total"){
+      const w=totalWeight(sid);
+      const gen=FORMS.find(x=>x.pur==="generation"&&x.terms.some(([r])=>r===sid));
+      if(gen){ tag=`<span class="stag gen">generation · outside total</span>`; cls=" off"; }
+      else if(w===0){ tag=`<span class="stag zero">×0 nested meter</span>`; cls=" off"; }
+      else if(w!==1){ tag=`<span class="stag frac">×${w}</span>`; }
+    }else if(f){
+      const t=f.terms.find(([r])=>r===sid);
+      if(t){
+        const c=t[1];
+        if(c<0){ tag=`<span class="stag sub">subtract</span>`; cls=" neg"; }
+        else if(c===0){ tag=`<span class="stag zero">×0</span>`; cls=" off"; }
+        else if(c!==1){ tag=`<span class="stag frac">×${c}</span>`; }
+      }else cls=" off";
+    }else cls=" off";
+    return `<div class="sens${cls}">
+      <span class="sdot"></span>
+      <span class="sname">${SENS[sid].name}<span class="id">${sid}</span></span>
+      ${tag||"<span></span>"}
+      <span class="sval">${fmt(v)} ${RES[res].unit}</span></div>`;
+  }).join("");
+}
+
+function nodeHTML(id){
+  const n=N[id];
+  const f=formAt(id,res,pur), der=f&&isDerived(f);
+  const series=[0,1,2,3].map(i=>val(id,res,pur,i));
+  let chip=n.type==="meter"?`<span class="chip meter">meter</span>`:"";
+  if(f) chip+=der?`<span class="chip derived">derived</span>`:`<span class="chip custom">formula</span>`;
+  else if(pur==="total") chip+=`<span class="chip def">Σ</span>`;
+  else if(series[slot]) chip+=`<span class="chip inherit">rolled up</span>`;
+  const row=`<div class="row ${n.type}">
+    <span class="sw" style="background:${swatch(n.type)}"></span>
+    <div class="meta"><div class="name">${n.name} ${chip}</div>${formulaHTML(id)}</div>
+    <div class="right">${sparkline(series,der)}<div class="val">${fmt(series[slot])}</div></div>
+  </div>`;
+  const inner=sensorRows(id)+(n.ch||[]).map(nodeHTML).join("");
+  return `<div class="node">${row}${inner?`<div class="kids">${inner}</div>`:""}</div>`;
+}
+
+function render(){ renderControls(); $("#tree").innerHTML=nodeHTML("ACME"); }
+render();
+</script>
+</body>
+</html>
