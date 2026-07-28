@@ -6,7 +6,10 @@ use strum::EnumIter;
 // ---------------------------------------------------------------------------
 
 /// A sensor identifier: a newtype over u32, printed/parsed as `"S#<n>"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// `Ord` so coefficient vectors (`logic::formulas::Coeffs`) key a `BTreeMap`,
+/// which keeps the materialised matrix in a stable order across recomputes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SensorId(pub u32);
 
 impl SensorId {
