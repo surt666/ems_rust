@@ -805,6 +805,133 @@ pub fn user_of_item(item: &Item) -> Result<User, RepositoryError> {
 }
 
 // ---------------------------------------------------------------------------
+// Node formulas + the materialised coefficient matrix
+// ---------------------------------------------------------------------------
+
+use crate::domain::node_formula::{NodeFormula, Reference, Term};
+use crate::domain::values::Purpose;
+use crate::logic::formulas::MatrixRow;
+
+/// The `HN2#<id>` segment of a company path.
+fn company_segment(company_path: &str) -> &str {
+    company_path
+        .split(crate::domain::node::PATH_SEP)
+        .find(|s| s.starts_with("HN2#"))
+        .unwrap_or("HN2#0")
+}
+
+/// `gsi1pk = "F#HN2#<id>"` — one partition per company's formulas.
+pub(crate) fn formula_gsi1pk(company_path: &str) -> String {
+    format!("F#{}", company_segment(company_path))
+}
+
+/// `gsi1pk = "W#HN2#<id>"` — one partition per company's coefficient matrix, so
+/// the roll-up job loads it in a single query.
+pub(crate) fn weight_gsi1pk(company_path: &str) -> String {
+    format!("W#{}", company_segment(company_path))
+}
+
+/// A formula item lives in the node's own partition.
+pub fn node_formula_to_item(f: &NodeFormula, node_path: &str, company_path: &str) -> Item {
+    let terms: Vec<AttributeValue> = f
+        .terms
+        .iter()
+        .map(|t| {
+            let mut m = HashMap::new();
+            m.insert("ref".to_string(), s(t.reference.to_string()));
+            m.insert("coefficient".to_string(), n(t.coefficient.to_string()));
+            AttributeValue::M(m)
+        })
+        .collect();
+
+    let mut item: Item = HashMap::new();
+    item.insert("pk".to_string(), s(f.node.to_string()));
+    item.insert("sk".to_string(), s(f.sk()));
+    item.insert("gsi1pk".to_string(), s(formula_gsi1pk(company_path)));
+    item.insert(
+        "gsi1sk".to_string(),
+        s(format!("{node_path}#{}#{}", f.energy_type, f.purpose)),
+    );
+    item.insert("energy_type".to_string(), s(f.energy_type.to_string()));
+    item.insert("purpose".to_string(), s(f.purpose.to_string()));
+    item.insert("terms".to_string(), AttributeValue::L(terms));
+    if let Some(note) = &f.note {
+        item.insert("note".to_string(), s(note.clone()));
+    }
+    item.insert("updated".to_string(), s(dt_to_rfc3339z(&chrono::Utc::now())));
+    item
+}
+
+pub fn node_formula_of_item(item: &Item) -> Result<NodeFormula, RepositoryError> {
+    let node = NodeId::parse(as_s(field(item, "pk")?)?)
+        .map_err(|e| RepositoryError::Codec(format!("bad formula node: {e}")))?;
+    let et_s = as_s(field(item, "energy_type")?)?;
+    let energy_type = et_s
+        .parse::<EnergyType>()
+        .map_err(|e| RepositoryError::Codec(format!("bad energy_type {et_s:?}: {e}")))?;
+    let p_s = as_s(field(item, "purpose")?)?;
+    let purpose = p_s
+        .parse::<Purpose>()
+        .map_err(|e| RepositoryError::Codec(format!("bad purpose {p_s:?}: {e}")))?;
+
+    let mut terms = Vec::new();
+    if let Some(AttributeValue::L(list)) = item.get("terms") {
+        for v in list {
+            let m = match v {
+                AttributeValue::M(m) => m,
+                other => {
+                    return Err(RepositoryError::Codec(format!("bad term {other:?}")));
+                }
+            };
+            let r = m
+                .get("ref")
+                .and_then(|v| v.as_s().ok())
+                .ok_or_else(|| RepositoryError::Codec("term missing ref".to_string()))?;
+            let c = m
+                .get("coefficient")
+                .and_then(|v| v.as_n().ok())
+                .and_then(|x| x.parse::<f64>().ok())
+                .ok_or_else(|| RepositoryError::Codec("term missing coefficient".to_string()))?;
+            terms.push(Term {
+                reference: Reference::parse(r)
+                    .map_err(|e| RepositoryError::Codec(format!("bad term ref {r:?}: {e}")))?,
+                coefficient: c,
+            });
+        }
+    }
+
+    Ok(NodeFormula {
+        node,
+        energy_type,
+        purpose,
+        terms,
+        note: opt_s(item, "note"),
+    })
+}
+
+/// A matrix row lives in the COMPANY's partition — one GSI query returns the
+/// whole matrix for the roll-up job.
+pub fn matrix_row_to_item(r: &MatrixRow, company_path: &str) -> Item {
+    let mut item: Item = HashMap::new();
+    item.insert("pk".to_string(), s(company_segment(company_path).to_string()));
+    item.insert(
+        "sk".to_string(),
+        s(format!(
+            "weight#{}#{}#{}#{}",
+            r.node_path, r.energy_type, r.purpose, r.sensor
+        )),
+    );
+    item.insert("gsi1pk".to_string(), s(weight_gsi1pk(company_path)));
+    item.insert("node_path".to_string(), s(r.node_path.clone()));
+    item.insert("energy_type".to_string(), s(r.energy_type.to_string()));
+    item.insert("purpose".to_string(), s(r.purpose.to_string()));
+    item.insert("sensor_id".to_string(), n(r.sensor.id().to_string()));
+    item.insert("coefficient".to_string(), n(r.coefficient.to_string()));
+    item.insert("allocates".to_string(), b(r.allocates));
+    item
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1158,6 +1285,135 @@ mod tests {
         let sensor = sensor_of_item(&item).expect("decode sensor");
         let reencoded = sensor_to_item(&sensor);
         assert_items_eq(&item, &reencoded, "sensor roundtrip");
+    }
+
+    // -----------------------------------------------------------------------
+    // node formulas + the materialised coefficient matrix
+    // -----------------------------------------------------------------------
+
+    fn str_at(item: &Item, k: &str) -> Option<String> {
+        item.get(k).and_then(|v| v.as_s().ok()).cloned()
+    }
+
+    #[test]
+    fn node_formula_item_round_trips() {
+        use crate::domain::node_formula::{NodeFormula, Reference, Term};
+        use crate::domain::values::Purpose;
+
+        let f = NodeFormula {
+            node: NodeId::make(Level::Hn4, 30),
+            energy_type: EnergyType::DistrictHeating,
+            purpose: Purpose::SpaceHeating,
+            terms: vec![
+                Term { reference: Reference::Sensor(SensorId::make(1)), coefficient: 1.0 },
+                Term { reference: Reference::Sensor(SensorId::make(2)), coefficient: -1.0 },
+            ],
+            note: Some("bimåler".to_string()),
+        };
+        let item = node_formula_to_item(&f, "HN0#root|HN2#997|HN4#30", "HN0#root|HN2#997");
+
+        assert_eq!(str_at(&item, "pk").as_deref(), Some("HN4#30"));
+        assert_eq!(
+            str_at(&item, "sk").as_deref(),
+            Some("formula#district_heating#space_heating")
+        );
+        assert_eq!(str_at(&item, "gsi1pk").as_deref(), Some("F#HN2#997"));
+        assert_eq!(
+            str_at(&item, "gsi1sk").as_deref(),
+            Some("HN0#root|HN2#997|HN4#30#district_heating#space_heating")
+        );
+        assert_eq!(node_formula_of_item(&item).expect("decode"), f);
+    }
+
+    /// A `Total` formula persists like any other — it is not a special case.
+    #[test]
+    fn total_formula_item_round_trips() {
+        use crate::domain::node_formula::{NodeFormula, Reference, Term};
+        use crate::domain::values::Purpose;
+
+        let f = NodeFormula {
+            node: NodeId::make(Level::Hn5, 5),
+            energy_type: EnergyType::Electricity,
+            purpose: Purpose::Total,
+            terms: vec![Term {
+                reference: Reference::Sensor(SensorId::make(2)),
+                coefficient: 0.0,
+            }],
+            note: None,
+        };
+        let item = node_formula_to_item(&f, "HN0#root|HN2#997|HN5#5", "HN0#root|HN2#997");
+        assert_eq!(str_at(&item, "sk").as_deref(), Some("formula#electricity#total"));
+        assert_eq!(node_formula_of_item(&item).expect("decode"), f);
+    }
+
+    /// A node reference survives the round trip too.
+    #[test]
+    fn node_formula_with_a_node_reference_round_trips() {
+        use crate::domain::node_formula::{NodeFormula, Reference, Term};
+        use crate::domain::values::Purpose;
+
+        let f = NodeFormula {
+            node: NodeId::make(Level::Hn3, 3),
+            energy_type: EnergyType::Electricity,
+            purpose: Purpose::Total,
+            terms: vec![Term {
+                reference: Reference::Node(NodeId::make(Level::Hn4, 1)),
+                coefficient: 0.5,
+            }],
+            note: None,
+        };
+        let item = node_formula_to_item(&f, "HN0#root|HN2#997|HN3#3", "HN0#root|HN2#997");
+        assert_eq!(node_formula_of_item(&item).expect("decode"), f);
+    }
+
+    #[test]
+    fn matrix_row_keys_by_company_node_and_sensor() {
+        use crate::domain::values::Purpose;
+        use crate::logic::formulas::MatrixRow;
+
+        let r = MatrixRow {
+            node_path: "HN0#root|HN2#997|HN4#30".to_string(),
+            energy_type: EnergyType::DistrictHeating,
+            purpose: Purpose::Dhw,
+            sensor: SensorId::make(21),
+            coefficient: 1.0,
+            allocates: true,
+        };
+        let item = matrix_row_to_item(&r, "HN0#root|HN2#997");
+
+        assert_eq!(str_at(&item, "pk").as_deref(), Some("HN2#997"));
+        assert_eq!(str_at(&item, "gsi1pk").as_deref(), Some("W#HN2#997"));
+        assert_eq!(
+            str_at(&item, "sk").as_deref(),
+            Some("weight#HN0#root|HN2#997|HN4#30#district_heating#dhw#S#21")
+        );
+        assert_eq!(str_at(&item, "node_path").as_deref(), Some("HN0#root|HN2#997|HN4#30"));
+        assert_eq!(
+            item.get("sensor_id").and_then(|v| v.as_n().ok()).map(String::as_str),
+            Some("21")
+        );
+        assert_eq!(item.get("allocates").and_then(|v| v.as_bool().ok()), Some(&true));
+    }
+
+    /// A negative coefficient — the whole point of `main − sub` — survives.
+    #[test]
+    fn matrix_row_carries_a_negative_coefficient() {
+        use crate::domain::values::Purpose;
+        use crate::logic::formulas::MatrixRow;
+
+        let r = MatrixRow {
+            node_path: "HN0#root|HN2#997|HN4#1".to_string(),
+            energy_type: EnergyType::Electricity,
+            purpose: Purpose::Total,
+            sensor: SensorId::make(11),
+            coefficient: -1.0,
+            allocates: true,
+        };
+        let item = matrix_row_to_item(&r, "HN0#root|HN2#997");
+        assert_eq!(
+            item.get("coefficient").and_then(|v| v.as_n().ok()).map(String::as_str),
+            Some("-1")
+        );
     }
 
     // -----------------------------------------------------------------------

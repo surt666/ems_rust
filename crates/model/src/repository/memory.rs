@@ -12,9 +12,11 @@ use chrono::{DateTime, Utc};
 
 use crate::domain::ids::{Level, NodeId, SensorId, UserId};
 use crate::domain::node::Node;
+use crate::domain::node_formula::NodeFormula;
 use crate::domain::sensor::Sensor;
 use crate::domain::user::User;
-use crate::domain::values::EdgeKind;
+use crate::domain::values::{EdgeKind, EnergyType, Purpose};
+use crate::logic::formulas::MatrixRow;
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -63,6 +65,10 @@ struct StoreInner {
     edges: Vec<Edge>,
     sensors: std::collections::HashMap<String, Vec<SensorRow>>,
     users: std::collections::HashMap<String, User>,
+    /// Node formulas, keyed by `(node, energy_type, purpose)`.
+    formulas: Vec<NodeFormula>,
+    /// The materialised coefficient matrix, keyed by company path.
+    matrix: std::collections::HashMap<String, Vec<MatrixRow>>,
     counters: std::collections::HashMap<String, Counter>,
     clock: Box<dyn Fn() -> DateTime<Utc>>,
 }
@@ -88,6 +94,8 @@ impl Store {
                 edges: Vec::new(),
                 sensors: Default::default(),
                 users: Default::default(),
+                formulas: Vec::new(),
+                matrix: Default::default(),
                 counters: Default::default(),
                 clock: Box::new(Utc::now),
             })),
@@ -103,6 +111,8 @@ impl Store {
                 edges: Vec::new(),
                 sensors: Default::default(),
                 users: Default::default(),
+                formulas: Vec::new(),
+                matrix: Default::default(),
                 counters: Default::default(),
                 clock: Box::new(clock),
             })),
@@ -396,6 +406,86 @@ impl Store {
             .filter_map(|rows| Self::active_of_rows(rows))
             .filter(|s| s.path.starts_with(prefix))
             .collect()
+    }
+
+    // -----------------------------------------------------------------------
+    // Node formulas
+    // -----------------------------------------------------------------------
+
+    /// Upsert on `(node, energy_type, purpose)`.
+    pub fn put_node_formula(&self, f: &NodeFormula) {
+        let mut inner = self.inner.borrow_mut();
+        inner.formulas.retain(|o| {
+            !(o.node == f.node && o.energy_type == f.energy_type && o.purpose == f.purpose)
+        });
+        inner.formulas.push(f.clone());
+    }
+
+    pub fn delete_node_formula(&self, node: &NodeId, et: EnergyType, purpose: Purpose) {
+        self.inner
+            .borrow_mut()
+            .formulas
+            .retain(|o| !(&o.node == node && o.energy_type == et && o.purpose == purpose));
+    }
+
+    pub fn list_node_formulas(&self, node: &NodeId) -> Vec<NodeFormula> {
+        self.inner
+            .borrow()
+            .formulas
+            .iter()
+            .filter(|f| &f.node == node)
+            .cloned()
+            .collect()
+    }
+
+    /// Every formula whose node lies under `company_path`.
+    pub fn list_company_formulas(&self, company_path: &str) -> Vec<NodeFormula> {
+        let inner = self.inner.borrow();
+        let under = |id: &NodeId| {
+            inner
+                .nodes
+                .get(&id.to_string())
+                .is_some_and(|n| n.path.starts_with(company_path))
+        };
+        inner.formulas.iter().filter(|f| under(&f.node)).cloned().collect()
+    }
+
+    /// Every node under `company_path`, including the company itself.
+    pub fn list_company_nodes(&self, company_path: &str) -> Vec<Node> {
+        self.inner
+            .borrow()
+            .nodes
+            .values()
+            .filter(|n| n.path.starts_with(company_path))
+            .cloned()
+            .collect()
+    }
+
+    // -----------------------------------------------------------------------
+    // Materialised coefficient matrix
+    // -----------------------------------------------------------------------
+
+    /// Replace a company's matrix wholesale — it is derived data.
+    pub fn replace_company_matrix(&self, company_path: &str, rows: Vec<MatrixRow>) {
+        self.inner
+            .borrow_mut()
+            .matrix
+            .insert(company_path.to_string(), rows);
+    }
+
+    pub fn company_matrix(&self, company_path: &str) -> Vec<MatrixRow> {
+        self.inner
+            .borrow()
+            .matrix
+            .get(company_path)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Every matrix row in the store, whatever company it belongs to — the
+    /// convenient shape for asserting "a recompute happened".
+    pub fn weight_rows(&self) -> Vec<MatrixRow> {
+        self.inner.borrow().matrix.values().flatten().cloned().collect()
     }
 
     // -----------------------------------------------------------------------
