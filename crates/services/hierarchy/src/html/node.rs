@@ -1,8 +1,9 @@
 use maud::{html, Markup, PreEscaped};
 use model::domain::node::Node;
+use model::domain::node_formula::{NodeFormula, Reference, Term};
 use model::domain::schema::FieldSpec;
 use model::domain::sensor::Sensor;
-use model::domain::values::{CognitoGroup, EnergyType};
+use model::domain::values::{CognitoGroup, EnergyType, Purpose};
 
 /// Danish UI label for a resource (the EMS "Målertype" wording). The domain
 /// `EnergyType` owns the wire token (`Display`); the view owns the label.
@@ -294,6 +295,7 @@ pub fn render_node(
                     (metadata_section)
                     @if show_sensors && is_admin {
                         (sensor_block(&nid_str, &parent_str))
+                        (formula_block(&nid_str))
                     }
                 }
             }
@@ -305,86 +307,213 @@ pub fn render_node(
 // sensor_block + sensor_dialog
 // ---------------------------------------------------------------------------
 
-/// The formula dialog JS script.
-static FORMULA_DIALOG_JS: &str = r#"
+// ---------------------------------------------------------------------------
+// Node formulas — the Formler section
+// ---------------------------------------------------------------------------
+
+/// Keeps each card's hidden `terms` field in sync with its rows on submit, and
+/// adds a blank row on demand. Plain JS, same shape as the rest of this file.
+static FORMULA_JS: &str = r#"
 (function () {
-  function $(id){ return document.getElementById(id); }
-  function addRefRow(alias, sensorId) {
-    var rows = $('formula-refs-rows');
-    var src = $('ref-sensor-options-src');
-    var row = document.createElement('div');
-    row.className = 'form-row formula-ref-row';
-    var a = document.createElement('input');
-    a.type = 'text'; a.className = 'form-input formula-ref-alias';
-    a.placeholder = 'alias (e.g. a)'; a.style.maxWidth = '8rem';
-    a.value = alias || '';
-    var sel = document.createElement('select');
-    sel.className = 'form-select formula-ref-sensor';
-    sel.innerHTML = src ? src.innerHTML : '';
-    if (sensorId) sel.value = sensorId;
-    row.appendChild(a);
-    row.appendChild(document.createTextNode(' → '));
-    row.appendChild(sel);
-    rows.appendChild(row);
+  function collect(form) {
+    var terms = [];
+    form.querySelectorAll('.term-row').forEach(function (row) {
+      var ref = row.querySelector('.ref');
+      var coef = row.querySelector('.coef');
+      if (!ref || !ref.value || coef.value === '') return;
+      terms.push({ ref: ref.value, coefficient: parseFloat(coef.value) });
+    });
+    form.querySelector('input[name="data.terms"]').value = JSON.stringify(terms);
   }
-  document.addEventListener('change', function (e) {
-    if (e.target && e.target.id === 'formula-kind-select') {
-      var sec = $('formula-expr-section');
-      if (sec) sec.style.display = (e.target.value === 'expr') ? '' : 'none';
-    }
-  });
+  document.addEventListener('submit', function (e) {
+    if (e.target && e.target.classList.contains('formula-form')) collect(e.target);
+  }, true);
   document.addEventListener('click', function (e) {
-    if (!e.target) return;
-    if (e.target.id === 'formula-edit') {
-      var committed = $('formula-kind').value || 'identity';
-      $('formula-dialog-error').style.display = 'none';
-      $('formula-dialog-error').textContent = '';
-      $('formula-kind-select').value = committed;
-      $('formula-expr-section').style.display = (committed === 'expr') ? '' : 'none';
-      $('formula-refs-rows').innerHTML = '';
-      $('formula-expr-input').value = (committed === 'expr') ? ($('formula-expr-field').value || '') : '';
-      if (committed === 'expr') {
-        try {
-          var refs = JSON.parse($('formula-refs-field').value || '{}');
-          Object.keys(refs).forEach(function (k) { addRefRow(k, refs[k]); });
-        } catch (e2) {}
-      }
-      $('formula-dialog').showModal();
-      return;
-    }
-    if (e.target.id === 'formula-add-ref') { addRefRow('', ''); return; }
-    if (e.target.id === 'formula-apply') {
-      var err = $('formula-dialog-error');
-      err.style.display = 'none'; err.textContent = '';
-      var kind = $('formula-kind-select').value;
-      $('formula-kind').value = kind;
-      if (kind !== 'expr') {
-        $('formula-expr-field').value = '';
-        $('formula-refs-field').value = '';
-        $('formula-summary').textContent = (kind === 'zero') ? 'Zero' : 'Identity (default)';
-        $('formula-dialog').close();
-        return;
-      }
-      var expr = ($('formula-expr-input').value || '').trim();
-      if (!expr) { err.textContent = 'Expression is required.'; err.style.display = ''; return; }
-      var refs = {};
-      var rws = document.querySelectorAll('#formula-refs-rows .formula-ref-row');
-      for (var i = 0; i < rws.length; i++) {
-        var al = rws[i].querySelector('.formula-ref-alias').value.trim();
-        var sv = rws[i].querySelector('.formula-ref-sensor').value;
-        if (al) refs[al] = sv;
-      }
-      $('formula-expr-field').value = expr;
-      $('formula-refs-field').value = JSON.stringify(refs);
-      $('formula-summary').textContent = expr;
-      $('formula-dialog').close();
-    }
+    if (!e.target || !e.target.classList.contains('add-term')) return;
+    var rows = e.target.closest('.formula-form').querySelector('.term-rows');
+    var tpl = rows.querySelector('.term-row');
+    if (!tpl) return;
+    var copy = tpl.cloneNode(true);
+    copy.querySelector('.coef').value = '1';
+    rows.appendChild(copy);
   });
 })();
 "#;
 
-/// The sensor add dialog + formula builder dialog + script.
-fn sensor_dialog(nid_str: &str, parent_str: &str) -> Markup {
+/// `<select>` of every reference this node may legally use: its **direct
+/// children**, and **every sensor in the company** — the latter is what makes a
+/// main meter in one building and its submeter in another expressible. Each
+/// sensor is labelled with the node it hangs off, so reaching sideways is an
+/// informed choice rather than an accident.
+fn reference_select(selected: Option<&Reference>, sensors: &[Sensor], children: &[Node]) -> Markup {
+    let here = |r: &Reference| Some(r) == selected;
+    html! {
+        select class="form-select ref" {
+            @for n in children {
+                option value=(n.id) selected[here(&Reference::Node(n.id.clone()))] {
+                    (n.name) " (" (n.id) ")"
+                }
+            }
+            @for s in sensors {
+                option value=(s.id) selected[here(&Reference::Sensor(s.id))] {
+                    (s.daq_id) " · " (s.energy_type) " — " (node_of_sensor(s))
+                }
+            }
+        }
+    }
+}
+
+/// The node segment a sensor hangs off, for the picker label.
+fn node_of_sensor(s: &Sensor) -> String {
+    model::domain::sensor::parent_path(s)
+        .rsplit(model::domain::node::PATH_SEP)
+        .next()
+        .unwrap_or("")
+        .to_string()
+}
+
+fn terms_json(terms: &[Term]) -> String {
+    let items: Vec<String> = terms
+        .iter()
+        .map(|t| format!(r#"{{"ref":"{}","coefficient":{}}}"#, t.reference, t.coefficient))
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
+/// One card: the formula's `(energy_type, purpose)` head, its terms, and the
+/// two commands that act on it.
+fn formula_card(
+    node_id: &str,
+    f: &NodeFormula,
+    sensors: &[Sensor],
+    children: &[Node],
+) -> Markup {
+    html! {
+        section class="formula-card" {
+            header class="formula-head" {
+                span class="formula-et" { (f.energy_type) }
+                span class="formula-purpose" { (f.purpose) }
+                @if let Some(note) = &f.note { span class="formula-note" { (note) } }
+            }
+            form class="formula-form" hx-post="/hierarchy/command" hx-swap="none" {
+                input type="hidden" name="action" value="set_node_formula";
+                input type="hidden" name="data.node_id" value=(node_id);
+                input type="hidden" name="data.energy_type" value=(f.energy_type);
+                input type="hidden" name="data.purpose" value=(f.purpose);
+                input type="hidden" name="data.terms" value=(terms_json(&f.terms));
+                div class="term-rows" {
+                    @for t in &f.terms {
+                        div class="form-row term-row" {
+                            (reference_select(Some(&t.reference), sensors, children))
+                            input type="number" step="any" class="form-input coef"
+                                value=(t.coefficient);
+                        }
+                    }
+                }
+                button type="button" class="btn-secondary add-term" { "+ Term" }
+                button type="submit" class="btn-warning" { "Gem" }
+            }
+            form hx-post="/hierarchy/command" hx-swap="none" {
+                input type="hidden" name="action" value="delete_node_formula";
+                input type="hidden" name="data.node_id" value=(node_id);
+                input type="hidden" name="data.energy_type" value=(f.energy_type);
+                input type="hidden" name="data.purpose" value=(f.purpose);
+                button type="submit" class="btn-secondary" {
+                    "Slet \u{2014} brug standarden"
+                }
+            }
+        }
+    }
+}
+
+/// An empty card for declaring a new formula. `unallocated` is absent because
+/// the roll-up derives it; `total` IS offered, because that formula is the
+/// node's own value.
+fn new_formula_card(node_id: &str, sensors: &[Sensor], children: &[Node]) -> Markup {
+    html! {
+        section class="formula-card formula-new" {
+            header class="formula-head" { "Ny formel" }
+            form class="formula-form" hx-post="/hierarchy/command" hx-swap="none" {
+                input type="hidden" name="action" value="set_node_formula";
+                input type="hidden" name="data.node_id" value=(node_id);
+                input type="hidden" name="data.terms" value="[]";
+                div class="form-row" {
+                    label class="form-label" { "Energitype" }
+                    select name="data.energy_type" class="form-select" {
+                        @for et in EnergyType::all() {
+                            option value=(et) { (et) }
+                        }
+                    }
+                }
+                div class="form-row" {
+                    label class="form-label" { "Formål" }
+                    select name="data.purpose" class="form-select" {
+                        @for p in Purpose::all().filter(|p| p.declarable()) {
+                            option value=(p) { (p) }
+                        }
+                    }
+                }
+                div class="term-rows" {
+                    div class="form-row term-row" {
+                        (reference_select(None, sensors, children))
+                        input type="number" step="any" class="form-input coef" value="1";
+                    }
+                }
+                button type="button" class="btn-secondary add-term" { "+ Term" }
+                button type="submit" class="btn-warning" { "Opret" }
+            }
+        }
+    }
+}
+
+/// The **Formler** fragment for one node.
+///
+/// A node with no formula for a given `(energy_type, purpose)` simply sums
+/// everything below it — that default is stated here rather than left implicit,
+/// so "nothing declared" reads differently from "declared as Σ".
+pub fn render_node_formulas(
+    node: &Node,
+    formulas: &[NodeFormula],
+    company_sensors: &[Sensor],
+    child_nodes: &[Node],
+) -> Markup {
+    let nid = node.id.to_string();
+    html! {
+        div class="formulas" {
+            p class="formula-default" {
+                "Uden en formel er en nodes værdi Σ af alt nedenunder. "
+                "En formel angiver kun det der afviger."
+            }
+            @for f in formulas {
+                (formula_card(&nid, f, company_sensors, child_nodes))
+            }
+            (new_formula_card(&nid, company_sensors, child_nodes))
+            script { (PreEscaped(FORMULA_JS)) }
+        }
+    }
+}
+
+/// The Formler section inside the node panel, loaded via htmx like the sensor
+/// list beside it.
+fn formula_block(nid_str: &str) -> Markup {
+    let vals = format!(r#"{{"node": "{}"}}"#, nid_str);
+    html! {
+        section class="node-section" id="formula-section" {
+            h3 class="table-title" { "Formler" }
+            div id="formula-list"
+                data-hx-get="/hierarchy/query/node_formulas"
+                data-hx-vals=(vals)
+                data-hx-trigger="load"
+                data-hx-target="#formula-list"
+                data-hx-swap="innerHTML"
+                data-hx-request=(crate::html::NO_HEADERS)
+            {}
+        }
+    }
+}
+
+/// The add-sensor dialog.
+fn sensor_dialog(nid_str: &str) -> Markup {
     let after_request_js = "if(event.detail.elt.id === 'add-sensor-form' && \
         event.detail.successful) { \
         document.querySelector('#add-sensor-dialog').close(); \
@@ -394,10 +523,6 @@ fn sensor_dialog(nid_str: &str, parent_str: &str) -> Markup {
         event.detail.xhr.responseText; \
         document.getElementById('sensor-form-error').style.display \
         = 'block'; }";
-
-    // Hx.vals with nodepath — must be a string literal for maud to handle correctly.
-    // We use a format! to build the vals JSON, then pass as plain string (maud &quot;-escapes it).
-    let ref_sensor_vals = format!(r#"{{"nodepath": "{}"}}"#, parent_str);
 
     html! {
         dialog id="add-sensor-dialog"
@@ -456,20 +581,6 @@ fn sensor_dialog(nid_str: &str, parent_str: &str) -> Markup {
                         label class="form-label" { "Resample interval (min)" }
                         input type="number" name="data.resample_minutes" min="1" step="1" class="form-input";
                     }
-                    div class="form-row" {
-                        label class="form-label" { "Formula" }
-                        div class="form-inline" {
-                            span id="formula-summary" class="form-summary" {
-                                "Identity (default)"
-                            }
-                            button type="button" class="btn-secondary" id="formula-edit" {
-                                "Edit formula\u{2026}"
-                            }
-                        }
-                    }
-                    input type="hidden" name="data.formula.kind" id="formula-kind" value="identity";
-                    input type="hidden" name="data.formula.expr" id="formula-expr-field" value="";
-                    input type="hidden" name="data.formula.refs" id="formula-refs-field" value="";
                 }
             }
             div class="dialog-footer" {
@@ -487,53 +598,6 @@ fn sensor_dialog(nid_str: &str, parent_str: &str) -> Markup {
                 }
             }
         }
-        dialog id="formula-dialog" class="dialog" {
-            div class="dialog-content" {
-                h2 { "Build formula" }
-                div class="form-row" {
-                    label class="form-label" { "Kind" }
-                    select id="formula-kind-select" class="form-select" {
-                        option value="identity" { "Identity (default)" }
-                        option value="zero" { "Zero" }
-                        option value="expr" { "Expression" }
-                    }
-                }
-                div id="formula-expr-section" style="display:none;" {
-                    div class="form-row" {
-                        label class="form-label" { "Expression" }
-                        input type="text" id="formula-expr-input" class="form-input"
-                            placeholder="abs(self - a - b)";
-                    }
-                    div class="form-hint" {
-                        "Use self, numbers, + - * /, abs(), and aliases bound below. \
-                         Aliases cannot be named self or abs."
-                    }
-                    div id="formula-refs-rows" {}
-                    button type="button" class="btn-secondary" id="formula-add-ref" {
-                        "+ Add reference"
-                    }
-                }
-                div id="formula-dialog-error" class="login-error" style="display:none;" {}
-                div class="dialog-footer" {
-                    button type="button" class="btn-warning" id="formula-apply" { "Apply" }
-                    button type="button"
-                        _="on click call #formula-dialog.close()"
-                    {
-                        "Cancel"
-                    }
-                }
-            }
-            // Hidden <option> source for ref dropdowns; loaded once via htmx.
-            select id="ref-sensor-options-src" style="display:none;"
-                data-hx-get="/hierarchy/query/company_sensors"
-                data-hx-vals=(ref_sensor_vals)
-                data-hx-trigger="load"
-                data-hx-target="#ref-sensor-options-src"
-                data-hx-swap="innerHTML"
-                data-hx-request=(crate::html::NO_HEADERS)
-            {}
-        }
-        script { (PreEscaped(FORMULA_DIALOG_JS)) }
     }
 }
 
@@ -560,7 +624,7 @@ fn sensor_block(nid_str: &str, parent_str: &str) -> Markup {
                     "Add sensor"
                 }
             }
-            (sensor_dialog(nid_str, parent_str))
+            (sensor_dialog(nid_str))
             ul id="sensor-list" style="display: grid; gap: 8px;"
                 data-hx-get="/hierarchy/query/sensors"
                 data-hx-vals=(sensor_vals)

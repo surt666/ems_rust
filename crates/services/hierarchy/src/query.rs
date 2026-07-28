@@ -530,6 +530,62 @@ where
     }
 }
 
+/// `GET /hierarchy/query/node_formulas?node=<NodeId>` — the Formler fragment.
+///
+/// Loads the node, its declared formulas, every sensor in its company (D7: a
+/// term may name any of them) and its **direct children** (node references stop
+/// there, or a deeper node would be counted twice).
+pub async fn handle_node_formulas<FGN, FGNFut, FLF, FLFFut, FLS, FLSFut, FLC, FLCFut>(
+    node_id: &str,
+    get_node: FGN,
+    list_node_formulas: FLF,
+    list_company_sensors: FLS,
+    list_children: FLC,
+) -> (u16, String)
+where
+    FGN: FnOnce(NodeId) -> FGNFut,
+    FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
+    FLF: FnOnce(NodeId) -> FLFFut,
+    FLFFut: Future<Output = Result<Vec<model::domain::node_formula::NodeFormula>, RepositoryError>>,
+    FLS: FnOnce(String) -> FLSFut,
+    FLSFut: Future<Output = Result<Vec<Sensor>, RepositoryError>>,
+    FLC: FnOnce(NodeId, Option<model::domain::values::EdgeKind>) -> FLCFut,
+    FLCFut: Future<Output = Result<Vec<Node>, RepositoryError>>,
+{
+    let nid = match NodeId::parse(node_id) {
+        Ok(id) => id,
+        Err(e) => return html_error(&format!("bad node: {}", e)),
+    };
+    let node = match get_node(nid.clone()).await {
+        Ok(Some(n)) => n,
+        Ok(None) => return html_error("node not found"),
+        Err(e) => return html_repo_error(e),
+    };
+    let Some(company) = model::domain::node::company_prefix(&node.path) else {
+        return html_error("node has no company (HN2) ancestor");
+    };
+    let formulas = match list_node_formulas(nid.clone()).await {
+        Ok(f) => f,
+        Err(e) => return html_repo_error(e),
+    };
+    let sensors = match list_company_sensors(format!(
+        "{company}{}",
+        model::domain::node::PATH_SEP
+    ))
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => return html_repo_error(e),
+    };
+    let children = match list_children(nid, None).await {
+        Ok(c) => c,
+        Err(e) => return html_repo_error(e),
+    };
+    html_ok(crate::html::node::render_node_formulas(
+        &node, &formulas, &sensors, &children,
+    ))
+}
+
 /// `GET /hierarchy/query/users` — HTML table rows.
 pub async fn handle_html_users<FLU, FLUFut>(list_users_fn: FLU) -> (u16, String)
 where
@@ -768,7 +824,9 @@ pub fn leaf_node_id(nodepath: &str) -> &str {
 /// `params` is the query-string parameter list.
 /// Returns `(status_code, body_string)`.
 pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, String) {
-    use model::repository::dynamodb::{node as ddb_node, sensor as ddb_sensor, user};
+    use model::repository::dynamodb::{
+        node as ddb_node, node_formula as ddb_formula, sensor as ddb_sensor, user,
+    };
 
     let ddb = model::get_dynamodb_client().await;
     let table = model::get_table_name();
@@ -941,6 +999,39 @@ pub async fn run_query(action: &str, params: &[(String, String)]) -> (u16, Strin
                 Ok(ss) => html_ok(html_node::render_sensors(&ss)),
                 Err(e) => html_repo_error(e),
             }
+        }
+
+        "node_formulas" => {
+            let node = match p(params, "node") {
+                Some(s) => s,
+                None => return html_error("missing node"),
+            };
+            handle_node_formulas(
+                node,
+                {
+                    let t = table.clone();
+                    move |nid: NodeId| async move { ddb_node::get_node(ddb, &t, &nid).await }
+                },
+                {
+                    let t = table.clone();
+                    move |nid: NodeId| async move {
+                        ddb_formula::list_node_formulas(ddb, &t, &nid).await
+                    }
+                },
+                {
+                    let t = table.clone();
+                    move |prefix: String| async move {
+                        ddb_sensor::list_sensors_under_path(ddb, &t, &prefix).await
+                    }
+                },
+                {
+                    let t = table.clone();
+                    move |nid: NodeId, kind: Option<model::domain::values::EdgeKind>| async move {
+                        ddb_node::list_children(ddb, &t, &nid, kind.as_ref()).await
+                    }
+                },
+            )
+            .await
         }
 
         "company_sensors" => {

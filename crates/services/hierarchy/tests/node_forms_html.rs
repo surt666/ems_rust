@@ -256,3 +256,127 @@ fn profiles_order_is_stable() {
     assert!(tech_pos < reader_pos, "Technician must come before Reader");
     assert!(reader_pos < sysadm_pos, "Reader must come before SysAdm");
 }
+
+// ---------------------------------------------------------------------------
+// Node formulas (the Formler section)
+// ---------------------------------------------------------------------------
+
+use hierarchy::html::node::render_node_formulas;
+use model::domain::ids::{Level, SensorId};
+use model::domain::node_formula::{NodeFormula, Reference, Term};
+use model::domain::sensor::Sensor;
+use model::domain::values::{EnergyType, Purpose, ReadingKind};
+
+const CO: &str = "HN0#root|HN2#997";
+
+fn fx_node(level: Level, id: u32, parent: Option<(Level, u32)>, path: &str, name: &str) -> Node {
+    Node::builder()
+        .id(NodeId::make(level, id))
+        .name(name.to_string())
+        .parent(parent.map(|(l, i)| NodeId::make(l, i)))
+        .path(path.to_string())
+        .build()
+}
+
+fn fx_sensor(id: u32, node_path: &str, daq: &str) -> Sensor {
+    Sensor::builder()
+        .id(SensorId::make(id))
+        .daq_id(daq.to_string())
+        .path(format!("{node_path}|S#{id}"))
+        .energy_type(EnergyType::DistrictHeating)
+        .reading_kind(ReadingKind::Counter)
+        .build()
+}
+
+/// Building A1 with a bimåler formula, one own sensor, one sensor in a sibling
+/// branch (Building C2), a direct child and a grandchild.
+fn fixture() -> String {
+    let a1 = format!("{CO}|HN4#1");
+    let c2 = format!("{CO}|HN4#2");
+    let node = fx_node(Level::Hn4, 1, Some((Level::Hn2, 997)), &a1, "Building A1");
+    let formulas = vec![
+        NodeFormula {
+            node: NodeId::make(Level::Hn4, 1),
+            energy_type: EnergyType::DistrictHeating,
+            purpose: Purpose::Dhw,
+            terms: vec![Term {
+                reference: Reference::Sensor(SensorId::make(2)),
+                coefficient: 1.0,
+            }],
+            note: None,
+        },
+        NodeFormula {
+            node: NodeId::make(Level::Hn4, 1),
+            energy_type: EnergyType::DistrictHeating,
+            purpose: Purpose::SpaceHeating,
+            terms: vec![
+                Term { reference: Reference::Sensor(SensorId::make(1)), coefficient: 1.0 },
+                Term { reference: Reference::Sensor(SensorId::make(2)), coefficient: -1.0 },
+            ],
+            note: Some("bimåler".to_string()),
+        },
+    ];
+    let company_sensors = vec![
+        fx_sensor(1, &a1, "daq:main"),
+        fx_sensor(2, &a1, "daq:dhw"),
+        fx_sensor(77, &c2, "daq:elsewhere"),
+    ];
+    let children = vec![fx_node(Level::Hn5, 5, Some((Level::Hn4, 1)), &format!("{a1}|HN5#5"), "Area")];
+    render_node_formulas(&node, &formulas, &company_sensors, &children).into_string()
+}
+
+#[test]
+fn node_formulas_render_one_card_per_formula() {
+    let html = fixture();
+    assert!(html.contains("district_heating"), "energy type in the heading");
+    assert!(html.contains("space_heating"), "purpose in the heading");
+    assert!(html.contains("bimåler"), "the note is shown");
+    assert!(html.contains("-1"), "the subtraction coefficient is shown");
+}
+
+/// Both commands must be postable from the card.
+#[test]
+fn node_formulas_post_set_and_delete() {
+    let html = fixture();
+    assert!(html.contains("set_node_formula"), "save posts set_node_formula");
+    assert!(html.contains("delete_node_formula"), "delete posts delete_node_formula");
+    assert!(html.contains("/hierarchy/command"), "posts to the command endpoint");
+}
+
+/// The picker offers EVERY sensor in the company — that is what makes the
+/// main-in-one-building / sub-in-another case reachable — and names the node
+/// each one hangs off, so a sideways reference is an informed choice.
+#[test]
+fn reference_picker_offers_company_wide_sensors() {
+    let html = fixture();
+    assert!(html.contains("S#1") && html.contains("S#2"), "own sensors offered");
+    assert!(html.contains("S#77"), "a sensor in another branch is offered too");
+}
+
+/// Node references are direct children only — an upward or deeper one would
+/// double count.
+#[test]
+fn reference_picker_offers_only_direct_children_as_nodes() {
+    let html = fixture();
+    assert!(html.contains("HN5#5"), "the direct child is offered");
+    assert!(!html.contains("HN2#997"), "the parent must not be offered");
+}
+
+/// `unallocated` is derived by the roll-up and must not be declarable.
+#[test]
+fn new_formula_card_does_not_offer_reserved_purposes() {
+    let html = fixture();
+    assert!(!html.contains("\"unallocated\""), "unallocated must not be selectable");
+    assert!(html.contains("\"total\""), "but total is - it IS the node's own formula");
+}
+
+/// The old per-sensor formula dialog is gone, and the sensor form asks for
+/// nothing but what the sensor measures.
+#[test]
+fn add_sensor_form_has_no_classification_controls() {
+    let node = fx_node(Level::Hn4, 1, Some((Level::Hn2, 997)), &format!("{CO}|HN4#1"), "B");
+    let html = render_node(&node, true, true, Some(CognitoGroup::Admin), &[]).into_string();
+    assert!(!html.contains("formula-dialog"), "the dialog is gone");
+    assert!(!html.contains("data.formula"), "and its hidden inputs");
+    assert!(html.contains("data.energy_type"), "energy_type is what a sensor declares");
+}
