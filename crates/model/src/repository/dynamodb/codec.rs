@@ -922,6 +922,16 @@ pub fn matrix_row_to_item(r: &MatrixRow, company_path: &str) -> Item {
         )),
     );
     item.insert("gsi1pk".to_string(), s(weight_gsi1pk(company_path)));
+    // `gsi1` is composite (gsi1pk + gsi1sk). An item missing gsi1sk is not
+    // indexed AT ALL — it would sit in the base table while the roll-up job's
+    // partition query returned nothing and reported success.
+    item.insert(
+        "gsi1sk".to_string(),
+        s(format!(
+            "{}#{}#{}#{}",
+            r.node_path, r.energy_type, r.purpose, r.sensor
+        )),
+    );
     item.insert("node_path".to_string(), s(r.node_path.clone()));
     item.insert("energy_type".to_string(), s(r.energy_type.to_string()));
     item.insert("purpose".to_string(), s(r.purpose.to_string()));
@@ -1387,6 +1397,13 @@ mod tests {
             str_at(&item, "sk").as_deref(),
             Some("weight#HN0#root|HN2#997|HN4#30#district_heating#dhw#S#21")
         );
+        // gsi1 is composite: without gsi1sk the row is silently not indexed,
+        // and the roll-up job's partition query returns nothing.
+        assert_eq!(
+            str_at(&item, "gsi1sk").as_deref(),
+            Some("HN0#root|HN2#997|HN4#30#district_heating#dhw#S#21"),
+            "every gsi1pk needs a gsi1sk or the item is not indexed"
+        );
         assert_eq!(str_at(&item, "node_path").as_deref(), Some("HN0#root|HN2#997|HN4#30"));
         assert_eq!(
             item.get("sensor_id").and_then(|v| v.as_n().ok()).map(String::as_str),
@@ -1414,6 +1431,7 @@ mod tests {
             item.get("coefficient").and_then(|v| v.as_n().ok()).map(String::as_str),
             Some("-1")
         );
+        assert!(item.contains_key("gsi1sk"), "must be indexed");
     }
 
     // -----------------------------------------------------------------------

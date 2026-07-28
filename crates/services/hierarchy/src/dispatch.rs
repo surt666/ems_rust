@@ -866,7 +866,7 @@ pub async fn recompute_matrix_for_company<FLF, FLFFut, FLS, FLSFut, FLN, FLNFut,
     list_company_sensors: FLS,
     list_company_nodes: FLN,
     replace_matrix: FRM,
-) -> Result<(), RepositoryError>
+) -> Result<MatrixStats, RepositoryError>
 where
     FLF: FnOnce(String) -> FLFFut,
     FLFFut: Future<Output = Result<Vec<NodeFormula>, RepositoryError>>,
@@ -884,7 +884,39 @@ where
         list_company_nodes,
     )
     .await?;
-    replace_matrix(company_path, formulas_logic::flatten(&graph)).await
+    let matrix = formulas_logic::flatten(&graph);
+    let stats = MatrixStats {
+        nodes: graph.nodes.len(),
+        sensors: graph.sensors.len(),
+        formulas: graph.formulas.len(),
+        rows: matrix.len(),
+    };
+    replace_matrix(company_path, matrix).await?;
+    Ok(stats)
+}
+
+/// What a rebuild loaded and wrote.
+///
+/// Reported back to the operator, because a rebuild that silently produces
+/// nothing must not look like a rebuild that worked.
+#[derive(Debug, Clone, Copy)]
+pub struct MatrixStats {
+    pub nodes: usize,
+    pub sensors: usize,
+    pub formulas: usize,
+    pub rows: usize,
+}
+
+impl MatrixStats {
+    fn to_json(self) -> Value {
+        json!({
+            "ok": true,
+            "nodes": self.nodes,
+            "sensors": self.sensors,
+            "formulas": self.formulas,
+            "rows": self.rows,
+        })
+    }
 }
 
 /// Resolve the node's company, then rebuild. Use this only when the node still
@@ -925,6 +957,7 @@ where
         replace_matrix,
     )
     .await
+    .map(|_| ())
 }
 
 /// `set_node_formula` — validate, write, then rebuild the company matrix.
@@ -1105,9 +1138,16 @@ where
         Ok(n) => n,
         Err(e) => return bad_request(&format!("bad company: {e}")),
     };
-    match recompute_matrix(
-        node,
-        get_node,
+    let n = match get_node(node.clone()).await {
+        Ok(Some(n)) => n,
+        Ok(None) => return repo_error_response(RepositoryError::NotFound(node)),
+        Err(e) => return repo_error_response(e),
+    };
+    let Some(company_path) = model::domain::node::company_prefix(&n.path) else {
+        return bad_request(&format!("{node} has no company (HN2) ancestor"));
+    };
+    match recompute_matrix_for_company(
+        company_path,
         list_company_formulas,
         list_company_sensors,
         list_company_nodes,
@@ -1115,7 +1155,7 @@ where
     )
     .await
     {
-        Ok(()) => ok(json!({ "ok": true })),
+        Ok(stats) => ok(stats.to_json()),
         Err(e) => repo_error_response(e),
     }
 }
@@ -1175,7 +1215,7 @@ async fn rebuild_after(
     )
     .await
     {
-        Ok(()) => out,
+        Ok(_) => out,
         Err(e) => repo_error_response(e),
     }
 }
