@@ -434,9 +434,19 @@ pub async fn list_by_level_under_path(
     let rows = query_gsi_partition(client, table, &partition, ancestor_path).await;
     Ok(rows
         .iter()
+        .filter(is_node_row)
         .filter_map(|i| codec::node_of_item(i).ok())
         .filter(|n| crate::domain::node::is_at_or_under(&n.path, ancestor_path))
         .collect())
+}
+
+/// A `HN<d>` GSI partition holds **both** node rows and the parent→child edge
+/// rows that point into that level. An edge row carries the PARENT's id in `pk`
+/// but the CHILD's path in `gsi1sk`, so decoding one as a node yields a node
+/// whose derived parent equals its own id — a self-loop that makes any
+/// parent/child walk recurse forever. Keep only real node rows.
+fn is_node_row(item: &&Item) -> bool {
+    matches!(item.get("type"), Some(AttributeValue::S(t)) if t == "node")
 }
 
 /// Page through the GSI partition `gsi1pk_v` for rows whose `gsi1sk` begins

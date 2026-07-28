@@ -85,10 +85,26 @@ fn add(into: &mut Coeffs, sensor: SensorId, c: f64) {
 /// formula says so — otherwise attaching a meter would silently claim it as
 /// lighting.
 pub fn coeffs(g: &CompanyGraph, node: &NodeId, et: EnergyType, purpose: Purpose) -> Coeffs {
+    coeffs_within(g, node, et, purpose, &[])
+}
+
+/// `ancestors` is the chain of nodes already on this descent.
+///
+/// The hierarchy is a tree, so in well-formed data the chain never repeats. It
+/// is threaded anyway because a malformed graph — a node decoded with itself as
+/// its parent, say — would otherwise recurse until the stack runs out, and an
+/// evaluator that crashes on bad input takes the whole write path down with it.
+fn coeffs_within(
+    g: &CompanyGraph,
+    node: &NodeId,
+    et: EnergyType,
+    purpose: Purpose,
+    ancestors: &[NodeId],
+) -> Coeffs {
     if purpose == Purpose::Unallocated {
-        let mut out = coeffs(g, node, et, Purpose::Total);
+        let mut out = coeffs_within(g, node, et, Purpose::Total, ancestors);
         for p in allocating_purposes(g, et) {
-            for (s, c) in coeffs(g, node, et, p) {
+            for (s, c) in coeffs_within(g, node, et, p, ancestors) {
                 add(&mut out, s, -c);
             }
         }
@@ -108,12 +124,18 @@ pub fn coeffs(g: &CompanyGraph, node: &NodeId, et: EnergyType, purpose: Purpose)
     let mut out = Coeffs::new();
 
     // Children default to 1, for Total and for a named purpose alike.
+    let mut chain: Vec<NodeId> = ancestors.to_vec();
+    chain.push(node.clone());
     for child in g.children(node) {
+        // Already on this descent ⇒ a loop in the graph, not a real child.
+        if chain.contains(&child.id) {
+            continue;
+        }
         let w = weight_of(&Reference::Node(child.id.clone())).unwrap_or(1.0);
         if w == 0.0 {
             continue;
         }
-        for (s, c) in coeffs(g, &child.id, et, purpose) {
+        for (s, c) in coeffs_within(g, &child.id, et, purpose, &chain) {
             add(&mut out, s, w * c);
         }
     }
@@ -163,6 +185,7 @@ fn allocating_purposes(g: &CompanyGraph, et: EnergyType) -> Vec<Purpose> {
         .filter(|f| {
             f.energy_type == et
                 && f.purpose != Purpose::Total
+                && f.purpose != Purpose::Unallocated
                 && !f.purpose.is_outflow()
                 && !is_derived(g, f)
         })
@@ -421,6 +444,30 @@ mod tests {
             ],
         };
         (g, vec![(1, 40.0), (2, 13.0), (3, 14.0), (4, 13.0)])
+    }
+
+    /// A node whose derived parent is itself must not hang the recursion.
+    ///
+    /// This is what took the live lambda down: the `HN<d>` GSI partition holds
+    /// edge rows as well as node rows, an edge row carries the PARENT's id with
+    /// the CHILD's path, and decoding one as a node produces exactly this shape.
+    /// The repository now filters them out (`node::is_node_row`), but the
+    /// evaluator must not be the only thing standing between a malformed graph
+    /// and a stack overflow.
+    #[test]
+    fn a_self_parenting_node_does_not_recurse_forever() {
+        let chill = format!("{CO}|HN5#5");
+        let mut bogus = node(Level::Hn5, 5, Some((Level::Hn2, 997)), &chill);
+        bogus.parent = Some(bogus.id.clone()); // its own parent
+        let g = CompanyGraph {
+            nodes: vec![node(Level::Hn2, 997, None, CO), bogus],
+            sensors: vec![sensor(1, &chill, EnergyType::Electricity)],
+            formulas: vec![],
+        };
+        // Must terminate, and must not count the self-loop twice.
+        let v = value(&g, (Level::Hn5, 5), EnergyType::Electricity, Purpose::Total,
+                      &[(1, 40.0)]);
+        assert_eq!(v, 40.0);
     }
 
     #[test]
