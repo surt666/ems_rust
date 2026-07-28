@@ -65,14 +65,14 @@ drive the model:
 
 | # | Decision | Rationale |
 |---|---|---|
-| **D1** | Two axes: **`energy_type`** (what the meter measures) and **`purpose`** (what the energy is spent on). **No "metric" axis.** | Matches the handbook's formålsopdeling. CO₂ and cost stay derived at query time, so no formula is duplicated per metric. |
+| **D1** | Two axes: **`energy_type`** (what the sensor measures) and **`purpose`** (what the energy is spent on). **No "metric" axis.** | Matches the handbook's formålsopdeling. CO₂ and cost stay derived at query time, so no formula is duplicated per metric. |
 | **D2** | Terms are **weighted linear**: `(reference, coefficient)`. No `abs`, no division, no min/max. | Covers include (1), subtract (−1), apportion (0.4), CO₂/COP/brændværdi factors, unit conversion. Linear ⇒ commutes with time-bucketing, so the roll-up keeps its one-pass shape. |
-| **D3** | Formulas store **overrides only** — an unlisted descendant contributes at weight 1. | Attaching a meter always changes the numbers; nothing is ever silently dropped. Formulas need no maintenance on attach. |
+| **D3** | Formulas store **overrides only** — an unlisted descendant contributes at weight 1. | Attaching a sensor always changes the numbers; nothing is ever silently dropped. Formulas need no maintenance on attach. |
 | **D4** | `purpose` is **declared on the formula head**, together with the output `energy_type`. | The only option that supports both bimåler subtraction and COP/brændværdi conversion, and gives a cross-cutting end-use axis without forcing purposes into the tree shape. |
 | **D5** | The job emits implicit **`total`** (Σ) and **`unallocated`** (`total − Σ claimed`) alongside declared purposes. | "Øvrigt/fælles forbrug" is a real reported category, not an error state; a node may legitimately be only partly instrumented. Coverage gaps become visible instead of invisible. |
 | **D6** | The Glue job reads **`hierarchy_new` directly cross-account** — reading the **materialised weight matrix**, not raw formulas (§4.2, §8). | No new artifact or write path, always current by construction, and Glue holds **zero** formula semantics: one GSI query, one join, one weighted sum. |
 | **D7** | Dev system: **rename outright, no back-compat scaffolding.** | No real users depend on stored history. Read-fallbacks and dual-writes buy nothing and permanently muddy the model (the current `purpose` attribute holding an energy type is exactly that scar). |
-| **D8** | Meter **nesting** (`contained_in`) and **flow direction** (`flow`) are facts on the sensor, not formulas. | See §3.8. Nesting keeps double counting structurally impossible, which the flat explode gives today and a per-node override would have surrendered. Direction said once on the export meter is automatically right at every level; said as a node formula it needs `Purpose::Total` declarable again plus an ancestor-propagation rule that can be silently forgotten. |
+| **D8** | **Overlapping readings** (`contained_in`) and **flow direction** (`flow`) are facts on the sensor, not formulas. | See §3.8. Overlap handling keeps double counting structurally impossible, which the flat explode gives today and a per-node override would have surrendered. Direction said once on the export sensor is automatically right at every level; said as a node formula it needs `Purpose::Total` declarable again plus an ancestor-propagation rule that can be silently forgotten. |
 
 ### 2.1 Naming
 
@@ -83,6 +83,15 @@ translate from *energiart* in either direction. `EnergyType` is slightly generou
 (`Water` and `Gas` accumulate as `Volume`, everything else as `Energy`), and the
 industry uses "energiarter" the same loose way. `Medium` (EN 13757 / M-Bus) was the
 standards-exact alternative and was not chosen.
+
+**Sensor, not meter.** The system's inputs are *sensors* — one per channel or register a
+device exposes (`daq:<type>:<customer>:<device>:<channel>`). A *meter* is a physical
+thing a technician installs; in the hierarchy it exists only as a **node type** grouping
+sensors. Every rule below is therefore stated over sensors. This matters most for
+`contained_in`: an accumulating channel and its per-phase channels are usually registers
+on **one** device, as are OBIS 1.8.0 and 2.8.0 (import and export), so the relation is
+"this sensor's reading already includes that one's" — a statement about values, not about
+hardware.
 
 ### 2.2 What D1 kills
 
@@ -159,15 +168,16 @@ pub struct NodeFormula {
 and on the sensor, two facts about the installation (§3.8):
 
 ```rust
-/// Which way energy flows through a meter. Import, production and submeters are
-/// `In`; grid export and PV feed-in are `Out` and contribute negatively.
+/// Which way energy flows through a sensor. Import, production and submeter
+/// channels are `In`; grid export and PV feed-in are `Out` and contribute
+/// negatively.
 pub enum Flow { In, Out }
 
 pub struct Sensor {
     …
-    /// The meter this one physically sits inside, if any.
+    /// The sensor whose reading already includes this one's, if any.
     pub contained_in: Option<SensorId>,
-    /// Direction of flow. Defaults to `In`.
+    /// Direction of flow through this sensor. Defaults to `In`.
     pub flow: Flow,
 }
 ```
@@ -240,8 +250,9 @@ node too. So a `lighting` claim declared on an area appears in its building's, p
 and company's `lighting` series — purpose series roll up the tree exactly like `total`
 does, and `unallocated` at the company reflects everything claimed anywhere below it.
 
-**One meter may feed many purposes.** A heat pump serving both space heating and hot
-water, with its delivered heat reported alongside, is three formulas over one sensor:
+**One sensor may feed many purposes.** A heat pump's electricity channel, serving both
+space heating and hot water with its delivered heat reported alongside, is three formulas
+over one sensor:
 
 ```
 electricity / space_heating = HP_EL × 0.7
@@ -261,9 +272,9 @@ Two invariants keep propagation sound (§5.3):
   the subtree rule (§3.5) already means any two nodes referencing the same sensor are in
   an ancestor/descendant relationship, which is exactly the double-count case.)
 - **A sensor's physical coefficients for one `energy_type` sum to at most 1.** You cannot
-  allocate more of a meter than it measured. Derived claims are a different `energy_type`
-  and sit outside the sum; the bimåler pattern sums to 0 for the submeter (`−1` in space
-  heating, `+1` in DHW) and 1 for the main.
+  allocate more of a sensor than it measured. Derived claims are a different `energy_type`
+  and sit outside the sum; the bimåler pattern sums to 0 for the submeter's sensor (`−1`
+  in space heating, `+1` in DHW) and 1 for the main.
 
 ### 3.7 Physical vs derived claims
 
@@ -288,43 +299,45 @@ other purpose series.
 formula** — both are properties of the installation, which is why they belong on the
 data rather than in a per-node override that someone can forget to declare.
 
-**(a) Nesting — `Sensor.contained_in`.** Nested meters are the norm: a chiller's
-accumulator already contains its three phase meters; a DHW submeter already sits inside
-the building's main heat meter. A blind Σ reads 80 kWh instead of 40, and 155 kWh of
-heat instead of 120.
+**(a) Overlapping readings — `Sensor.contained_in`.** Sensors whose readings overlap are
+the norm: a chiller's accumulating channel already covers its three phase channels
+(usually registers on the *same* device); a DHW submeter's sensor is already covered by
+the building's main heat sensor (a different device). A blind Σ reads 80 kWh instead of
+40, and 155 kWh of heat instead of 120.
 
-The physical fact is *"this meter sits inside that meter"*, so it is recorded once, on
-the sensor:
+The fact is *"this sensor's reading is already included in that one's"*, so it is
+recorded once, on the sensor:
 
 ```
-Sensor cL1  contained_in = ACC      (chiller phase, inside the accumulator)
-Sensor DHW  contained_in = HM1      (submeter, inside the main heat meter)
+Sensor cL1  contained_in = ACC      (phase channel, covered by the accumulating channel)
+Sensor DHW  contained_in = HM1      (submeter, covered by the main heat sensor)
 ```
 
-**Rule:** a contained sensor contributes **0** to `total` at any node where its
+**Rule:** a covered sensor contributes **0** to `total` at any node where its
 container is also present, and **1** where it is not. The container must be attached to
 the contained sensor's own node or to an ancestor of it (§5.3), so the weight is 1 at
 nodes strictly below the container and 0 from the container's node upward. That is the
-physically correct answer at every level for free — a sub-area's own total legitimately
-shows its submeter reading, while the building's total shows the main meter once.
+correct answer at every level for free — a sub-area's own total legitimately shows its
+submeter's reading, while the building's total counts that energy once, via the main
+sensor.
 
-Because containment is structural, **double counting stays structurally impossible** —
+Because the overlap is structural, **double counting stays structurally impossible** —
 the property today's flat explode has, and the one a per-node weight override would have
 surrendered. `Purpose::Total` therefore stays reserved: there is nothing left for a
 `total` formula to express.
 
-**(b) Direction — `Sensor::flow`.** Import and export are always *separate meters* — two
+**(b) Direction — `Sensor::flow`.** Import and export are always *separate sensors* — two
 registers on a bidirectional device, or two channels in a CSV — so the minus sign has to
-live somewhere. Zeroing an export meter is not enough: it only works when export is the
-site's only PV meter, and breaks the moment a production meter exists.
+live somewhere. Zeroing an export sensor is not enough: it only works when export is the
+site's only PV channel, and breaks the moment a production sensor exists.
 
-| Meters | Correct answer | Zeroing export | Signed Σ |
+| Sensors | Correct answer | Zeroing export | Signed Σ |
 |---|---|---|---|
 | import 50, export 30 | 20 net grid | 50 | **20** ✓ |
 | import 50, production 100, export 30 | 120 consumption | 150 ✗ | **120** ✓ |
 
-So an `Out` meter contributes **−1**, at its own node and every ancestor. Unlike
-containment this is absolute, not relational: exported energy leaves the site everywhere.
+So an `Out` sensor contributes **−1**, at its own node and every ancestor. Unlike
+overlap this is absolute, not relational: exported energy leaves the site everywhere.
 
 Together:
 
@@ -338,11 +351,11 @@ unallocated(node, energy_type)  = total − Σ(claims whose `allocates` flag is 
 
 **`total` therefore means net energy across the node's boundary.** Where production is
 metered that equals consumption; where it is not, it equals the net grid position — and
-consumption is simply not recoverable without a production meter, so the model does not
+consumption is simply not recoverable without a production sensor, so the model does not
 pretend otherwise.
 
 `Purpose::Generation` stops being magic: it is now an ordinary reporting purpose (“how
-much did we export”) whose sign is already carried by the meter. It keeps exactly one
+much did we export”) whose sign is already carried by the sensor. It keeps exactly one
 special property — it does not reduce `unallocated`, because exported energy is not a
 slice of consumption.
 
@@ -419,7 +432,7 @@ a sensor):
 `attach_sensor` and `replace_sensor_device` gain an optional `contained_in` and `flow`.
 Because neither can be inferred from the device (§3.3), both are prompted for on the
 add-sensor form rather than hidden behind an advanced section — a forgotten `flow: Out`
-or `contained_in` silently inflates every total above it.
+or `contained_in` silently inflates every total above that sensor.
 
 **Matrix recompute** runs after any command that can change the flattened matrix:
 `set_node_formula`, `delete_node_formula`, `attach_sensor`, `replace_sensor_device`,
@@ -435,7 +448,7 @@ UI: a **"Formler"** tab on the node panel. One card per formula, headed by its
 `(energy_type, purpose)`, with term rows of `[reference ▾] × [coefficient]` and a note
 field. The reference picker offers only the node's descendants, so the subtree rule is
 enforced in the UI as well as in the command. The add-sensor form gains a **"Sidder
-inde i"** select listing meters on the same node or an ancestor. HTML-over-the-wire,
+allerede i"** select listing sensors on the same node or an ancestor. HTML-over-the-wire,
 server-rendered maud.
 
 ### 5.3 Validation
@@ -449,7 +462,7 @@ server-rendered maud.
 | every claim naming a sensor is declared on the **same node** | 409 with the conflicting node |
 | a sensor's physical coefficients for one `energy_type` sum to ≤ 1 | 400 with the running total |
 | `contained_in` names a sensor on the same node or an ancestor, of the same energy type | 400 |
-| `contained_in` does not form a containment cycle | 400 |
+| `contained_in` does not form a cycle | 400 |
 
 ---
 
@@ -577,15 +590,15 @@ Consequences of the chosen options, documented rather than fixed:
 - **The materialised matrix can go stale** if a recompute is skipped by a code path that
   should have triggered one. Recompute lives in the command handler and
   `rebuild_company_matrix` is the manual repair.
-- **Unrecorded nesting or direction still corrupts totals.** Containment and `flow` make
-  the *model* sound, but neither is inferable from the stream (§3.3) — a missing
-  `contained_in` or `flow: Out` silently inflates every total above it. This is an
+- **Unrecorded overlap or direction still corrupts totals.** `contained_in` and `flow`
+  make the *model* sound, but neither is inferable from the stream (§3.3) — a missing
+  value silently inflates every total above that sensor. This is an
   onboarding-data problem, not a modelling one, and the add-sensor form is the only
   mitigation.
 - **Shared plant cannot be apportioned across siblings.** The subtree rule (§3.5) means a
-  node may only reference its own descendants, so a chiller hanging off a property and
-  serving two buildings 60/40 can only be claimed at the property — neither building can
-  take a share. This is a real EMS requirement the model forecloses; lifting it would mean
+  node may only reference its own descendants, so a chiller sensor hanging off a property
+  and serving two buildings 60/40 can only be claimed at the property — neither building
+  can take a share. This is a real EMS requirement the model forecloses; lifting it would mean
   allowing cross-subtree references, which reintroduces cycles and unsafe reparenting.
 - **Coefficients are time-invariant.** A reversible heat pump heats in January and cools
   in July, but `electricity/space_heating = HP × 0.7` applies the same split to every
@@ -602,11 +615,11 @@ Consequences of the chosen options, documented rather than fixed:
 |---|---|
 | `model` domain | `Purpose` and `EnergyType` wire-token round-trip; reserved purposes rejected; `Term`/`NodeFormula` construction |
 | `model` logic | `flatten`: nested coefficient multiplication, override-only defaults, subtree-rule rejection, derived detection, claim propagation to ancestors |
-| `model` logic (§3.8) | containment yields weight 0 at and above the container's node and 1 below it; `flow: Out` yields −1 everywhere; the three-meter PV case nets to 120 and the two-meter case to 20; the handbook cases partition exactly (`space_heating + dhw = total`, `unallocated = 0`) |
+| `model` logic (§3.8) | overlap yields weight 0 at and above the container's node and 1 below it; `flow: Out` yields −1 everywhere; the three-sensor PV case nets to 120 and the two-sensor case to 20; the handbook cases partition exactly (`space_heating + dhw = total`, `unallocated = 0`) |
 | `model` logic (§3.6) | one sensor across several purposes on one node is accepted; claims split across a node and its ancestor are rejected; coefficients summing past 1 are rejected; a derived claim of a different `energy_type` does not count toward the sum |
 | `model` repository | formula + weight-row codec round-trip; `F#HN2#…` and `W#HN2#…` GSI partition queries; cascade delete with the node |
 | `hierarchy` api | `set_node_formula` / `delete_node_formula` happy paths and every validation failure; `writes`-edge gating; matrix recompute fires on each triggering command; `node_formulas` fragment |
-| `hierarchy` html | Formler tab renders terms; reference picker lists only descendants; `contained_in` select lists only same-node/ancestor meters |
+| `hierarchy` html | Formler tab renders terms; reference picker lists only descendants; `contained_in` select lists only same-node/ancestor sensors |
 | Glue | `build_rollups` with a matrix: containment weight 0, subtraction, apportionment, `unallocated` arithmetic, derived rows excluded from totals, new sk/gsi1 shapes |
 | `aggregations` | `parse_sk` with the new segment; `purpose=total` default; `?purpose=` filter; `(energy_type, purpose)` factor lookup incl. `generation → 0` |
 
@@ -636,4 +649,4 @@ unreadable.
   read-side concern, not a formula term.
 - Formula versioning / point-in-time restatement (see §10).
 - Non-linear operators (`abs`, division, min/max).
-- Inferring meter nesting from the data.
+- Inferring reading overlap or flow direction from the data.

@@ -97,7 +97,8 @@
   <p class="eyebrow">Metering model · node formulas</p>
   <h1>Node-formula roll-up</h1>
   <p class="sub">Sensors are plain raw values — no formula, no per-sensor factor. A sensor knows which
-  <b>energy type</b> it measures, which meter it sits inside, and which way energy flows through it.
+  <b>energy type</b> it measures, whether another sensor's reading already covers it, and which way
+  energy flows through it.
   Hierarchy nodes carry formulas that declare an <b>(energy type, purpose)</b> output and combine
   descendant sensors with coefficients. Pick an energy type and a purpose to watch the same tree answer
   a different question.</p>
@@ -109,9 +110,9 @@
   <div class="panel">
     <div class="rule">
       <span class="k">What changed:</span> the formula moved off the sensors and onto the nodes — and the one
-      mis-named axis split into two. <span class="muted"><b>Energy type</b> (energitype) is what the meter
+      mis-named axis split into two. <span class="muted"><b>Energy type</b> (energitype) is what the sensor
       physically measures; it stays on the sensor. <b>Purpose</b> (formål) is what the energy is spent on; the
-      node declares it, because the same meter's kWh can be space heating here and DHW there. There is no
+      node declares it, because the same sensor's kWh can be space heating here and DHW there. There is no
       “metric” axis: CO₂ and cost are derived from <code>(energy_type, purpose)</code> at read time, so the
       demo's old per-sensor emission factor is gone.</span>
     </div>
@@ -122,22 +123,24 @@
         bucketing and the roll-up keeps its one-pass shape.</div>
       <div class="card"><span class="hd">Overrides only</span>
         A formula lists only what <b>differs</b> from the default. Any sensor nobody mentions still counts at
-        weight <b>1</b> — so attaching a meter always moves the numbers and nothing is silently dropped.</div>
-      <div class="card"><span class="hd">Nesting is a fact, not a formula</span>
-        A submeter records <b>which meter it sits inside</b>. It then counts <b>0</b> wherever its container is
-        also present, and <b>1</b> where it is not — automatically, at every level. Double counting stays
-        structurally impossible instead of depending on someone remembering an override.</div>
+        weight <b>1</b> — so attaching a sensor always moves the numbers and nothing is silently dropped.</div>
+      <div class="card"><span class="hd">Overlap is a fact, not a formula</span>
+        A sensor records <b>which other reading already includes it</b> — an accumulating channel over its
+        phase channels, usually on the very same device. It then counts <b>0</b> wherever that sensor is also
+        present, and <b>1</b> where it is not, automatically at every level. Double counting stays structurally
+        impossible instead of depending on someone remembering an override.</div>
       <div class="card"><span class="hd">Direction is a fact too</span>
-        Import and export are separate meters, so the minus sign has to live somewhere. It lives on the
-        <b>export meter</b> (<code>flow: out</code>), not in a node formula — said once, correct at every level
-        above. Neither this nor nesting can be read off the device, so both are entered at onboarding.</div>
+        Import and export are separate sensors — two registers on one device — so the minus sign has to live
+        somewhere. It lives on the <b>export sensor</b> (<code>flow: out</code>), not in a node formula: said
+        once, correct at every level above. Neither fact can be read off the channel, so both are entered at
+        onboarding.</div>
       <div class="card"><span class="hd">Total &amp; unallocated</span>
         <b>total</b> is the <b>net energy across the node's boundary</b>: Σ in − Σ out. Fully metered that is
-        consumption; without a production meter it is the net grid position. <b>unallocated</b> = total − claimed,
+        consumption; without a production sensor it is the net grid position. <b>unallocated</b> = total − claimed,
         so partial instrumentation shows up as a number instead of disappearing.</div>
       <div class="card"><span class="hd">Claims propagate up</span>
         A purpose claimed on an area is claimed for its building, property and company too — purpose series roll
-        up the tree exactly like total does. One meter may feed <b>many</b> purposes, but all of its claims are
+        up the tree exactly like total does. One sensor may feed <b>many</b> purposes, but all of its claims are
         declared on <b>one</b> node, and its coefficients for a given energy type sum to at most 1.</div>
       <div class="card"><span class="hd">Derived rows</span>
         When the declared output energy type differs from the sensors' — gas m³ × brændværdi × virkningsgrad,
@@ -149,7 +152,7 @@
     </div>
     <div id="tree" style="margin-top:12px"></div>
     <div class="legend">
-      <span><i style="background:var(--violet)"></i>meter node</span>
+      <span><i style="background:var(--violet)"></i>meter node (groups sensors)</span>
       <span><i style="background:var(--amber)"></i>declares a formula</span>
       <span><i style="background:#5f7385"></i>default Σ</span>
       <span><i style="background:var(--green)"></i>derived (not in any total)</span>
@@ -173,9 +176,10 @@ const PUR={total:"Total", unallocated:"Unallocated", space_heating:"Space heatin
            plug_loads:"Plug loads", generation:"Generation"};
 
 // Sensors: a raw value series, the energy type they measure, and two facts about
-// the installation that nothing can infer from the data — which meter this one
-// sits inside (`in`), and which way energy flows through it (`flow`, default in).
-// No formula, no factor.
+// the installation that nothing can infer from the data — which other sensor's
+// reading already includes this one (`in`), and which way energy flows through it
+// (`flow`, default in). A "meter" is a physical device and appears here only as a
+// node type; its channels are these sensors. No formula, no factor.
 const SENS={
   L1 :{name:"Phase L1",      et:"electricity",      v:[30,32,31,33]},
   L2 :{name:"Phase L2",      et:"electricity",      v:[28,29,30,31]},
@@ -217,7 +221,7 @@ const N={
   CHILLPH:{name:"Chiller phase panel",type:"meter",s:["cL1","cL2","cL3"]},
   A1b:{name:"Area A1b",type:"area",s:["IMP","PRD","EXP"],f:[
     {et:"electricity",pur:"generation",terms:[["EXP",1]],
-     note:"reporting only — the minus sign lives on the meter, not here"},
+     note:"reporting only — the minus sign lives on the sensor, not here"},
   ]},
 
   A2:{name:"Building A2",type:"building",s:["HM2"],f:[
@@ -229,7 +233,7 @@ const N={
   B1:{name:"Building B1",type:"building",s:["LGT","AHU","HP"],f:[
     {et:"electricity",pur:"lighting",terms:[["LGT",1]]},
     {et:"electricity",pur:"ventilation",terms:[["AHU",1]]},
-    // One meter, three formulas — all declared on THIS node. The two electricity
+    // One sensor, three formulas — all declared on THIS node. The two electricity
     // coefficients sum to 1, so nothing is over- or under-allocated.
     {et:"electricity",pur:"space_heating",terms:[["HP",0.7]],note:"heat pump, annual split"},
     {et:"electricity",pur:"dhw",terms:[["HP",0.3]]},
@@ -252,8 +256,8 @@ const isDerived=f=>f.terms.some(([ref])=>SENS[ref].et!==f.et);
 const formAt=(node,et,pur)=>FORMS.find(f=>f.node===node&&f.et===et&&f.pur===pur);
 
 // A sensor's weight in `total`, evaluated AT a node:
-//   0  if the meter it sits inside is also present under this node — relational,
-//      because the same energy is already counted by the container;
+//   0  if the sensor that already covers it is also present under this node —
+//      relational, because that energy is counted once by the covering sensor;
 //   −1 if energy flows OUT through it — absolute, at every level;
 //   +1 otherwise.
 // So `total` is the net energy across the node's boundary. Fully metered, that
@@ -323,8 +327,8 @@ function sparkline(series,der){
     `<i class="${i===slot?"cur":""}" style="height:${Math.max(8,Math.abs(v)/max*100)}%"></i>`).join("")+`</div>`;
 }
 
-// Descendant sensors this node drops from `total`, and why — the containment and
-// outflow rules made visible at the node where they actually bite.
+// Descendant sensors this node drops from `total`, and why — the overlap and
+// direction rules made visible at the node where they actually bite.
 function droppedUnder(id){
   const mine=sensorsUnder(id).filter(s=>SENS[s].et===et);
   const nested=mine.filter(s=>totalWeight(s,id)===0);
@@ -332,7 +336,7 @@ function droppedUnder(id){
   const parts=[];
   if(nested.length){
     const containers=[...new Set(nested.map(s=>SENS[SENS[s].in].name))].join(", ");
-    parts.push(`skipping ${nested.length} meter${nested.length>1?"s":""} inside ${containers}`);
+    parts.push(`skipping ${nested.length} reading${nested.length>1?"s":""} already in ${containers}`);
   }
   if(out.length){
     const names=out.map(s=>SENS[s].name).join(", ");
@@ -371,11 +375,11 @@ function sensorRows(id){
     if(pur==="total"){
       const w=totalWeight(sid,id);
       if(w===0){
-        tag=`<span class="stag inside">inside ${SENS[SENS[sid].in].name}</span>`; cls=" off";
+        tag=`<span class="stag inside">already in ${SENS[SENS[sid].in].name}</span>`; cls=" off";
       }else if(w===-1){
         tag=`<span class="stag sub">flow out · subtracted</span>`; cls=" neg";
       }else if(SENS[sid].in){
-        tag=`<span class="stag own">submeter · counts here</span>`;
+        tag=`<span class="stag own">counts here</span>`;
       }
     }else if(f){
       const t=f.terms.find(([r])=>r===sid);

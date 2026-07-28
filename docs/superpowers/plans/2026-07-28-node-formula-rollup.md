@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move consumption formulas off sensors and onto hierarchy nodes, splitting the single mis-named `purpose` axis into `energy_type` (what a meter measures) and `purpose` (what the energy is spent on), and make the Glue roll-up evaluate those formulas.
+**Goal:** Move consumption formulas off sensors and onto hierarchy nodes, splitting the single mis-named `purpose` axis into `energy_type` (what a sensor measures) and `purpose` (what the energy is spent on), and make the Glue roll-up evaluate those formulas.
 
-**Architecture:** A sensor becomes a raw value carrying its `EnergyType` and, where it applies, the meter it physically sits inside. Hierarchy nodes hold `NodeFormula` items declaring an `(energy_type, purpose)` output as weighted linear terms over their own descendants. `crates/model` owns the flattening into a weight matrix; the hierarchy service **materialises** that matrix into `hierarchy_new`, and the Glue job reads the flat rows cross-account and joins them to `logical_meter_data`. Glue holds no formula semantics at all. Purely linear terms mean evaluation commutes with hour/day bucketing, so the roll-up keeps its single explode + groupBy shape.
+**Architecture:** A sensor becomes a raw value carrying its `EnergyType` and, where they apply, two facts about the installation — which other sensor's reading already includes its own, and which way energy flows through it. Hierarchy nodes hold `NodeFormula` items declaring an `(energy_type, purpose)` output as weighted linear terms over their own descendants. `crates/model` owns the flattening into a weight matrix; the hierarchy service **materialises** that matrix into `hierarchy_new`, and the Glue job reads the flat rows cross-account and joins them to `logical_meter_data`. Glue holds no formula semantics at all. Purely linear terms mean evaluation commutes with hour/day bucketing, so the roll-up keeps its single explode + groupBy shape.
 
 **Tech Stack:** Rust (workspace: `model`, `api`, `services/hierarchy`, `services/aggregations`), maud + HTMX server-rendered HTML, DynamoDB (`hierarchy_new`, `measurements_aggregate`), Scala/Flink on MSF, Iceberg S3 Tables, PySpark on Glue, Go CDK, Astro frontend.
 
@@ -22,6 +22,7 @@
 - UI is HTML-over-the-wire (HTMX). Never introduce client-side JSON rendering.
 - CSS uses **grid**, never flexbox.
 - Naming: the type is `EnergyType`, the wire token and field name is `energy_type`, the Danish UI label is *Energitype*.
+- Vocabulary: the system's inputs are **sensors** (one per device channel/register). A *meter* is a physical device, and exists in the hierarchy only as a **node type**. State every rule over sensors — an accumulating channel and its phase channels are usually registers on one device, so `contained_in` means "this sensor's reading is already included in that one's", never "this meter sits inside that meter".
 - Roll-up sort key after this change: `<node_path>#<energy_type>#<purpose>#<gran>#<bucket>`. GSI: `gsi1pk = HN2#<id>#<dimension>#<purpose>`, `gsi1sk = <node_path>#<gran>#<bucket>`.
 
 ---
@@ -115,7 +116,7 @@ Insert into `crates/model/src/domain/values.rs` immediately after the `impl Ener
 // ---------------------------------------------------------------------------
 
 /// The **formål** — what the energy is spent on. Independent of [`EnergyType`]
-/// (the energitype a meter physically measures): electricity serves lighting,
+/// (the energitype a sensor physically measures): electricity serves lighting,
 /// cooling and ventilation alike, and space heating can arrive as district
 /// heating, gas or a heat pump. The taxonomy follows Energihåndbogen 2019's
 /// chapters.
@@ -149,8 +150,9 @@ pub enum Purpose {
     /// level, so tariffs and emission factors never bill exported energy.
     #[strum(serialize = "generation")]
     Generation,
-    /// The default Σ series, emitted by the roll-up job. Not declarable — meter
-    /// nesting is recorded on the sensor (`contained_in`), not as an override.
+    /// The default Σ series, emitted by the roll-up job. Not declarable —
+    /// overlapping readings and flow direction are recorded on the sensor
+    /// (`contained_in`, `flow`), not as per-node overrides.
     #[strum(serialize = "total")]
     Total,
     /// `total − Σ(claimed)`. Emitted by the roll-up job; never declarable.
@@ -213,7 +215,7 @@ git commit -m "feat(model)!: rename Resource -> EnergyType; add the Purpose (for
   - `Term { reference: Reference, coefficient: f64 }`
   - `NodeFormula { node: NodeId, energy_type: EnergyType, purpose: Purpose, terms: Vec<Term>, note: Option<String> }`
   - `NodeFormula::sk(&self) -> String` → `"formula#<energy_type>#<purpose>"`
-  - `Flow` — `enum { In, Out }`, `Default = In`, wire tokens `"in"` / `"out"`
+  - `Flow` — `enum { In, Out }`, `Default = In`, wire tokens `"in"` / `"out"` — the direction energy flows through a **sensor** (one register), not through a device
   - `Sensor.contained_in: Option<SensorId>`, `Sensor.flow: Flow`; `Sensor.formula` no longer exists
   - `sensor::parent_path(&Sensor) -> &str` — the sensor's path minus its trailing `|S#<id>` segment
   - `sensors::attach` loses `formula: Formula`, gains `contained_in: Option<SensorId>` and `flow: Flow`
@@ -291,7 +293,7 @@ Add to `mod tests` in `crates/model/src/domain/sensor.rs`:
         assert_eq!(parent_path(&s), "HN0#root|HN5#10042");
     }
 
-    /// Both installation facts default to the common case: not nested, flowing in.
+    /// Both installation facts default to the common case: not covered, flowing in.
     #[test]
     fn installation_facts_default_to_the_common_case() {
         let s = make_sample();
@@ -322,7 +324,7 @@ Prepend to `crates/model/src/domain/node_formula.rs` (above the test module):
 //!
 //! A node declares an `(energy_type, purpose)` output as a weighted linear
 //! combination of **its own descendants**. Terms store only what differs from
-//! the default weight of 1, so attaching a meter always moves the numbers and
+//! the default weight of 1, so attaching a sensor always moves the numbers and
 //! nothing is silently dropped.
 
 use std::fmt;
@@ -389,14 +391,16 @@ In `crates/model/src/domain/mod.rs`, replace `pub mod formula;` with `pub mod no
 
 - [ ] **Step 4: Add the two installation facts to `Sensor`**
 
-Neither is inferable from the device — a survey of the live `raw_data` corpus found channel names to be opaque (`a04` spans 42 330 devices; `volume` carries `kWh` while `energy` carries `J`; nothing in the corpus encodes direction). Both are entered at onboarding.
+Neither is inferable from the channel — a survey of the live `raw_data` corpus found channel names to be opaque (`a04` spans 42 330 devices; `volume` carries `kWh` while `energy` carries `J`; nothing in the corpus encodes direction). Both are entered at onboarding.
 
 In `crates/model/src/domain/values.rs`, add:
 
 ```rust
-/// Which way energy flows through a meter. Import, production and submeters are
-/// `In`; grid export and PV feed-in are `Out` and contribute negatively to
-/// `total`, which is therefore the net energy across a node's boundary.
+/// Which way energy flows through a sensor. Import, production and submeter
+/// channels are `In`; grid export and PV feed-in are `Out` and contribute
+/// negatively to `total`, which is therefore the net energy across a node's
+/// boundary. A bidirectional device exposes both as separate sensors (OBIS
+/// 1.8.0 and 2.8.0), so this is a per-channel fact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default,
          strum::Display, strum::EnumString, EnumIter)]
 #[strum(ascii_case_insensitive)]
@@ -412,17 +416,17 @@ pub enum Flow {
 In `crates/model/src/domain/sensor.rs`, delete the `use crate::domain::formula::Formula;` import and the two `formula` struct lines, then add:
 
 ```rust
-    /// The meter this one physically sits inside, if any. A contained sensor
-    /// contributes 0 to `total` at any node where its container is also present,
-    /// and its own weight where it is not — see `logic::formulas`. Recorded on
-    /// the sensor because it is a fact about the installation rather than a
-    /// per-node accounting choice.
+    /// The sensor whose reading already includes this one's, if any — an
+    /// accumulating channel over its phase channels (usually the same device),
+    /// or a main heat sensor over a DHW submeter (a different one). A covered
+    /// sensor contributes 0 to `total` at any node where its container is also
+    /// present, and its own weight where it is not — see `logic::formulas`.
     #[builder(default)]
     pub contained_in: Option<SensorId>,
 
-    /// Direction of flow. `Out` meters (grid export, PV feed-in) contribute −1.
-    /// Import and export are always separate meters, so the sign has to live
-    /// somewhere; on the meter it is said once and is correct at every level.
+    /// Direction of flow. `Out` sensors (grid export, PV feed-in) contribute −1.
+    /// Import and export are always separate sensors, so the sign has to live
+    /// somewhere; on the sensor it is said once and is correct at every level.
     #[builder(default)]
     pub flow: Flow,
 ```
@@ -486,7 +490,7 @@ git commit -m "feat(model)!: node-formula types + Sensor.contained_in; delete se
 - A term referencing a **sensor** emits one claim.
 - A term referencing a **node** expands to every sensor under that node whose `energy_type` equals the formula's, each at `coefficient × total_weight_at(sensor, that node's path)`.
 - `total_weight_at(s, N)` = 0 if `s.contained_in` is a sensor present under `N`; else −1 if `s.flow == Flow::Out`; else 1. So `total` is the **net energy across the node's boundary**.
-- `total_overrides` is an **exception list**: only `(node, sensor)` pairs whose weight is not 1. Containment contributes a **0** row per ancestor-or-self path of the *container's* node; `Flow::Out` contributes a **−1** row per ancestor-or-self path of the *sensor's own* node.
+- `total_overrides` is an **exception list**: only `(node, sensor)` pairs whose weight is not 1. Overlap contributes a **0** row per ancestor-or-self path of the *container's* node; `Flow::Out` contributes a **−1** row per ancestor-or-self path of the *sensor's own* node.
 - `is_derived(f)` = any referenced **sensor**'s energy type differs from the formula's output. Node references never make a formula derived.
 
 - [ ] **Step 1: Write the failing tests**
@@ -523,7 +527,7 @@ mod tests {
             .build()
     }
 
-    /// A meter energy flows OUT through — grid export, PV feed-in.
+    /// A sensor energy flows OUT through — grid export, PV feed-in.
     fn out_sensor(id: u32, node_path: &str, et: EnergyType) -> Sensor {
         Sensor { flow: Flow::Out, ..sensor(id, node_path, et, None) }
     }
@@ -532,9 +536,9 @@ mod tests {
         Term { reference: r, coefficient: c }
     }
 
-    /// The chiller from the presentation: the accumulator (S#1) hangs off the
-    /// chiller node; its three phase meters hang off a child panel node and are
-    /// recorded as sitting inside the accumulator.
+    /// The chiller from the presentation: the accumulating channel (S#1) hangs
+    /// off the chiller node; its three phase channels hang off a child panel node
+    /// and record that the accumulator already covers them.
     fn chiller_graph() -> CompanyGraph {
         let chill = format!("{CO}|HN5#5");
         let panel = format!("{chill}|HN6#6");
@@ -569,9 +573,9 @@ mod tests {
         assert_eq!(total_weight_at(&g, &sens(&g, 1), &format!("{CO}|HN5#5")), 1.0);
     }
 
-    /// Containment is RELATIONAL: the phases count 0 where the accumulator is
-    /// also present (the chiller and above), and 1 where it is not (their own
-    /// panel). Both answers are physically correct.
+    /// Overlap is RELATIONAL: the phase channels count 0 where the accumulating
+    /// channel is also present (the chiller and above), and 1 where it is not
+    /// (their own panel). Both answers are correct.
     #[test]
     fn containment_zeroes_only_where_the_container_is_present() {
         let g = chiller_graph();
@@ -581,14 +585,14 @@ mod tests {
             assert_eq!(total_weight_at(&g, &sens(&g, id), &panel), 1.0,
                        "phase {id} counts at its own panel");
             assert_eq!(total_weight_at(&g, &sens(&g, id), &chill), 0.0,
-                       "phase {id} is inside the accumulator at the chiller");
+                       "phase {id} is already covered by the accumulator at the chiller");
             assert_eq!(total_weight_at(&g, &sens(&g, id), CO), 0.0,
                        "…and at every ancestor above it");
         }
     }
 
-    /// A PV site: import, production and export are three separate meters.
-    /// Direction is ABSOLUTE — an `Out` meter is negative at every level.
+    /// A PV site: import, production and export are three separate sensors.
+    /// Direction is ABSOLUTE — an `Out` sensor is negative at every level.
     fn pv_graph(with_production: bool) -> CompanyGraph {
         let area = format!("{CO}|HN5#7");
         let mut sensors = vec![
@@ -617,7 +621,7 @@ mod tests {
 
     /// Signed Σ gives the right answer for BOTH metering setups: true consumption
     /// when production is metered (50 + 100 − 30), the net grid position when it
-    /// is not (50 − 30). Zeroing the export meter would give 150 and 50.
+    /// is not (50 − 30). Zeroing the export sensor would give 150 and 50.
     #[test]
     fn signed_total_handles_both_pv_setups() {
         let readings = |g: &CompanyGraph, path: &str| -> f64 {
@@ -631,7 +635,7 @@ mod tests {
                 .sum()
         };
         assert_eq!(readings(&pv_graph(true), CO), 120.0, "fully metered");
-        assert_eq!(readings(&pv_graph(false), CO), 20.0, "no production meter");
+        assert_eq!(readings(&pv_graph(false), CO), 20.0, "no production sensor");
     }
 
     /// The exception list carries −1 for outflow, one row per ancestor of the
@@ -785,7 +789,7 @@ pub struct CompanyGraph {
 }
 
 /// One declared `(node, energy_type, purpose, sensor)` weight. The roll-up job
-/// multiplies each meter reading by `coefficient` and groups by the declaring
+/// multiplies each sensor reading by `coefficient` and groups by the declaring
 /// node's ancestor paths.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Claim {
@@ -840,9 +844,9 @@ fn ancestors_inclusive(path: &str) -> Vec<String> {
 }
 
 /// A sensor's weight in the `total` series **evaluated at `node_path`**
-/// (spec §3.8): 0 where the meter it sits inside is also present (relational),
-/// −1 where energy flows out (absolute), else 1. `total` is therefore the net
-/// energy across the node's boundary.
+/// (spec §3.8): 0 where the sensor that already covers it is also present
+/// (relational), −1 where energy flows out (absolute), else 1. `total` is
+/// therefore the net energy across the node's boundary.
 pub fn total_weight_at(g: &CompanyGraph, s: &Sensor, node_path: &str) -> f64 {
     let contained = s
         .contained_in
@@ -887,9 +891,9 @@ fn expand(g: &CompanyGraph, f: &NodeFormula, t: &Term) -> Vec<(SensorId, f64)> {
 
 /// The exception list of non-default `total` weights.
 ///
-/// Containment yields a **0** row per ancestor-or-self path of the **container's**
-/// node — exactly the nodes where both meters are present, and below which the
-/// submeter still counts normally. `Flow::Out` yields a **−1** row per
+/// Overlap yields a **0** row per ancestor-or-self path of the **container's**
+/// node — exactly the nodes where both sensors are present, and below which the
+/// covered sensor still counts normally. `Flow::Out` yields a **−1** row per
 /// ancestor-or-self path of the **sensor's own** node, since exported energy
 /// leaves the site at every level.
 fn total_overrides(g: &CompanyGraph) -> Vec<TotalOverride> {
@@ -910,7 +914,7 @@ fn total_overrides(g: &CompanyGraph) -> Vec<TotalOverride> {
         }
         if s.flow == Flow::Out {
             // Nodes at/above the container already carry a 0 row, which wins —
-            // a meter inside another is not double counted, whichever way it flows.
+            // a covered sensor is not double counted, whichever way it flows.
             let zeroed: Vec<String> = s
                 .contained_in
                 .and_then(|c| g.sensor(c))
@@ -1035,8 +1039,9 @@ Append inside the existing `mod tests` in `crates/model/src/logic/formulas.rs`:
         assert!(validate(&g, &f).unwrap_err().contains("descendant"));
     }
 
-    /// One meter may feed MANY purposes — a heat pump splitting between space
-    /// heating and DHW, with delivered heat alongside. All on the same node.
+    /// One sensor may feed MANY purposes — a heat pump's electricity channel
+    /// splitting between space heating and DHW, with delivered heat alongside.
+    /// All declared on the same node.
     #[test]
     fn validate_accepts_one_sensor_across_several_purposes() {
         let mut g = chiller_graph();
@@ -1066,7 +1071,7 @@ Append inside the existing `mod tests` in `crates/model/src/logic/formulas.rs`:
         assert!(validate(&g, &scop).is_ok());
     }
 
-    /// Claims for one sensor must all live on ONE node. Split across a node and
+    /// Claims naming one sensor must all live on ONE node. Split across a node and
     /// its ancestor the arithmetic is consistent, but the descendant reports the
     /// ancestor's share as `unallocated` — claims only travel up.
     #[test]
@@ -1082,7 +1087,7 @@ Append inside the existing `mod tests` in `crates/model/src/logic/formulas.rs`:
         assert!(e.contains("already claimed"), "got: {e}");
     }
 
-    /// You cannot allocate more of a meter than it measured.
+    /// You cannot allocate more of a sensor than it measured.
     #[test]
     fn validate_rejects_coefficients_summing_past_one() {
         let mut g = chiller_graph();
@@ -1100,8 +1105,8 @@ Append inside the existing `mod tests` in `crates/model/src/logic/formulas.rs`:
         assert!(e.contains("sum"), "got: {e}");
     }
 
-    /// The bimåler pattern nets to 0 for the submeter and 1 for the main, so it
-    /// must pass: −1 in space heating, +1 in DHW.
+    /// The bimåler pattern nets to 0 for the submeter's sensor and 1 for the
+    /// main, so it must pass: −1 in space heating, +1 in DHW.
     #[test]
     fn validate_accepts_the_bimaaler_pattern() {
         let b = format!("{CO}|HN4#9");
@@ -1151,8 +1156,8 @@ Append inside the existing `mod tests` in `crates/model/src/logic/formulas.rs`:
     #[test]
     fn containment_rejects_a_container_below_the_sensor() {
         let mut g = chiller_graph();
-        // Flip it: make the accumulator claim to sit inside a phase meter, which
-        // lives on a DEEPER node. The container must be at or above.
+        // Flip it: make the accumulating channel claim to be covered by a phase
+        // channel, which lives on a DEEPER node. The container must be at or above.
         let mut acc = sens(&g, 1);
         acc.contained_in = Some(SensorId::make(2));
         g.sensors[0] = acc.clone();
@@ -1212,7 +1217,7 @@ pub fn validate(g: &CompanyGraph, f: &NodeFormula) -> Result<(), String> {
         }
         if t.coefficient == 0.0 {
             return Err(format!(
-                "coefficient for {} must be non-zero — to exclude a nested meter, \
+                "coefficient for {} must be non-zero — to exclude a covered sensor, \
                  record it as contained_in its container instead",
                 t.reference
             ));
@@ -1245,7 +1250,7 @@ pub fn validate(g: &CompanyGraph, f: &NodeFormula) -> Result<(), String> {
             o.node != f.node && o.terms.iter().any(|ot| ot.reference == t.reference)
         }) {
             return Err(format!(
-                "sensor {} is already claimed by node {} — all of a meter's claims must \
+                "sensor {} is already claimed by node {} — all of a sensor's claims must \
                  be declared on one node",
                 id, other.node
             ));
@@ -1253,7 +1258,7 @@ pub fn validate(g: &CompanyGraph, f: &NodeFormula) -> Result<(), String> {
     }
 
     // A sensor's physical coefficients for one energy type sum to at most 1 —
-    // you cannot allocate more of a meter than it measured. Derived claims are a
+    // you cannot allocate more of a sensor than it measured. Derived claims are a
     // different energy type and sit outside the sum.
     for t in &f.terms {
         let Reference::Sensor(id) = &t.reference else {
@@ -1283,24 +1288,24 @@ pub fn validate(g: &CompanyGraph, f: &NodeFormula) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate a sensor's `contained_in`: the container must measure the same
+/// Validate a sensor's `contained_in`: the covering sensor must measure the same
 /// energy type, hang off the sensor's own node or an ancestor of it, and the
-/// containment chain must not cycle. `flow` needs no validation — either
-/// direction is legal on any meter.
+/// chain must not cycle. `flow` needs no validation — either direction is legal
+/// on any sensor.
 pub fn validate_containment(g: &CompanyGraph, s: &Sensor) -> Result<(), String> {
     let Some(container_id) = s.contained_in else {
         return Ok(());
     };
     if container_id == s.id {
-        return Err("a meter cannot sit inside itself".to_string());
+        return Err("a sensor cannot cover itself".to_string());
     }
     let Some(container) = g.sensor(container_id) else {
         return Err(format!("sensor {container_id} not found in this company"));
     };
     if container.energy_type != s.energy_type {
         return Err(format!(
-            "sensor {container_id} measures {} — a meter can only sit inside one of the \
-             same energy type ({})",
+            "sensor {container_id} measures {} — a sensor can only be covered by one of \
+             the same energy type ({})",
             container.energy_type, s.energy_type
         ));
     }
@@ -2051,7 +2056,7 @@ fn node_formulas_do_not_offer_reserved_purposes() {
 fn add_sensor_form_asks_for_both_installation_facts() {
     let html = render_add_sensor_form_fixture();
     assert!(html.contains("name=\"contained_in\""));
-    assert!(html.contains("Sidder inde i"));
+    assert!(html.contains("Indgår allerede i"));
     assert!(html.contains("name=\"flow\""));
     assert!(html.contains("Retning"));
     assert!(html.contains("value=\"out\""));
@@ -2087,15 +2092,16 @@ In the add-sensor form in `crates/services/hierarchy/src/html/forms.rs`:
 
 ```rust
     label {
-        "Sidder inde i"
+        "Indgår allerede i"
         select name="contained_in" {
-            option value="" { "— ikke inde i en anden måler —" }
+            option value="" { "— indgår ikke i en anden måling —" }
             @for s in candidate_containers {
                 option value=(s.id) { (s.daq_id) " (" (s.energy_type) ")" }
             }
         }
         span class="hint" {
-            "Vælg den måler denne sidder inde i, så forbruget ikke tælles dobbelt."
+            "Vælg den måling der allerede dækker denne — fx en akkumuleret kanal \
+             over sine fasekanaler — så forbruget ikke tælles dobbelt."
         }
     }
 
@@ -2106,7 +2112,7 @@ In the add-sensor form in `crates/services/hierarchy/src/html/forms.rs`:
             option value="out" { "Ud — eksport til nettet, solcelle-feed-in" }
         }
         span class="hint" {
-            "Målere med retning \"ud\" trækkes fra i totalen."
+            "Målinger med retning \"ud\" trækkes fra i totalen."
         }
     }
 ```
@@ -2282,7 +2288,7 @@ aws dynamodb query --profile stel-sb --table-name hierarchy_new --index-name gsi
   --query 'Items[].{kind:kind.S,sk:sk.S,coef:coefficient.N}' --max-items 10
 ```
 
-Expected: weight rows for the company (empty is correct if it has no formulas and no contained meters yet).
+Expected: weight rows for the company (empty is correct if it has no formulas and no covered sensors yet).
 
 - [ ] **Step 5: Commit**
 
@@ -2500,7 +2506,7 @@ def test_sort_key_carries_the_purpose_segment(spark):
 
 def test_total_honours_the_override_exception_list(spark):
     out = _by_sk(m.build_rollups(_input(spark), _matrix(), run_at_iso="2026-06-07T09:05:00Z"))
-    # 10009 contributes 4+6 = 10; 10010's 5 is zeroed at HN2#2 (nested meter).
+    # 10009 contributes 4+6 = 10; 10010's 5 is zeroed at HN2#2 (covered sensor).
     assert out["HN2#2#electricity#total#h#2026-06-07T08"]["sum"] == 10.0
 
 
@@ -3189,9 +3195,9 @@ On a scratch company, build the presentation's shape and record:
 
 | Where | What |
 |---|---|
-| Chiller phase panel sensors | `contained_in` = the accumulator |
-| Building A1 DHW submeter | `contained_in` = the main heat meter |
-| Area A1b grid-export meter | `flow` = **out** (import and production stay `in`) |
+| Chiller phase-channel sensors | `contained_in` = the accumulating channel |
+| Building A1 DHW submeter sensor | `contained_in` = the main heat sensor |
+| Area A1b grid-export sensor | `flow` = **out** (import and production stay `in`) |
 | Chiller | `electricity/cooling` = accumulator × 1 |
 | Chiller | `district_cooling/cooling` = accumulator × 3.2 |
 | Area A1b | `electricity/generation` = export × 1 (reporting only) |
@@ -3215,10 +3221,10 @@ aws glue start-job-run --profile daq_dev --job-name measurements-aggregate \
 
 Query `get_purpose_split` per fixture node and check:
 
-1. **No double counting** — the chiller's `electricity/total` equals its `electricity/cooling`; the phase panel's own `electricity/total` equals the phase sum. Both are true at once, which is the point of containment being relational.
+1. **No double counting** — the chiller's `electricity/total` equals its `electricity/cooling`; the phase panel's own `electricity/total` equals the phase sum. Both are true at once, which is the point of the overlap rule being relational.
 2. **Exact partition** — Building A1's `district_heating`: `space_heating + dhw == total`, `unallocated == 0`. Same for A2 with the 0.28/0.72 split.
-3. **Signed total** — Area A1b's `electricity/total` equals `import + production − export`. Remove the production meter from the fixture and it becomes `import − export`; both are correct, and neither is the 150 that zeroing the export meter would give.
-4. **One meter, many purposes** — Building B1's `electricity`: `lighting + ventilation + space_heating + dhw == total`, `unallocated == 0`, with the heat pump's 0.7/0.3 split summing to exactly one meter.
+3. **Signed total** — Area A1b's `electricity/total` equals `import + production − export`. Remove the production sensor from the fixture and it becomes `import − export`; both are correct, and neither is the 150 that zeroing the export sensor would give.
+4. **One sensor, many purposes** — Building B1's `electricity`: `lighting + ventilation + space_heating + dhw == total`, `unallocated == 0`, with the heat pump's 0.7/0.3 split summing to exactly one sensor's reading.
 5. **Derived rows float free** — `district_cooling/cooling` and both `heat/space_heating` sources are non-zero while their `total` and `unallocated` are 0.
 6. **The matrix is live** — edit one formula, re-run the job, and confirm the numbers move without any manual rebuild.
 
@@ -3243,7 +3249,7 @@ git commit -m "docs: record node-formula roll-up acceptance results"
 
 **Gap found and closed:** §12 says wipe `measurements_aggregate` and re-run, without saying old rows become unreadable when the sort key gains a segment — made explicit in Task 11 Step 8. Likewise, existing companies have no weight rows after Phase 1, so Task 8 Step 3 seeds them via `rebuild_company_matrix`.
 
-**Gap found and closed:** containment and `flow` can both apply to one meter (a submeter that also exports). Task 3's `total_overrides` resolves it explicitly — the containment 0 row wins over the −1 row at nodes where the container is present, so a nested meter is never double counted whichever way it flows.
+**Gap found and closed:** `contained_in` and `flow` can both apply to one sensor (a covered channel that also exports). Task 3's `total_overrides` resolves it explicitly — the containment 0 row wins over the −1 row at nodes where the container is present, so a covered sensor is never double counted whichever way it flows.
 
 **No Glue change from the `Flow` work.** The roll-up consumes `total_overrides` as opaque `(node_path, sensor, coefficient)` rows and multiplies; a coefficient of −1 needs no code change, which is the payoff of materialising the matrix (D6). Task 11's tests still exercise only 0-weight overrides, which is correct — the −1 path is covered in Task 3 where the rule lives.
 
