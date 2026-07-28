@@ -9,7 +9,7 @@ import { RESOURCE_LABELS, resolveLevelId, aggBase } from "../lib/agg";
 // from sessionStorage (same contract as AggregationChartWrapper), no page JS.
 
 interface Row {
-  purpose: string; // carries the resource (electricity, water, district_heating, …)
+  energy_type: string; // what the sensor measures (electricity, water, district_heating, …)
   unit: string;
   timestamp: string;
   value: number;
@@ -74,8 +74,8 @@ export default function ResourceChart({ levelId, resolution = "daily", days = 30
         const byResource = new Map<string, number[]>();
         let firstUnit = "";
         for (const r of rows) {
-          if (!byResource.has(r.purpose)) byResource.set(r.purpose, new Array(cats.length).fill(0));
-          byResource.get(r.purpose)![idx.get(r.timestamp)!] = r.value;
+          if (!byResource.has(r.energy_type)) byResource.set(r.energy_type, new Array(cats.length).fill(0));
+          byResource.get(r.energy_type)![idx.get(r.timestamp)!] = r.value;
           if (!firstUnit && r.unit) firstUnit = r.unit;
         }
 

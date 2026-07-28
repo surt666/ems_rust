@@ -7,7 +7,7 @@ import { RESOURCE_LABELS, aggBase, resolveLevelId } from "../lib/agg";
 // tonnes (period total + per-resource breakdown + daily trend), mirroring the
 // reference's Forbrugsoverblik CO₂e headline. Self-contained client island.
 
-interface Row { purpose: string; unit: string; timestamp: string; value: number }
+interface Row { energy_type: string; unit: string; timestamp: string; value: number }
 interface Props { levelId?: string; resolution?: string; days?: number; height?: number }
 
 const ton = (kg: number) => new Intl.NumberFormat("da-DK", { maximumFractionDigits: 2 }).format(kg / 1000);
@@ -40,7 +40,7 @@ export default function EmissionsCard({ levelId, resolution = "daily", days = 30
         const perResource = new Map<string, number>();
         for (const r of rows) {
           perBucket.set(r.timestamp, (perBucket.get(r.timestamp) || 0) + r.value);
-          perResource.set(r.purpose, (perResource.get(r.purpose) || 0) + r.value);
+          perResource.set(r.energy_type, (perResource.get(r.energy_type) || 0) + r.value);
         }
         const ts = Array.from(perBucket.keys()).sort();
         setCats(ts.map((t) => t.replace("T", " ").slice(0, 16)));

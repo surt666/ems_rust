@@ -110,17 +110,27 @@ fn bucket_label(iso: &str, gran: Gran) -> Result<String> {
     Ok(gran.label(parse_iso(iso)?))
 }
 
-/// Split a sort-key "<node_path>#<purpose>#<gran>#<bucket>" on the last 3 `#`.
-/// node_path may itself contain `#`. Mirrors Python's `sk.rsplit("#", 3)`:
-/// `rsplitn(4, '#')` caps at 4 pieces, so the leftmost (node_path) keeps any
-/// internal `#`. Fewer than 3 `#` → fallback `(sk, "", "", "")`.
-fn parse_sk(sk: &str) -> (&str, &str, &str, &str) {
-    let mut it = sk.rsplitn(4, '#');
+/// Split a sort-key "<node_path>#<energy_type>#<purpose>#<gran>#<bucket>" on the
+/// last 4 `#`. node_path may itself contain `#`, so `rsplitn(5, '#')` caps at 5
+/// pieces and the leftmost (node_path) keeps any internal `#`.
+/// Fewer than 4 `#` → fallback `(sk, "", "", "", "")`.
+fn parse_sk(sk: &str) -> (&str, &str, &str, &str, &str) {
+    let mut it = sk.rsplitn(5, '#');
     let bucket = it.next().unwrap_or("");
-    match (it.next(), it.next(), it.next()) {
-        (Some(gran), Some(purpose), Some(node)) => (node, purpose, gran, bucket),
-        _ => (sk, "", "", ""),
+    match (it.next(), it.next(), it.next(), it.next()) {
+        (Some(gran), Some(purpose), Some(energy_type), Some(node)) => {
+            (node, energy_type, purpose, gran, bucket)
+        }
+        _ => (sk, "", "", "", ""),
     }
+}
+
+/// `<node_path>#<energy_type>#<purpose>#<gran>#` — the caller appends the bucket to
+/// form a pure `BETWEEN` range. An empty `purpose` means `total`, so the default
+/// query keeps returning a node's whole consumption rather than nothing.
+fn sk_prefix(sk_path: &str, energy_type: &str, purpose: &str, gran: Gran) -> String {
+    let purpose = if purpose.is_empty() { "total" } else { purpose };
+    format!("{sk_path}#{energy_type}#{purpose}#{}#", gran.code())
 }
 
 // ── DynamoDB item shape ───────────────────────────────────────────────────────
@@ -144,6 +154,9 @@ struct AggItem {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 struct Row {
     level_id: String,
+    /// What the sensor measures (electricity / water / district_heating …).
+    energy_type: String,
+    /// What the energy is spent on (total / lighting / space_heating …).
     purpose: String,
     unit: String,
     resolution: String,
@@ -152,26 +165,26 @@ struct Row {
     contributor_count: i64,
 }
 
-/// Keep items matching `gran`, sort by (purpose, bucket), build rows.
+/// Keep items matching `gran`, sort by (energy_type, purpose, bucket), build rows.
 /// Lexicographic bucket order matches Go's string comparison.
 fn to_rows(items: Vec<AggItem>, level_id: &str, resolution: &str, gran: Gran) -> Vec<Row> {
-    let mut kept: Vec<(String, String, AggItem)> = items
+    let mut kept: Vec<(String, String, String, AggItem)> = items
         .into_iter()
         .filter_map(|it| {
-            let (_, purpose, g, bucket) = parse_sk(&it.sk);
+            let (_, energy_type, purpose, g, bucket) = parse_sk(&it.sk);
             if g != gran.code() {
                 return None;
             }
-            let (purpose, bucket) = (purpose.to_string(), bucket.to_string());
-            Some((purpose, bucket, it))
+            Some((energy_type.to_string(), purpose.to_string(), bucket.to_string(), it))
         })
         .collect();
 
-    kept.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    kept.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)).then_with(|| a.2.cmp(&b.2)));
 
     kept.into_iter()
-        .map(|(purpose, bucket, it)| Row {
+        .map(|(energy_type, purpose, bucket, it)| Row {
             level_id: level_id.to_string(),
+            energy_type,
             purpose,
             unit: it.unit,
             resolution: resolution.to_string(),
@@ -182,20 +195,22 @@ fn to_rows(items: Vec<AggItem>, level_id: &str, resolution: &str, gran: Gran) ->
         .collect()
 }
 
-/// Sum a dimension's rows across resources into one series — one `Row` per bucket,
-/// `purpose` = the dimension (energy / volume). `BTreeMap` keeps buckets in order.
+/// Sum a dimension's rows across energy types into one series — one `Row` per bucket,
+/// `energy_type` = the dimension (energy / volume), `purpose` = the one being queried.
+/// `BTreeMap` keeps buckets in order.
 fn to_rows_dimension(
     items: Vec<AggItem>,
     level_id: &str,
     resolution: &str,
     gran: Gran,
     dimension: &str,
+    purpose: &str,
 ) -> Vec<Row> {
     use std::collections::BTreeMap;
     // bucket -> (summed value, summed count, unit-of-the-dimension)
     let mut by_bucket: BTreeMap<String, (f64, i64, String)> = BTreeMap::new();
     for it in items {
-        let (_, _resource, g, bucket) = parse_sk(&it.sk);
+        let (_, _energy_type, _purpose, g, bucket) = parse_sk(&it.sk);
         if g != gran.code() {
             continue;
         }
@@ -213,7 +228,8 @@ fn to_rows_dimension(
         .into_iter()
         .map(|(bucket, (sum, count, unit))| Row {
             level_id: level_id.to_string(),
-            purpose: dimension.to_string(),
+            energy_type: dimension.to_string(),
+            purpose: if purpose.is_empty() { "total" } else { purpose }.to_string(),
             unit,
             resolution: resolution.to_string(),
             timestamp: gran.label_to_iso(&bucket),
@@ -240,37 +256,42 @@ struct QueryParams<'a> {
     gran: Gran,
     start_bucket: &'a str,
     end_bucket: &'a str,
-    /// A single requested resource, or empty for "all resources".
-    resource: &'a str,
+    /// A single requested energy type, or empty for "all energy types".
+    energy_type: &'a str,
+    /// A single requested purpose, or empty for `total` (see `sk_prefix`).
+    purpose: &'a str,
 }
 
-/// Query a node's rollup rows. A specific `resource` runs one key-range query; an
-/// empty `resource` ("all") fans out over every `EnergyType::ALL` **concurrently** —
+/// Query a node's rollup rows. A specific `energy_type` runs one key-range query; an
+/// empty `energy_type` ("all") fans out over every `EnergyType::ALL` **concurrently** —
 /// each is its own `sk BETWEEN` key-range, so every query reads only its own
 /// window (no `begins_with` + post-read filter, no cross-granularity reads). The
-/// sort key is `<node_path>#<resource>#<gran>#<date>` with the date last, so once
-/// the resource is fixed the date window is a pure key-condition range.
+/// sort key is `<node_path>#<energy_type>#<purpose>#<gran>#<date>` with the date
+/// last, so once energy type and purpose are fixed the date window is a pure
+/// key-condition range.
 async fn query_node(client: &Client, p: QueryParams<'_>) -> Result<Vec<AggItem>> {
-    let resources: Vec<&str> = if p.resource.is_empty() {
+    let energy_types: Vec<&str> = if p.energy_type.is_empty() {
         EnergyType::all().map(|r| r.as_str()).collect()
     } else {
-        vec![p.resource]
+        vec![p.energy_type]
     };
 
-    let per_resource =
-        try_join_all(resources.into_iter().map(|resource| query_one_resource(client, &p, resource)))
-            .await?;
-    Ok(per_resource.into_iter().flatten().collect())
+    let per_type = try_join_all(
+        energy_types.into_iter().map(|et| query_one_energy_type(client, &p, et)),
+    )
+    .await?;
+    Ok(per_type.into_iter().flatten().collect())
 }
 
-/// One resource's window: `pk = :pk AND sk BETWEEN prefix+start AND prefix+end`,
-/// where `prefix = <node_path>#<resource>#<gran>#` — a pure key-condition range.
-async fn query_one_resource(
+/// One energy type's window: `pk = :pk AND sk BETWEEN prefix+start AND prefix+end`,
+/// where `prefix = <node_path>#<energy_type>#<purpose>#<gran>#` — a pure
+/// key-condition range.
+async fn query_one_energy_type(
     client: &Client,
     p: &QueryParams<'_>,
-    resource: &str,
+    energy_type: &str,
 ) -> Result<Vec<AggItem>> {
-    let prefix = format!("{}#{}#{}#", p.sk_path, resource, p.gran.code());
+    let prefix = sk_prefix(p.sk_path, energy_type, p.purpose, p.gran);
     // The `.items()` paginator threads `exclusive_start_key`/`last_evaluated_key`
     // and `.collect()` gathers every page, short-circuiting on the first SDK error.
     let raw = client
@@ -294,16 +315,19 @@ async fn query_one_resource(
 }
 
 /// A node's rows for one aggregation dimension (energy / volume), across every
-/// resource, via `gsi1`: `gsi1pk = "<pk>#<dimension>"` and
+/// energy type, via `gsi1`: `gsi1pk = "<pk>#<dimension>#<purpose>"` and
 /// `gsi1sk BETWEEN prefix+start AND prefix+end` where `prefix = <node_path>#<gran>#`
-/// (the GSI sort key omits the resource, so this single range spans electricity +
-/// heat + gas …). The caller sums per bucket.
+/// (the GSI sort key omits the energy type, so this single range spans electricity +
+/// heat + gas …). The purpose is in the partition key, not the sort key, so an
+/// "all energy" query cannot sum a node's total together with its own breakdown.
+/// The caller sums per bucket.
 async fn query_dimension(
     client: &Client,
     p: &QueryParams<'_>,
     dimension: &str,
 ) -> Result<Vec<AggItem>> {
-    let gsi1pk = format!("{}#{}", p.pk, dimension);
+    let purpose = if p.purpose.is_empty() { "total" } else { p.purpose };
+    let gsi1pk = format!("{}#{}#{}", p.pk, dimension, purpose);
     let prefix = format!("{}#{}#", p.sk_path, p.gran.code());
     let raw = client
         .query()
@@ -426,7 +450,8 @@ async fn handler(
     params(
         ("level_id" = String, Query, description = "Hierarchy node path (…|HN2#..|HN3#..)"),
         ("resolution" = Option<String>, Query, description = "hourly (default) | daily"),
-        ("resource" = Option<String>, Query, description = "Filter to one resource (electricity, water, …); empty = all"),
+        ("energy_type" = Option<String>, Query, description = "Filter to one energy type (electricity, water, …); empty = all. `resource` is accepted as an alias"),
+        ("purpose" = Option<String>, Query, description = "Filter to one purpose (total, lighting, space_heating, …); empty = total"),
         ("dimension" = Option<String>, Query, description = "Aggregate across resources in a dimension (energy | volume) → one summed series; overrides resource"),
         ("start" = String, Query, description = "ISO-8601 start (required)"),
         ("end" = String, Query, description = "ISO-8601 end (required)"),
@@ -450,16 +475,24 @@ async fn handle_aggregations(
         .get("resolution")
         .cloned()
         .unwrap_or_else(|| "hourly".to_string());
-    // A single resource filter (electricity / water / …); empty = all resources.
-    // Accept `resource=` (new) or `purpose=` (legacy) during the transition.
-    let resource = qs
-        .get("resource")
-        .or_else(|| qs.get("purpose"))
+    // A single energy-type filter (electricity / water / …); empty = all types.
+    //
+    // `purpose=` used to be a legacy alias for this and is NOT accepted any more:
+    // purpose is now a real, orthogonal axis (total / lighting / space_heating …),
+    // so honouring the alias would silently filter energy types by a purpose name
+    // and return nothing. `energy_type=` is the name; `resource=` stays accepted
+    // because the frontend still sends it.
+    let energy_type = qs
+        .get("energy_type")
+        .or_else(|| qs.get("resource"))
         .cloned()
         .unwrap_or_default();
+    // What the energy is spent on. Empty = `total`, so the default answer is still
+    // a node's whole consumption.
+    let purpose = qs.get("purpose").cloned().unwrap_or_default();
     // An aggregation *dimension* (energy / volume): when set, sum across every
-    // resource in that dimension via the GSI → one series (a node's total energy).
-    // Mutually exclusive with `resource`; `dimension` wins.
+    // energy type in that dimension via the GSI → one series (a node's total energy).
+    // Mutually exclusive with `energy_type`; `dimension` wins.
     let dimension = qs.get("dimension").cloned().unwrap_or_default();
     let start = qs.get("start").cloned().unwrap_or_default();
     let end = qs.get("end").cloned().unwrap_or_default();
@@ -488,7 +521,8 @@ async fn handle_aggregations(
         gran,
         start_bucket: &start_bucket,
         end_bucket: &end_bucket,
-        resource: &resource,
+        energy_type: &energy_type,
+        purpose: &purpose,
     };
 
     let rows = if dimension.is_empty() {
@@ -498,7 +532,9 @@ async fn handle_aggregations(
         }
     } else {
         match query_dimension(client, &params, &dimension).await {
-            Ok(items) => to_rows_dimension(items, &level_id, &resolution, gran, &dimension),
+            Ok(items) => {
+                to_rows_dimension(items, &level_id, &resolution, gran, &dimension, &purpose)
+            }
             Err(e) => return Err(ApiError::internal(e.to_string())),
         }
     };
@@ -571,7 +607,11 @@ async fn fetch_node_rows(
         gran,
         start_bucket: &start_bucket,
         end_bucket: &end_bucket,
-        resource: "",
+        energy_type: "",
+        // The derived read models (cost / emissions / benchmark / alarms) are about
+        // what a node actually consumed, so they read `total` — never a breakdown,
+        // which would only ever be a subset and would understate every figure.
+        purpose: "total",
     };
     let items = query_node(client, params)
         .await
@@ -605,9 +645,15 @@ fn per_unit(per_kwh: f64, per_m3: f64, unit: &str) -> f64 {
     }
 }
 
-/// Representative unit price (DKK) for a resource, given the rollup's stored unit.
-fn tariff_dkk_per_unit(resource: &str, unit: &str) -> f64 {
-    let (per_kwh, per_m3) = match resource {
+/// Representative unit price (DKK) for an energy type, given the rollup's stored unit.
+///
+/// `generation` is priced at zero: exported PV is not bought, and charging it would
+/// inflate the bill by the very amount it offsets on the grid-import series.
+fn tariff_dkk_per_unit(energy_type: &str, purpose: &str, unit: &str) -> f64 {
+    if purpose == "generation" {
+        return 0.0;
+    }
+    let (per_kwh, per_m3) = match energy_type {
         "electricity" => (2.50, 0.0),
         "district_heating" | "heat" => (0.90, 0.0),
         "district_cooling" => (0.50, 0.0),
@@ -618,10 +664,16 @@ fn tariff_dkk_per_unit(resource: &str, unit: &str) -> f64 {
     per_unit(per_kwh, per_m3, unit)
 }
 
-/// Representative CO₂e emission factor (kg CO₂e) for a resource (Danish 2026
+/// Representative CO₂e emission factor (kg CO₂e) for an energy type (Danish 2026
 /// figures — swap when real factors land; mirrors the tariff config).
-fn emission_kg_per_unit(resource: &str, unit: &str) -> f64 {
-    let (per_kwh, per_m3) = match resource {
+///
+/// `generation` emits nothing: counting on-site production as emissions would
+/// double-count it against the import series it displaces.
+fn emission_kg_per_unit(energy_type: &str, purpose: &str, unit: &str) -> f64 {
+    if purpose == "generation" {
+        return 0.0;
+    }
+    let (per_kwh, per_m3) = match energy_type {
         "electricity" => (0.12, 0.0),          // DK grid mix
         "district_heating" | "heat" => (0.06, 0.0),
         "district_cooling" => (0.04, 0.0),
@@ -649,12 +701,12 @@ fn window_params(
     Ok((level_id, resolution, start, end))
 }
 
-/// Scale each node row's value by a per-(resource, unit) factor and re-label the
-/// unit — the shared core of get_cost (tariff) and get_emissions (emission factor).
-fn scale_rows(rows: Vec<Row>, unit: &str, factor: impl Fn(&str, &str) -> f64) -> Vec<Row> {
+/// Scale each node row's value by a per-(energy_type, purpose, unit) factor and
+/// re-label the unit — the shared core of get_cost and get_emissions.
+fn scale_rows(rows: Vec<Row>, unit: &str, factor: impl Fn(&str, &str, &str) -> f64) -> Vec<Row> {
     rows.into_iter()
         .map(|r| {
-            let value = round2(r.value * factor(&r.purpose, &r.unit));
+            let value = round2(r.value * factor(&r.energy_type, &r.purpose, &r.unit));
             Row { unit: unit.to_string(), value, ..r }
         })
         .collect()
@@ -806,7 +858,7 @@ fn building_stats(
     let mut building_paths: BTreeSet<String> = BTreeSet::new();
     let mut by_path: BTreeMap<String, (f64, f64)> = BTreeMap::new();
     for it in items {
-        let (np, res, g, b) = parse_sk(&it.sk);
+        let (np, et, purpose, g, b) = parse_sk(&it.sk);
         if !in_window(g, b) {
             continue;
         }
@@ -816,8 +868,8 @@ fn building_stats(
             }
             None => {
                 let e = by_path.entry(np.to_string()).or_insert((0.0, 0.0));
-                e.0 += it.sum * tariff_dkk_per_unit(res, &it.unit);
-                e.1 += it.sum * emission_kg_per_unit(res, &it.unit);
+                e.0 += it.sum * tariff_dkk_per_unit(et, purpose, &it.unit);
+                e.1 += it.sum * emission_kg_per_unit(et, purpose, &it.unit);
             }
         }
     }
@@ -959,12 +1011,12 @@ fn median(values: &[f64]) -> f64 {
 /// `spike_factor × median` (median > 0). Pure given the rows + factor.
 fn detect_spikes(rows: &[Row], spike_factor: f64) -> Vec<Alarm> {
     use std::collections::BTreeMap;
-    let mut by_resource: BTreeMap<String, Vec<&Row>> = BTreeMap::new();
+    let mut by_energy_type: BTreeMap<String, Vec<&Row>> = BTreeMap::new();
     for r in rows {
-        by_resource.entry(r.purpose.clone()).or_default().push(r);
+        by_energy_type.entry(r.energy_type.clone()).or_default().push(r);
     }
     let mut alarms = Vec::new();
-    for (resource, rs) in by_resource {
+    for (resource, rs) in by_energy_type {
         let med = median(&rs.iter().map(|r| r.value).collect::<Vec<_>>());
         if med <= 0.0 {
             continue;
@@ -1092,10 +1144,11 @@ mod tests {
 
     // Derived models ─────────────────────────────────────────────────────────────
 
-    fn row(purpose: &str, unit: &str, value: f64, ts: &str) -> Row {
+    fn row(energy_type: &str, unit: &str, value: f64, ts: &str) -> Row {
         Row {
             level_id: "HN2#1".into(),
-            purpose: purpose.into(),
+            energy_type: energy_type.into(),
+            purpose: "total".into(),
             unit: unit.into(),
             resolution: "daily".into(),
             timestamp: ts.into(),
@@ -1107,23 +1160,23 @@ mod tests {
     #[test]
     fn tariff_is_unit_aware() {
         // electricity quoted per kWh; rollup stores Wh → 1/1000 of the kWh price.
-        assert!((tariff_dkk_per_unit("electricity", "kWh") - 2.50).abs() < 1e-9);
-        assert!((tariff_dkk_per_unit("electricity", "Wh") - 0.0025).abs() < 1e-9);
-        assert!((tariff_dkk_per_unit("water", "m3") - 50.0).abs() < 1e-9);
+        assert!((tariff_dkk_per_unit("electricity", "total", "kWh") - 2.50).abs() < 1e-9);
+        assert!((tariff_dkk_per_unit("electricity", "total", "Wh") - 0.0025).abs() < 1e-9);
+        assert!((tariff_dkk_per_unit("water", "total", "m3") - 50.0).abs() < 1e-9);
         // The rollup writes volumes as "m^3" — must price the same as "m3"/"m³".
-        assert!((tariff_dkk_per_unit("water", "m^3") - 50.0).abs() < 1e-9);
-        assert!((tariff_dkk_per_unit("water", "m³") - 50.0).abs() < 1e-9);
-        assert_eq!(tariff_dkk_per_unit("electricity", "°C"), 0.0, "non-priced unit → 0");
-        assert_eq!(tariff_dkk_per_unit("unknown", "kWh"), 0.0, "unknown resource → 0");
+        assert!((tariff_dkk_per_unit("water", "total", "m^3") - 50.0).abs() < 1e-9);
+        assert!((tariff_dkk_per_unit("water", "total", "m³") - 50.0).abs() < 1e-9);
+        assert_eq!(tariff_dkk_per_unit("electricity", "total", "°C"), 0.0, "non-priced unit → 0");
+        assert_eq!(tariff_dkk_per_unit("unknown", "total", "kWh"), 0.0, "unknown energy type → 0");
     }
 
     #[test]
     fn emission_factor_is_unit_aware() {
         // electricity 0.12 kg/kWh; rollup stores Wh → 1/1000.
-        assert!((emission_kg_per_unit("electricity", "kWh") - 0.12).abs() < 1e-9);
-        assert!((emission_kg_per_unit("electricity", "Wh") - 0.00012).abs() < 1e-9);
-        assert!((emission_kg_per_unit("water", "m^3") - 0.34).abs() < 1e-9);
-        assert_eq!(emission_kg_per_unit("electricity", "°C"), 0.0);
+        assert!((emission_kg_per_unit("electricity", "total", "kWh") - 0.12).abs() < 1e-9);
+        assert!((emission_kg_per_unit("electricity", "total", "Wh") - 0.00012).abs() < 1e-9);
+        assert!((emission_kg_per_unit("water", "total", "m^3") - 0.34).abs() < 1e-9);
+        assert_eq!(emission_kg_per_unit("electricity", "total", "°C"), 0.0);
     }
 
     #[test]
@@ -1138,16 +1191,16 @@ mod tests {
         // meters; leaf (L#) rows mark which node_paths are buildings.
         let items = vec![
             // building A own row + its leaf
-            it("HN2#1|HN3#1|HN4#1#electricity#d#2026-06-01", "Wh", 1000.0),
-            it("HN2#1|HN3#1|HN4#1|L#9#electricity#d#2026-06-01", "Wh", 1000.0),
+            it("HN2#1|HN3#1|HN4#1#electricity#total#d#2026-06-01", "Wh", 1000.0),
+            it("HN2#1|HN3#1|HN4#1|L#9#electricity#total#d#2026-06-01", "Wh", 1000.0),
             // building B own row + its leaf
-            it("HN2#1|HN3#1|HN4#2#electricity#d#2026-06-01", "Wh", 3000.0),
-            it("HN2#1|HN3#1|HN4#2|L#8#electricity#d#2026-06-01", "Wh", 3000.0),
+            it("HN2#1|HN3#1|HN4#2#electricity#total#d#2026-06-01", "Wh", 3000.0),
+            it("HN2#1|HN3#1|HN4#2|L#8#electricity#total#d#2026-06-01", "Wh", 3000.0),
             // company + property aggregate rows (not meter-bearing → excluded)
-            it("HN2#1#electricity#d#2026-06-01", "Wh", 4000.0),
-            it("HN2#1|HN3#1#electricity#d#2026-06-01", "Wh", 4000.0),
+            it("HN2#1#electricity#total#d#2026-06-01", "Wh", 4000.0),
+            it("HN2#1|HN3#1#electricity#total#d#2026-06-01", "Wh", 4000.0),
             // out of window → excluded
-            it("HN2#1|HN3#1|HN4#1#electricity#d#2026-07-01", "Wh", 9999.0),
+            it("HN2#1|HN3#1|HN4#1#electricity#total#d#2026-07-01", "Wh", 9999.0),
         ];
         let stats = building_stats(&items, Gran::Day, "2026-06-01", "2026-06-30");
         assert_eq!(stats.len(), 2, "only the two meter-bearing buildings");
@@ -1260,32 +1313,73 @@ mod tests {
     #[test]
     fn test_parse_sk_simple() {
         // node_path contains no '#'
-        let (node, purpose, gran, bucket) = parse_sk("HN2#42|HN3#99#electricity#h#2024-01-15T10");
+        let (node, et, purpose, gran, bucket) =
+            parse_sk("HN2#42|HN3#99#electricity#total#h#2024-01-15T10");
         assert_eq!(node, "HN2#42|HN3#99");
-        assert_eq!(purpose, "electricity");
+        assert_eq!(et, "electricity");
+        assert_eq!(purpose, "total");
         assert_eq!(gran, "h");
         assert_eq!(bucket, "2024-01-15T10");
     }
 
     #[test]
+    fn parse_sk_reads_the_purpose_segment() {
+        let (path, et, purpose, gran, bucket) =
+            parse_sk("HN2#2|HN3#9#electricity#lighting#h#2026-06-07T08");
+        assert_eq!(
+            (path, et, purpose, gran, bucket),
+            ("HN2#2|HN3#9", "electricity", "lighting", "h", "2026-06-07T08")
+        );
+    }
+
+    #[test]
     fn test_parse_sk_node_path_with_hash() {
-        // node_path itself contains '#' — the last 3 splits should give the correct fields
-        // sk = "HN2#10|HN3#20#gas#d#2024-06-01"
-        let (node, purpose, gran, bucket) = parse_sk("HN2#10|HN3#20#gas#d#2024-06-01");
+        // node_path itself contains '#' — the last 4 splits still give the right fields
+        let (node, et, purpose, gran, bucket) =
+            parse_sk("HN2#10|HN3#20#gas#total#d#2024-06-01");
         assert_eq!(node, "HN2#10|HN3#20");
-        assert_eq!(purpose, "gas");
+        assert_eq!(et, "gas");
+        assert_eq!(purpose, "total");
         assert_eq!(gran, "d");
         assert_eq!(bucket, "2024-06-01");
     }
 
     #[test]
     fn test_parse_sk_too_few_hashes() {
-        let (node, purpose, gran, bucket) = parse_sk("only#two#hashes");
-        // 2 '#' < 3, so fallback: node = full sk, rest empty
-        assert_eq!(node, "only#two#hashes");
+        let (node, et, purpose, gran, bucket) = parse_sk("only#three#hashes#here");
+        // 3 '#' < 4, so fallback: node = full sk, rest empty
+        assert_eq!(node, "only#three#hashes#here");
+        assert_eq!(et, "");
         assert_eq!(purpose, "");
         assert_eq!(gran, "");
         assert_eq!(bucket, "");
+    }
+
+    #[test]
+    fn query_prefix_defaults_to_total() {
+        assert_eq!(
+            sk_prefix("HN2#2", "electricity", "", Gran::Hour),
+            "HN2#2#electricity#total#h#"
+        );
+        assert_eq!(
+            sk_prefix("HN2#2", "electricity", "lighting", Gran::Hour),
+            "HN2#2#electricity#lighting#h#"
+        );
+    }
+
+    #[test]
+    fn generation_has_no_tariff_or_emissions() {
+        // Exported PV is not consumption: charging it or counting its CO2 as the
+        // building's would double-count against the grid series it offsets.
+        assert_eq!(emission_kg_per_unit("electricity", "generation", "kWh"), 0.0);
+        assert_eq!(tariff_dkk_per_unit("electricity", "generation", "kWh"), 0.0);
+    }
+
+    #[test]
+    fn other_purposes_fall_back_to_the_energy_type_factor() {
+        assert_eq!(emission_kg_per_unit("electricity", "lighting", "kWh"), 0.12);
+        assert_eq!(emission_kg_per_unit("electricity", "total", "kWh"), 0.12);
+        assert_eq!(tariff_dkk_per_unit("water", "total", "m3"), 50.0);
     }
 
     // bucket_label / bucket_to_iso round-trips ──────────────────────────────────
@@ -1344,16 +1438,22 @@ mod tests {
     }
 
     #[test]
-    fn test_to_rows_groups_by_purpose() {
+    fn test_to_rows_groups_by_energy_type_then_purpose() {
         let items = vec![
-            make_item("HN2#1#electricity#h#2024-01-01T10", 100.0, 5, "kWh"),
-            make_item("HN2#1#gas#h#2024-01-01T10", 50.0, 3, "m3"),
+            make_item("HN2#1#electricity#total#h#2024-01-01T10", 100.0, 5, "kWh"),
+            make_item("HN2#1#electricity#lighting#h#2024-01-01T10", 30.0, 2, "kWh"),
+            make_item("HN2#1#gas#total#h#2024-01-01T10", 50.0, 3, "m3"),
         ];
         let rows = to_rows(items, "HN2#1", "hourly", Gran::Hour);
-        assert_eq!(rows.len(), 2);
-        // sorted by purpose: electricity < gas
-        assert_eq!(rows[0].purpose, "electricity");
-        assert_eq!(rows[1].purpose, "gas");
+        assert_eq!(rows.len(), 3);
+        // sorted by energy_type, then purpose: (electricity, lighting) <
+        // (electricity, total) < (gas, total)
+        assert_eq!((rows[0].energy_type.as_str(), rows[0].purpose.as_str()),
+                   ("electricity", "lighting"));
+        assert_eq!((rows[1].energy_type.as_str(), rows[1].purpose.as_str()),
+                   ("electricity", "total"));
+        assert_eq!((rows[2].energy_type.as_str(), rows[2].purpose.as_str()),
+                   ("gas", "total"));
     }
 
     #[test]
@@ -1361,14 +1461,14 @@ mod tests {
         // Two resources in the same bucket sum into one energy row; a second
         // bucket stays separate; wrong-granularity rows are dropped.
         let items = vec![
-            make_item("HN2#1#electricity#h#2024-01-01T10", 100.0, 5, "kWh"),
-            make_item("HN2#1#heat#h#2024-01-01T10", 40.0, 2, "kWh"),
-            make_item("HN2#1#electricity#h#2024-01-01T11", 20.0, 1, "kWh"),
-            make_item("HN2#1#electricity#d#2024-01-01", 999.0, 9, "kWh"), // wrong gran
+            make_item("HN2#1#electricity#total#h#2024-01-01T10", 100.0, 5, "kWh"),
+            make_item("HN2#1#heat#total#h#2024-01-01T10", 40.0, 2, "kWh"),
+            make_item("HN2#1#electricity#total#h#2024-01-01T11", 20.0, 1, "kWh"),
+            make_item("HN2#1#electricity#total#d#2024-01-01", 999.0, 9, "kWh"), // wrong gran
         ];
-        let rows = to_rows_dimension(items, "HN2#1", "hourly", Gran::Hour, "energy");
+        let rows = to_rows_dimension(items, "HN2#1", "hourly", Gran::Hour, "energy", "total");
         assert_eq!(rows.len(), 2, "two hourly buckets");
-        assert!(rows.iter().all(|r| r.purpose == "energy"));
+        assert!(rows.iter().all(|r| r.energy_type == "energy" && r.purpose == "total"));
         // sorted by bucket; first bucket = electricity + heat
         assert_eq!(rows[0].timestamp, "2024-01-01T10:00:00Z");
         assert_eq!(rows[0].value, 140.0);
@@ -1379,8 +1479,8 @@ mod tests {
     #[test]
     fn test_to_rows_filters_wrong_gran() {
         let items = vec![
-            make_item("HN2#1#electricity#h#2024-01-01T10", 100.0, 5, "kWh"),
-            make_item("HN2#1#electricity#d#2024-01-01", 2400.0, 5, "kWh"), // daily, should be filtered
+            make_item("HN2#1#electricity#total#h#2024-01-01T10", 100.0, 5, "kWh"),
+            make_item("HN2#1#electricity#total#d#2024-01-01", 2400.0, 5, "kWh"), // daily, should be filtered
         ];
         // request hourly
         let rows = to_rows(items, "HN2#1", "hourly", Gran::Hour);
@@ -1392,9 +1492,9 @@ mod tests {
     #[test]
     fn test_to_rows_sorted_by_bucket_within_purpose() {
         let items = vec![
-            make_item("HN2#1#electricity#h#2024-01-01T12", 30.0, 1, "kWh"),
-            make_item("HN2#1#electricity#h#2024-01-01T10", 10.0, 1, "kWh"),
-            make_item("HN2#1#electricity#h#2024-01-01T11", 20.0, 1, "kWh"),
+            make_item("HN2#1#electricity#total#h#2024-01-01T12", 30.0, 1, "kWh"),
+            make_item("HN2#1#electricity#total#h#2024-01-01T10", 10.0, 1, "kWh"),
+            make_item("HN2#1#electricity#total#h#2024-01-01T11", 20.0, 1, "kWh"),
         ];
         let rows = to_rows(items, "HN2#1", "hourly", Gran::Hour);
         assert_eq!(rows.len(), 3);
@@ -1407,7 +1507,7 @@ mod tests {
     fn test_to_rows_json_field_names() {
         // Verify the exact JSON field names match the Go json tags
         let items = vec![make_item(
-            "HN2#10#electricity#h#2024-01-01T08",
+            "HN2#10#electricity#total#h#2024-01-01T08",
             42.5,
             7,
             "kWh",
@@ -1416,6 +1516,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         let val = serde_json::to_value(&rows[0]).unwrap();
         assert!(val.get("level_id").is_some(), "missing level_id");
+        assert!(val.get("energy_type").is_some(), "missing energy_type");
         assert!(val.get("purpose").is_some(), "missing purpose");
         assert!(val.get("unit").is_some(), "missing unit");
         assert!(val.get("resolution").is_some(), "missing resolution");
@@ -1426,7 +1527,8 @@ mod tests {
             "missing contributor_count"
         );
         assert_eq!(val["level_id"], "HN2#10");
-        assert_eq!(val["purpose"], "electricity");
+        assert_eq!(val["energy_type"], "electricity");
+        assert_eq!(val["purpose"], "total");
         assert_eq!(val["unit"], "kWh");
         assert_eq!(val["resolution"], "hourly");
         assert_eq!(val["timestamp"], "2024-01-01T08:00:00Z");
@@ -1443,8 +1545,8 @@ mod tests {
     #[test]
     fn test_to_rows_daily() {
         let items = vec![
-            make_item("HN2#5#heat#d#2024-03-02", 800.0, 10, "kWh"),
-            make_item("HN2#5#heat#d#2024-03-01", 900.0, 10, "kWh"),
+            make_item("HN2#5#heat#total#d#2024-03-02", 800.0, 10, "kWh"),
+            make_item("HN2#5#heat#total#d#2024-03-01", 900.0, 10, "kWh"),
         ];
         let rows = to_rows(items, "HN2#5", "daily", Gran::Day);
         assert_eq!(rows.len(), 2);

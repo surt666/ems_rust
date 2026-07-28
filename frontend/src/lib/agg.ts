@@ -55,7 +55,7 @@ export const RESOURCE_COLORS: Record<string, string> = {
   heat: "#f5841f",
 };
 
-interface AggRow { purpose: string; unit: string; timestamp: string; value: number }
+interface AggRow { energy_type: string; unit: string; timestamp: string; value: number }
 
 /** Bucket key for a timestamp at a granularity. Timestamps are UTC ISO strings. */
 export function bucketKey(ts: string, g: Granularity): string {
@@ -83,9 +83,9 @@ export function rollup(
   const byResource = new Map<string, number[]>();
   const unitByResource = new Map<string, string>();
   for (const r of rows) {
-    if (!byResource.has(r.purpose)) byResource.set(r.purpose, new Array(cats.length).fill(0));
-    byResource.get(r.purpose)![idx.get(bucketKey(r.timestamp, g))!] += r.value;
-    if (r.unit) unitByResource.set(r.purpose, r.unit);
+    if (!byResource.has(r.energy_type)) byResource.set(r.energy_type, new Array(cats.length).fill(0));
+    byResource.get(r.energy_type)![idx.get(bucketKey(r.timestamp, g))!] += r.value;
+    if (r.unit) unitByResource.set(r.energy_type, r.unit);
   }
   return { categories: cats, byResource, unitByResource };
 }

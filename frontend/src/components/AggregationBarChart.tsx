@@ -14,7 +14,7 @@ const RESOLUTIONS: { key: Granularity; label: string }[] = [
   { key: "weekly", label: "Uge" }, { key: "daily", label: "Dag" }, { key: "hourly", label: "Time" },
 ];
 
-interface Row { purpose: string; unit: string; timestamp: string; value: number }
+interface Row { energy_type: string; unit: string; timestamp: string; value: number }
 
 function readParams() {
   const p = new URLSearchParams(typeof location !== "undefined" ? location.search : "");
@@ -70,7 +70,7 @@ export default function AggregationBarChart() {
         setStatus(data.length ? "ok" : "empty");
         // reconcile selected on every fetch — keep still-present picks, otherwise default
         if (data.length) {
-          const present = Array.from(new Set(data.map((r) => r.purpose)));
+          const present = Array.from(new Set(data.map((r) => r.energy_type)));
           setSelected((prev) => {
             const kept = prev.filter((r) => present.includes(r));
             if (kept.length) return kept;
@@ -85,11 +85,11 @@ export default function AggregationBarChart() {
     return () => { cancelled = true; };
   }, [measure, resource, from, to, apiResolution(resolution)]);
 
-  const present = useMemo(() => Array.from(new Set(rows.map((r) => r.purpose))), [rows]);
+  const present = useMemo(() => Array.from(new Set(rows.map((r) => r.energy_type))), [rows]);
   const active = selected.length ? selected : present;
 
   const { categories, series, unit } = useMemo(() => {
-    const filtered = rows.filter((r) => active.includes(r.purpose));
+    const filtered = rows.filter((r) => active.includes(r.energy_type));
     const { categories, byResource, unitByResource } = rollup(filtered, resolution);
     const series: EChartsSeries[] = Array.from(byResource.entries()).map(([res, data]) => ({
       name: RESOURCE_LABELS[res] ?? res,

@@ -73,3 +73,22 @@ def test_build_gsi1sk_omits_energy_type():
     # gsi1sk drops the energy_type so a dimension partition ranges across energy types.
     assert m.build_gsi1sk("HN2#2|HN3#9", "h", "2026-06-07T08") == \
         "HN2#2|HN3#9#h#2026-06-07T08"
+
+
+# ── matrix path normalisation ──
+
+def test_company_relative_reroots_at_hn2():
+    import hierarchy_matrix as hm
+    assert hm.company_relative("HN0#root|HN1#10001|HN2#10003|HN3#10004") == \
+        "HN2#10003|HN3#10004"
+    assert hm.company_relative("HN0#root|HN1#10001|HN2#10003") == "HN2#10003"
+
+
+def test_company_relative_leaves_an_already_rooted_path_alone():
+    import hierarchy_matrix as hm
+    assert hm.company_relative("HN2#2|HN3#9") == "HN2#2|HN3#9"
+
+
+def test_company_relative_passes_through_when_there_is_no_hn2():
+    import hierarchy_matrix as hm
+    assert hm.company_relative("HN0#root|HN1#10001") == "HN0#root|HN1#10001"

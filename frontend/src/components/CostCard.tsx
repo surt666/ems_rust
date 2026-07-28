@@ -7,7 +7,7 @@ import { aggBase, resolveLevelId } from "../lib/agg";
 // bucket into a total cost series + a period total. Self-contained client:only
 // island; resolves the node from sessionStorage (same contract as ResourceChart).
 
-interface Row { purpose: string; unit: string; timestamp: string; value: number }
+interface Row { energy_type: string; unit: string; timestamp: string; value: number }
 
 interface Props {
   levelId?: string;

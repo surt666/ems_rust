@@ -14,7 +14,7 @@ declare global {
 // ResourceChart / AggregationChartWrapper), no page JS.
 
 interface Row {
-  purpose: string; // the per-meter resource (electricity, water, district_heating, …)
+  energy_type: string; // what the sensor measures (electricity, water, district_heating, …)
   unit: string;
   timestamp: string;
   value: number;
@@ -112,8 +112,8 @@ export default function ResourceCards({ levelId, resolution = "daily", days = 30
         // Group rows per resource, building a sorted daily series + totals.
         const byResource = new Map<string, Row[]>();
         for (const r of rows) {
-          if (!byResource.has(r.purpose)) byResource.set(r.purpose, []);
-          byResource.get(r.purpose)!.push(r);
+          if (!byResource.has(r.energy_type)) byResource.set(r.energy_type, []);
+          byResource.get(r.energy_type)!.push(r);
         }
         const built: Card[] = Array.from(byResource.entries()).map(([resource, rs]) => {
           rs.sort((a, b) => a.timestamp.localeCompare(b.timestamp));

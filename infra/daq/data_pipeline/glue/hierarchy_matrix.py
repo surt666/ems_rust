@@ -22,8 +22,26 @@ def reader_table(role_arn, region, table_name="hierarchy_new"):
         aws_session_token=creds["SessionToken"]).Table(table_name)
 
 
+def company_relative(node_path):
+    """Re-root a hierarchy path at its HN2 (company) segment.
+
+    hierarchy_new stores full paths (`HN0#root|HN1#10001|HN2#10003|HN3#…`), but the
+    rollup sort key and every reader are company-rooted (`HN2#10003|HN3#…`) — the
+    aggregations lambda's parse_node_keys drops everything above HN2, so a full path
+    in the sort key matches nothing and the API silently returns []. This boundary is
+    the one place the two conventions meet.
+    """
+    segs = node_path.split("|")
+    for i, seg in enumerate(segs):
+        if seg.startswith("HN2#"):
+            return "|".join(segs[i:])
+    return node_path
+
+
 def load_matrix(table, company_id):
     """Every (node_path, energy_type, purpose, sensor_id) -> coefficient for one company.
+
+    Paths are returned company-rooted; see `company_relative`.
 
     `allocates` is deliberately dropped: the job never needs it, because Unallocated
     arrives as ordinary matrix rows rather than something PySpark has to subtract.
@@ -37,7 +55,7 @@ def load_matrix(table, company_id):
     }
     while True:
         page = table.query(**kwargs)
-        rows.extend({"node_path": r["node_path"],
+        rows.extend({"node_path": company_relative(r["node_path"]),
                      "energy_type": r["energy_type"],
                      "purpose": r["purpose"],
                      "sensor_id": int(r["sensor_id"]),
