@@ -2835,44 +2835,6 @@ dialog::backdrop {
   margin-bottom: 1rem;
   overflow-x: auto;
 }
-/* Backend toggle (Athena ⇄ Redshift) sitting in the filter bar */
-.filter-toggle {
-  display: inline-grid;
-  grid-auto-flow: column;
-  align-items: center;
-  gap: 6px;
-  align-self: end;
-  padding-bottom: 8px;
-  cursor: pointer;
-  white-space: nowrap;
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-}
-.filter-toggle input { cursor: pointer; }
-.filter-bar__group {
-  display: grid;
-  gap: 4px;
-}
-.filter-bar__label {
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.daterange {
-  display: grid;
-  grid-auto-flow: column;
-  align-items: center;
-  gap: 4px;
-  background: var(--bg-dark);
-  border: 1px solid var(--border-medium);
-  border-radius: var(--radius-sm);
-  padding: 5px 8px;
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
 /* --- FilterOverlay: "Filtre og visning" slide-over --- */
 .filter-overlay[hidden] { display: none; }
 .filter-overlay {

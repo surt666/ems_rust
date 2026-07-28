@@ -140,7 +140,6 @@ import "../styles/enity-theme.css";
 	const API_ORIGINS = [
 		import.meta.env.PUBLIC_AGG_API_BASE_URL,
 		import.meta.env.PUBLIC_DUCK_API_BASE_URL,
-		import.meta.env.PUBLIC_REDSHIFT_API_BASE_URL,
 	].filter(Boolean).map((u) => new URL(u).origin);
 
 	const isOwnApi = (url) => {

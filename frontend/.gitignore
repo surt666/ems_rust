@@ -29,3 +29,6 @@ pnpm-debug.log*
 # Playwright artifacts
 test-results/
 playwright-report/
+
+# The project installs with bun; a second lockfile only invites npm usage.
+package-lock.json

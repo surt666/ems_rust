@@ -1,6 +1,5 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import StandbyChartWrapper from '../components/StandbyChartWrapper.tsx';
 ---
 
 <Layout title="Standbyanalyse">
@@ -341,9 +340,7 @@ import StandbyChartWrapper from '../components/StandbyChartWrapper.tsx';
 
 			<!-- Chart -->
 			<div class="card standby-chart-card">
-				<div id="standbyChartContainer">
-					<StandbyChartWrapper client:only="react" />
-				</div>
+				<div id="standbyChartContainer" style="height:500px"></div>
 			</div>
 
 			<!-- Legend -->
@@ -360,3 +357,75 @@ import StandbyChartWrapper from '../components/StandbyChartWrapper.tsx';
 		</div>
 	</div>
 </Layout>
+
+<script>
+	// Standby consumption chart. Mock data — this page is part of the EMS UI
+	// recreation and has no backend yet; the shape is what matters.
+	//
+	// Plain ECharts, no framework: it was a React island wrapping @nivo/line, which
+	// was the last thing importing Nivo. Standby windows (nights/weekends) are drawn
+	// as markArea bands rather than a custom SVG layer.
+	import * as echarts from 'echarts';
+
+	function mockSeries(start, end) {
+		const pts = [];
+		for (const d = new Date(start); d <= end; d.setHours(d.getHours() + 1)) {
+			const h = d.getHours(), wd = d.getDay();
+			const standby = wd === 0 || wd === 6 || h < 7 || h >= 18;
+			let v = standby ? 15 + Math.random() * 25 : 80 + Math.random() * 120;
+			if (!standby && h >= 9 && h <= 15) v += 30 + Math.random() * 40;
+			pts.push([new Date(d), Math.round(v * 100) / 100, standby]);
+		}
+		return pts;
+	}
+
+	/** Contiguous standby runs -> ECharts markArea pairs. */
+	function standbyBands(pts) {
+		const bands = [];
+		let from = null;
+		for (const [t, , standby] of pts) {
+			if (standby && !from) from = t;
+			else if (!standby && from) { bands.push([{ xAxis: from }, { xAxis: t }]); from = null; }
+		}
+		if (from) bands.push([{ xAxis: from }, { xAxis: pts[pts.length - 1][0] }]);
+		return bands;
+	}
+
+	function render(el, startDate, endDate, unit) {
+		const pts = mockSeries(new Date(startDate), new Date(endDate));
+		const chart = echarts.getInstanceByDom(el) || echarts.init(el);
+		chart.setOption({
+			grid: { top: 20, right: 30, bottom: 70, left: 70 },
+			tooltip: { trigger: 'axis' },
+			xAxis: { type: 'time' },
+			yAxis: { type: 'value', name: unit },
+			series: [{
+				name: 'Total (Hovedmålere)',
+				type: 'line',
+				showSymbol: false,
+				data: pts.map(([t, v]) => [t, v]),
+				markArea: {
+					silent: true,
+					itemStyle: { color: 'rgba(239, 68, 68, 0.12)' },
+					data: standbyBands(pts),
+				},
+			}],
+		});
+		return chart;
+	}
+
+	function mount() {
+		const el = document.getElementById('standbyChartContainer');
+		if (!el) return;
+		let opts = { startDate: '2024-12-30T00:00:00Z', endDate: '2025-01-13T00:00:00Z', unit: 'kWh' };
+		let chart = render(el, opts.startDate, opts.endDate, opts.unit);
+		addEventListener('resize', () => chart.resize());
+		addEventListener('updateStandbyChart', (e) => {
+			opts = { ...opts, ...(e.detail || {}) };
+			chart = render(el, opts.startDate, opts.endDate, opts.unit);
+		});
+	}
+
+	document.addEventListener('astro:page-load', mount);
+	mount();
+</script>
