@@ -1,0 +1,50 @@
+---
+// One dashboard fragment: an htmx GET against the aggregations API for the
+// selected node over a trailing window, swapped in as server-rendered markup.
+//
+// Every widget on the node dashboard is this shape; only the action and the
+// rendering differ. Keeping the shape here means the request contract — how the
+// node is resolved, how the window is computed, what the placeholder says — is
+// one edit rather than seven.
+//
+// `view` picks the HTML rendering (table | chart | cards); `format` stays the
+// media type.
+import { aggBase } from "../lib/agg";
+
+const {
+  action,
+  view,
+  days = 30,
+  resolution = "daily",
+  height,
+  class: className,
+  // The wrapper element. Defaults to a div; a fragment swapped into a table has
+  // to be a tbody or the markup is invalid.
+  as: Tag = "div",
+  ...params
+} = Astro.props;
+
+// Only real query params reach the hx-vals object literal. Astro injects its
+// scoped-style attribute (`data-astro-cid-…`) into the rest props, and a hyphen
+// is not a valid identifier — it lands in the generated JS and htmx throws
+// SyntaxError, silently firing no request at all.
+const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const extra = Object.entries({ resolution, format: "html", view, ...params })
+  .filter(([k, v]) => IDENT.test(k) && v !== undefined && v !== null && v !== "")
+  .map(([k, v]) => `${k}: '${v}'`)
+  .join(", ");
+---
+<Tag
+  class={className}
+  style={height ? `width:100%;height:${height}px` : undefined}
+  hx-get={`${aggBase()}/meterdata/query/${action}`}
+  hx-vals={`js:{
+    level_id: window.emsLevelId(),
+    start: new Date(Date.now() - ${days} * 864e5).toISOString(),
+    end: new Date().toISOString(),
+    ${extra}
+  }`}
+  hx-trigger="load"
+  hx-swap="innerHTML">
+  <slot><p class="muted chart-state">Indlæser…</p></slot>
+</Tag>

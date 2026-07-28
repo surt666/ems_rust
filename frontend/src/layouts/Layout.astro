@@ -50,46 +50,55 @@ import "../styles/enity-theme.css";
 				.filter(Boolean).map((u) => new URL(u).origin),
 		}}>
 			(function () {
-				window.__emsApiOrigins = apiOrigins;
-				const OWN = /^\/(command$|query\/|hierarchy\/)/;
-				function storedToken() {
+				// Sole owner of "which requests carry our Cognito token".
+				//
+				// It lives inline in <head> because htmx fires hx-trigger="load"
+				// requests during page load, before any module script runs — a listener
+				// registered in a module is simply too late for those. Amplify keeps the
+				// ID token under a deterministic localStorage key, so it can be read
+				// synchronously here and there is no race to work around.
+				//
+				// The module script below only refreshes window.__emsIdToken; it must not
+				// restate this policy, because a second copy is a second thing to get
+				// wrong — an earlier version did exactly that and attached the token to
+				// every cross-origin request.
+				const OWN_PATH = /^\/(command$|query\/|hierarchy\/)/;
+
+				/** Our own APIs only: the allowlisted hosts, or a CloudFront-proxied path. */
+				function isOwnApi(url) {
+					try {
+						const u = new URL(url, location.origin);
+						return u.origin === location.origin
+							? OWN_PATH.test(u.pathname)
+							: apiOrigins.includes(u.origin);
+					} catch { return false; }
+				}
+
+				function token() {
 					if (window.__emsIdToken) return window.__emsIdToken;
 					try {
 						const base = "CognitoIdentityServiceProvider." + clientId;
 						const user = localStorage.getItem(base + ".LastAuthUser");
-						return user ? localStorage.getItem(base + "." + user + ".idToken") || "" : "";
+						return (user && localStorage.getItem(base + "." + user + ".idToken")) || "";
 					} catch { return ""; }
 				}
-				// The dashboard no longer fetches — it takes server-rendered chart
-				// fragments over htmx. Two callers remain: userlist's delete_user POST
-				// and AggregationBarChart, which needs weekly/monthly re-bucketing the
-				// rollup table cannot serve. Installed inline, before any module, so
-				// ordering cannot leave a request unauthenticated.
-				const ownUrl = (url) => {
-					try {
-						const u = new URL(url, location.origin);
-						if (u.origin !== location.origin) return !!window.__emsApiOrigins?.includes(u.origin);
-						return OWN.test(u.pathname);
-					} catch { return false; }
-				};
+
+				// Shared with the module script's 401 retry, so the rule stays single-source.
+				window.__emsIsOwnApi = isOwnApi;
+
 				const origFetch = window.fetch.bind(window);
 				window.fetch = function (input, init) {
 					const url = typeof input === "string" ? input : (input && input.url) || String(input);
-					const t = storedToken();
-					if (!t || !ownUrl(url)) return origFetch(input, init);
+					const t = token();
+					if (!t || !isOwnApi(url)) return origFetch(input, init);
 					const headers = new Headers((init && init.headers) || undefined);
 					if (!headers.has("Authorization")) headers.set("Authorization", "Bearer " + t);
 					return origFetch(input, Object.assign({}, init, { headers }));
 				};
 
 				document.addEventListener("htmx:configRequest", function (e) {
-					const path = (e.detail && e.detail.path) || "";
-					let own = OWN.test(path);
-					if (!own) {
-						try { own = new URL(path, location.origin).origin !== location.origin; } catch { own = false; }
-					}
-					const t = storedToken();
-					if (own && t && !e.detail.headers["Authorization"]) {
+					const t = token();
+					if (t && isOwnApi((e.detail && e.detail.path) || "") && !e.detail.headers["Authorization"]) {
 						e.detail.headers["Authorization"] = "Bearer " + t;
 					}
 				});
@@ -190,104 +199,44 @@ import "../styles/enity-theme.css";
 
 	configureAmplify();
 
-	// Every one of our APIs sits behind a Cognito JWT authorizer, so each call needs
-	// the ID token. Matched against our own origins only — never Google Maps or any
-	// other third party, which must not receive our credentials.
+	// Credential policy lives in ONE place: the inline head script, which owns both
+	// interceptors (fetch and htmx:configRequest) and the allowlist that decides
+	// which hosts may receive the ID token. It has to run there anyway — htmx fires
+	// hx-trigger="load" requests before any module executes — and restating the
+	// policy here only created a second, looser copy of it.
 	//
-	// Two hooks because the app calls the backend two ways: htmx (every .astro
-	// fragment, htmx.ajax on /measurements) and fetch (the React dashboard islands).
-	// Missing either 401s that half of the UI.
-	const API_ORIGINS = [
-		import.meta.env.PUBLIC_AGG_API_BASE_URL,
-		import.meta.env.PUBLIC_DUCK_API_BASE_URL,
-	].filter(Boolean).map((u) => new URL(u).origin);
-
-	const isOwnApi = (url) => {
-		try {
-			const u = new URL(url, location.origin);
-			if (API_ORIGINS.includes(u.origin)) return true;
-			// Relative paths CloudFront proxies to the hierarchy API.
-			return u.origin === location.origin &&
-				/^\/(command$|query\/|hierarchy\/)/.test(u.pathname);
-		} catch { return false; }
-	};
-
-	// htmx:configRequest is synchronous, hence the cached copy; fetch can await.
-	let idToken = '';
+	// This block's whole job is to keep window.__emsIdToken fresh. localStorage
+	// holds whatever Amplify last wrote, which can be expired; fetchAuthSession
+	// refreshes it.
 	const refreshToken = () => fetchAuthSession()
-		.then((s) => {
-			idToken = s.tokens?.idToken?.toString() ?? '';
-			// The inline head handler reads this, so a refreshed token reaches the
-			// requests that fire before this module runs on the next navigation.
-			window.__emsIdToken = idToken;
-		})
-		.catch(() => { idToken = ''; });
+		.then((s) => { window.__emsIdToken = s.tokens?.idToken?.toString() ?? ''; })
+		.catch(() => { window.__emsIdToken = ''; });
 
-	// Amplify restores its session asynchronously, so right after load
-	// fetchAuthSession() can resolve with no tokens yet. One call is therefore not
-	// enough - poll briefly rather than concluding the user is signed out and
-	// letting a request go unauthenticated.
-	async function tokenReady(maxMs = 4000) {
-		const t0 = performance.now();
-		while (!idToken && performance.now() - t0 < maxMs) {
-			await refreshToken();
-			if (idToken) break;
-			await new Promise((r) => setTimeout(r, 150));
-		}
-		return idToken;
-	}
-
-	tokenReady();
+	refreshToken();
 	document.addEventListener('astro:page-load', refreshToken);
 
-	// htmx:confirm is the only hook that can DEFER a request, and it has to: the
-	// sidebar tree fires hx-trigger="load" during page load, which raced
-	// fetchAuthSession() and 401'd because configRequest is synchronous and the
-	// cached token was still empty. Hold the request until the session resolves.
-	document.body.addEventListener('htmx:confirm', (e) => {
-		if (idToken || !isOwnApi(e.detail?.path ?? '')) return;
-		e.preventDefault();
-		tokenReady().then(() => e.detail.issueRequest(true));
-	});
-
-	document.body.addEventListener('htmx:configRequest', (e) => {
-		if (idToken && isOwnApi(e.detail?.path ?? '')) {
-			e.detail.headers['Authorization'] = `Bearer ${idToken}`;
-		}
-	});
-
-	// Self-heal a 401. The confirm hook above cannot catch everything: htmx fires
-	// hx-trigger="load" requests (the sidebar tree) while this module script is
-	// still being evaluated, so the very first ones escape before any listener is
-	// attached. Retrying once on 401 fixes that without depending on script order,
-	// and covers a token expiring mid-session for free.
+	// Self-heal a 401 by refreshing and re-issuing once. This is the only case the
+	// inline script cannot cover: it reads a token that was valid when stored and
+	// has since expired.
 	document.body.addEventListener('htmx:responseError', async (e) => {
 		const d = e.detail;
 		const cfg = d?.requestConfig ?? {};
-		if (d?.xhr?.status !== 401 || !isOwnApi(cfg.path ?? '')) return;
+		if (d?.xhr?.status !== 401 || !window.__emsIsOwnApi?.(cfg.path ?? '')) return;
 		if (d.elt?.dataset?.authRetried) return;
 		if (d.elt?.dataset) d.elt.dataset.authRetried = '1';
 
-		await tokenReady();
-		if (!idToken) return;
+		await refreshToken();
+		if (!window.__emsIdToken) return;
 		window.htmx?.ajax(cfg.verb ?? 'get', cfg.path, {
 			source: d.elt,
 			target: d.target ?? d.elt,
 			swap: 'innerHTML',
 			values: cfg.parameters,
 		});
+		// Allow a later expiry to retry again; otherwise an element self-heals once
+		// per page and then fails silently for the rest of the session.
+		delete d.elt?.dataset?.authRetried;
 	});
-
-	const originalFetch = window.fetch.bind(window);
-	window.fetch = async (input, init) => {
-		const url = typeof input === 'string' ? input : input?.url ?? String(input);
-		if (!isOwnApi(url)) return originalFetch(input, init);
-		const token = idToken || (await tokenReady());
-		if (!token) return originalFetch(input, init);
-		const headers = new Headers(init?.headers || undefined);
-		if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
-		return originalFetch(input, { ...init, headers });
-	};
 
 	function setupLogout() {
 		document.getElementById('logout-btn')?.addEventListener('click', async () => {
@@ -303,19 +252,20 @@ import "../styles/enity-theme.css";
 	setupLogout();
 	applyTranslations();
 
+	// astro:page-load fires on the initial load too, so this covers both.
 	document.addEventListener('astro:page-load', () => {
 		setupLogout();
 		applyTranslations();
 		mountDeclaredCharts();
 	});
-	mountDeclaredCharts();
 
-	// Re-translate any HTMX-swapped fragment.
-	document.body.addEventListener('htmx:afterSwap', () => {
+	// Re-translate any HTMX-swapped fragment, and mount any chart it brought with
+	// it. Scoped to the swapped subtree: most swaps (every sidebar tree expansion)
+	// contain no chart at all, and rescanning the whole document each time walks
+	// the entire hierarchy tree for nothing.
+	document.body.addEventListener('htmx:afterSwap', (e) => {
 		applyTranslations();
-		// Fragments now carry their own chart configs, so a swap can introduce
-		// charts that were not in the initial HTML.
-		mountDeclaredCharts();
+		mountDeclaredCharts(e.detail?.target ?? document);
 	});
 
 	// View transitions don't auto-process HTMX. After a transition swaps in the

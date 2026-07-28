@@ -3,7 +3,6 @@ package main
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2"
-	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2authorizers"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2integrations"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslakeformation"
@@ -82,22 +81,7 @@ func NewQueryRawStack(scope constructs.Construct, id string, props *QueryRawStac
 	// Production Datatilegnelse route (same path as the aggregations lambda, different
 	// HTTP API/base) so the frontend only swaps its base URL. Plus a raw JSON route
 	// kept for ad-hoc debugging.
-	// ── Cognito JWT authorizer (same user pool as the hierarchy service, which lives
-	//    in the other account — the authorizer only needs the public issuer/JWKS URL,
-	//    so no cross-account IAM is involved) ──
-	//
-	// Data routes only. The OpenAPI spec and the Swagger UI stay open: a browser
-	// opening /meterdata/docs cannot present a token, and they describe the surface
-	// rather than serve data. Per-user/company scoping is a later concern; this is
-	// authentication, not authorization.
-	jwtAuthorizer := awsapigatewayv2authorizers.NewHttpJwtAuthorizer(
-		jsii.String("QueryRawJwtAuthorizer"),
-		jsii.String("https://cognito-idp.eu-central-1.amazonaws.com/eu-central-1_gADB2vK24"),
-		&awsapigatewayv2authorizers.HttpJwtAuthorizerProps{
-			AuthorizerName: jsii.String("cognito-jwt"),
-			JwtAudience:    jsii.Strings("2fidjt2pmacepu39h4nhqcv0h1"),
-		},
-	)
+	jwtAuthorizer := newCognitoJwtAuthorizer("QueryRawJwtAuthorizer")
 
 	for _, p := range []string{"/meterdata/query/get_measurements", "/rawdata/query-duck"} {
 		api.AddRoutes(&awsapigatewayv2.AddRoutesOptions{

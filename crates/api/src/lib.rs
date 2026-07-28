@@ -19,14 +19,6 @@ use utoipa::ToSchema;
 pub enum Format {
     Json,
     Html,
-    /// An HTML fragment carrying a chart configuration as inline
-    /// `application/json`, for the frontend's `mountDeclaredCharts` to draw.
-    ///
-    /// A third representation rather than a flag on `Html` because it is a
-    /// genuinely different rendering of the same resource — and because charts
-    /// were the one thing still fetched as JSON and rendered client-side, which
-    /// is what the `?format=` negotiation exists to avoid.
-    Chart,
 }
 
 impl Format {
@@ -36,7 +28,6 @@ impl Format {
         match raw.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
             Some("json") => Format::Json,
             Some("html") => Format::Html,
-            Some("chart") => Format::Chart,
             _ => default,
         }
     }

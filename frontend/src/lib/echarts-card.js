@@ -14,8 +14,16 @@ export const PALETTE = ["#f5841f", "#1f9e8f", "#46b97c", "#a855f7", "#facc15", "
 const TEXT = "#28333d";
 const MUTED = "#5a6671";
 const GRID = "#e5e8eb";
-/** Subtle gray for comparison/baseline series (--text-dim). */
-export const FAINT = "#aab2ba";
+/** Per-energy-type series colours. The one place a carrier's colour is decided —
+ *  the lambda sends `key`, not a colour, so the two cannot drift apart. */
+export const RESOURCE_COLORS = {
+  electricity: "#f5841f",
+  district_heating: "#ef4444",
+  district_cooling: "#38bdf8",
+  gas: "#a855f7",
+  water: "#1f9e8f",
+  heat: "#facc15",
+};
 
 /**
  * Draw (or redraw) a chart into `el`.
@@ -62,7 +70,7 @@ export function drawChart(el, { categories = [], series = [], unit = "kWh", stac
       symbol: "circle",
       symbolSize: 5,
       data: s.data,
-      itemStyle: { color: s.color ?? PALETTE[i % PALETTE.length] },
+      itemStyle: { color: s.color ?? RESOURCE_COLORS[s.key] ?? PALETTE[i % PALETTE.length] },
       areaStyle: s.areaStyle ? { opacity: 0.12 } : undefined,
     }),
     ),
@@ -71,8 +79,21 @@ export function drawChart(el, { categories = [], series = [], unit = "kWh", stac
   return chart;
 }
 
+/** Live chart instances, so one window listener can size them all. */
+const mounted = new Set();
+
+// A single resize listener for the page. Registering one per chart meant a
+// dashboard (up to ~9 charts) added nine, none of which were ever removed —
+// every htmx re-swap mounted a fresh set on top of the old.
+addEventListener("resize", () => {
+  for (const c of mounted) {
+    if (c.getDom()?.isConnected) c.resize();
+    else mounted.delete(c);
+  }
+});
+
 /**
- * Wire an element up once: draw it, keep it sized, and redraw on an optional
+ * Wire an element up: draw it, keep it sized, and redraw on an optional
  * CustomEvent.
  *
  * The ResizeObserver matters — these charts live in `x-show` tab panels, so the
@@ -83,7 +104,7 @@ export function mountChart(el, options, eventName) {
   const chart = drawChart(el, options);
   if (!chart) return null;
 
-  addEventListener("resize", () => chart.resize());
+  mounted.add(chart);
   new ResizeObserver(() => chart.resize()).observe(el);
 
   if (eventName) {
@@ -99,7 +120,10 @@ export function mountChart(el, options, eventName) {
  * block empty. Idempotent, so it can run on every `astro:page-load`.
  */
 export function mountDeclaredCharts(root = document) {
-  for (const el of root.querySelectorAll("[data-chart]")) {
+  // The root itself can be the swapped-in chart, not just an ancestor of one.
+  const blocks = root.querySelectorAll?.("[data-chart]") ?? [];
+  const all = root.matches?.("[data-chart]") ? [root, ...blocks] : [...blocks];
+  for (const el of all) {
     if (el.dataset.chartMounted) continue;
     el.dataset.chartMounted = "1";
     let cfg = {};
@@ -109,6 +133,9 @@ export function mountDeclaredCharts(root = document) {
       /* leave the chart empty rather than break the page */
     }
     const canvas = el.querySelector("[data-chart-canvas]") || el;
+    // htmx swaps replace the element, so a stale instance can still own this DOM
+    // node's canvas. Dispose it rather than leaking it plus its ResizeObserver.
+    echarts.getInstanceByDom(canvas)?.dispose();
     mountChart(canvas, cfg, el.dataset.chartEvent || undefined);
   }
 }

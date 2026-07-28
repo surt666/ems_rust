@@ -10,8 +10,8 @@
 // `unallocated` is the remainder (total − Σ declared purposes), already computed by
 // crates/model. With no formulas declared it equals `total`, which is correct:
 // nothing is allocated until a formula says so.
+import AggWidget from "./AggWidget.astro";
 const { energyType = "electricity", days = 30 } = Astro.props;
-const url = `${import.meta.env.PUBLIC_AGG_API_BASE_URL}/meterdata/query/get_purpose_split`;
 ---
 
 <section class="purpose-split card">
@@ -27,20 +27,9 @@ const url = `${import.meta.env.PUBLIC_AGG_API_BASE_URL}/meterdata/query/get_purp
           <th class="num">Værdi</th><th>Enhed</th><th class="num">Punkter</th>
         </tr>
       </thead>
-      <tbody
-        hx-get={url}
-        hx-vals={`js:{
-          level_id: window.emsLevelId(),
-          energy_type: '${energyType}',
-          resolution: 'daily',
-          start: new Date(Date.now() - ${days} * 864e5).toISOString(),
-          end: new Date().toISOString(),
-          format: 'html'
-        }`}
-        hx-trigger="load"
-        hx-swap="innerHTML">
+      <AggWidget action="get_purpose_split" energy_type={energyType} days={days} as="tbody">
         <tr><td colspan="6" class="muted">Henter…</td></tr>
-      </tbody>
+      </AggWidget>
     </table>
   </div>
 </section>

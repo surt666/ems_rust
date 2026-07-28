@@ -3087,3 +3087,14 @@ dialog::backdrop {
 }
 .sd-formulas h4 { margin: 0; }
 .sd-formulas .mono { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+
+/* Energy-type dots on the consumption cards. The lambda sends the carrier key as
+   a class rather than a colour — the palette lives in one place (echarts-card.js
+   RESOURCE_COLORS for series, here for markup), so a card and the chart it sits
+   next to cannot disagree. */
+.rc-dot--electricity { background: #f5841f; }
+.rc-dot--district_heating { background: #ef4444; }
+.rc-dot--district_cooling { background: #38bdf8; }
+.rc-dot--gas { background: #a855f7; }
+.rc-dot--water { background: #1f9e8f; }
+.rc-dot--heat { background: #facc15; }

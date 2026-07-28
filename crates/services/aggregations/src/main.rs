@@ -509,7 +509,7 @@ async fn handle_aggregations(
     let (pk, sk_path) = match parse_node_keys(&level_id) {
         Ok(keys) => keys,
         // node above company level (HN0/HN1) — nothing to aggregate at a single partition
-        Err(_) => return Ok(rows_response(&[], format)),
+        Err(_) => return Ok(rows_response(&[], format, Render::Table)),
     };
 
     let (start_bucket, end_bucket) = match (bucket_label(&start, gran), bucket_label(&end, gran)) {
@@ -528,7 +528,7 @@ async fn handle_aggregations(
         purpose: &purpose,
     };
 
-    let view = qs.get("view").map(String::as_str).unwrap_or("");
+    let render = Render::resolve(qs.get("view").map(String::as_str));
     let rows = if dimension.is_empty() {
         match query_node(client, params).await {
             Ok(items) => to_rows(items, &level_id, &resolution, gran),
@@ -542,20 +542,45 @@ async fn handle_aggregations(
             Err(e) => return Err(ApiError::internal(e.to_string())),
         }
     };
-    // `view=cards` is a chart-shaped rendering with a card layout — one card per
-    // energy type, each embedding its own sparkline — rather than a fourth Format.
-    if format == Format::Chart && view == "cards" {
-        return Ok(ApiResponse::html(200, rows_to_cards(&rows)));
+    Ok(rows_response(&rows, format, render))
+}
+
+/// Which HTML rendering of the rows to produce.
+///
+/// This is a per-route concern, not a media type: `api::Format` answers
+/// "JSON or HTML", and every one of these is HTML. Keeping it local means the
+/// routes with a single rendering (liveness, raw measurements, benchmark,
+/// alarms) never have to mention the others.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+enum Render {
+    /// A `<tr>` table — the default.
+    #[default]
+    Table,
+    /// A chart config for `mountDeclaredCharts`.
+    Chart,
+    /// One card per energy type, each embedding its own sparkline.
+    Cards,
+}
+
+impl Render {
+    fn resolve(raw: Option<&str>) -> Render {
+        match raw.map(str::trim) {
+            Some("chart") => Render::Chart,
+            Some("cards") => Render::Cards,
+            _ => Render::Table,
+        }
     }
-    Ok(rows_response(&rows, format))
 }
 
 /// Render rollup rows in the requested representation.
-fn rows_response(rows: &[Row], format: Format) -> ApiResponse {
-    match format {
-        Format::Json => ApiResponse::json(&rows),
-        Format::Html => ApiResponse::html(200, rows_to_html(rows)),
-        Format::Chart => ApiResponse::html(200, rows_to_chart(rows, ChartKind::PerEnergyType)),
+fn rows_response(rows: &[Row], format: Format, render: Render) -> ApiResponse {
+    match (format, render) {
+        (Format::Json, _) => ApiResponse::json(&rows),
+        (Format::Html, Render::Table) => ApiResponse::html(200, rows_to_html(rows)),
+        (Format::Html, Render::Chart) => {
+            ApiResponse::html(200, rows_to_chart(rows, ChartKind::PerEnergyType))
+        }
+        (Format::Html, Render::Cards) => ApiResponse::html(200, rows_to_cards(rows)),
     }
 }
 
@@ -594,29 +619,33 @@ fn rows_to_cards(rows: &[Row]) -> String {
         let unit = rs.iter().find(|r| !r.unit.is_empty()).map_or("", |r| r.unit.as_str());
         let decimals = if total < 100.0 { 2 } else { 0 };
 
-        let cats = rs
-            .iter()
-            .map(|r| format!("\"{}\"", esc(r.timestamp.get(..10).unwrap_or(&r.timestamp))))
-            .collect::<Vec<_>>()
-            .join(",");
-        let vals = rs.iter().map(|r| format!("{}", r.value)).collect::<Vec<_>>().join(",");
+        let spark = chart_block(&serde_json::json!({
+            "categories": rs.iter()
+                .map(|r| r.timestamp.get(..10).unwrap_or(&r.timestamp))
+                .collect::<Vec<_>>(),
+            "series": [{
+                "name": energy_label(t),
+                "key": t,
+                "type": "line",
+                "areaStyle": true,
+                "data": rs.iter().map(|r| r.value).collect::<Vec<_>>(),
+            }],
+            "unit": unit,
+            "zoom": false,
+        }));
 
         out.push_str(&format!(
             "<div class=\"card rc-card\" data-type=\"{ty}\" role=\"button\" tabindex=\"0\" \
                title=\"Klik for detaljeret analyse\">\
-               <div class=\"rc-card__head\"><span class=\"rc-dot\" style=\"background:{color}\"></span>\
+               <div class=\"rc-card__head\"><span class=\"rc-dot rc-dot--{ty}\"></span>\
                  <strong>{label}</strong></div>\
                <div class=\"rc-card__metrics\">\
                  <div><span class=\"muted\">Periode</span><strong class=\"mono\">{total} {unit}</strong></div>\
                  <div><span class=\"muted\">Gnm./dag</span><strong class=\"mono\">{avg} {unit}</strong></div>\
                </div>\
-               <div class=\"rc-spark\" data-chart><div data-chart-canvas style=\"width:100%;height:70px\"></div>\
-                 <script type=\"application/json\">{{\"categories\":[{cats}],\"series\":\
-                 [{{\"name\":\"{label}\",\"type\":\"line\",\"color\":\"{color}\",\"areaStyle\":true,\
-                 \"data\":[{vals}]}}],\"unit\":\"{unit}\",\"zoom\":false}}</script></div>\
+               <div class=\"rc-spark\">{spark}</div>\
              </div>",
             ty = esc(t),
-            color = energy_color(t),
             label = esc(energy_label(t)),
             total = da(total, decimals),
             avg = da(avg, decimals),
@@ -636,7 +665,12 @@ enum ChartKind {
     Total,
 }
 
-/// Danish labels for the energy types, matching the frontend's RESOURCE_LABELS.
+/// Danish labels for the energy types.
+///
+/// Colour is deliberately NOT sent: it lived here as a second copy of
+/// `RESOURCE_COLORS` in the frontend and all six values had already drifted
+/// apart, so a card and the drill-down it opens coloured the same carrier
+/// differently. The fragment carries `key` and the browser owns the palette.
 fn energy_label(t: &str) -> &str {
     match t {
         "electricity" => "El",
@@ -649,19 +683,7 @@ fn energy_label(t: &str) -> &str {
     }
 }
 
-fn energy_color(t: &str) -> &str {
-    match t {
-        "electricity" => "#f5841f",
-        "district_heating" => "#ef4444",
-        "district_cooling" => "#38bdf8",
-        "gas" => "#a855f7",
-        "water" => "#1f9e8f",
-        "heat" => "#facc15",
-        _ => "#46b97c",
-    }
-}
-
-/// `?format=chart` — an HTML fragment carrying an ECharts config as inline
+/// `?view=chart` — an HTML fragment carrying an ECharts config as inline
 /// `application/json`, which the frontend's `mountDeclaredCharts` picks up.
 ///
 /// The pivot from rows to series lives here rather than in the browser. That is
@@ -694,40 +716,45 @@ fn rows_to_chart(rows: &[Row], kind: ChartKind) -> String {
         }
     }
 
-    let cats = buckets
+    let categories: Vec<String> = buckets
         .iter()
-        .map(|b| format!("\"{}\"", esc(&b.replace('T', " ").chars().take(16).collect::<String>())))
-        .collect::<Vec<_>>()
-        .join(",");
+        .map(|b| b.replace('T', " ").chars().take(16).collect())
+        .collect();
 
-    let ser = series
+    let series: Vec<serde_json::Value> = series
         .iter()
-        .map(|(name, data)| {
-            let values = data
-                .iter()
-                .map(|v| format!("{v}"))
-                .collect::<Vec<_>>()
-                .join(",");
-            let (label, color) = match kind {
-                ChartKind::PerEnergyType => (energy_label(name), energy_color(name)),
-                ChartKind::Total => ("Total", "#f5841f"),
+        .map(|(key, data)| {
+            let (name, key) = match kind {
+                ChartKind::PerEnergyType => (energy_label(key), Some(*key)),
+                ChartKind::Total => ("Total", None),
             };
-            format!(
-                "{{\"name\":\"{}\",\"type\":\"line\",\"color\":\"{}\",\"areaStyle\":{},\"data\":[{}]}}",
-                esc(label),
-                color,
-                kind == ChartKind::Total,
-                values
-            )
+            serde_json::json!({
+                "name": name,
+                // The browser maps key -> colour; see energy_label's note.
+                "key": key,
+                "type": "line",
+                "areaStyle": kind == ChartKind::Total,
+                "data": data,
+            })
         })
-        .collect::<Vec<_>>()
-        .join(",");
+        .collect();
 
+    chart_block(&serde_json::json!({
+        "categories": categories,
+        "series": series,
+        "unit": unit,
+        "zoom": false,
+    }))
+}
+
+/// The markup contract `mountDeclaredCharts` looks for, in one place.
+///
+/// Mirrors `frontend/src/components/Chart.astro`; a change to the contract
+/// should touch exactly these two.
+fn chart_block(config: &serde_json::Value) -> String {
     format!(
         "<div data-chart><div data-chart-canvas style=\"width:100%;height:100%\"></div>\
-         <script type=\"application/json\">{{\"categories\":[{cats}],\"series\":[{ser}],\
-         \"unit\":\"{unit}\",\"zoom\":false}}</script></div>",
-        unit = esc(unit),
+         <script type=\"application/json\">{config}</script></div>"
     )
 }
 
@@ -944,7 +971,7 @@ async fn handle_purpose_split(
     let gran = Gran::from_resolution(&resolution);
     let (pk, sk_path) = match parse_node_keys(&level_id) {
         Ok(keys) => keys,
-        Err(_) => return Ok(rows_response(&[], format)),
+        Err(_) => return Ok(rows_response(&[], format, Render::Table)),
     };
     let (start_bucket, end_bucket) = match (bucket_label(&start, gran), bucket_label(&end, gran)) {
         (Ok(s), Ok(e)) => (s, e),
@@ -973,7 +1000,7 @@ async fn handle_purpose_split(
     .map_err(|e| ApiError::internal(e.to_string()))?;
 
     let items: Vec<AggItem> = per_purpose.into_iter().flatten().collect();
-    Ok(rows_response(&to_rows(items, &level_id, &resolution, gran), format))
+    Ok(rows_response(&to_rows(items, &level_id, &resolution, gran), format, Render::Table))
 }
 
 /// `GET /meterdata/query/get_cost` — consumption × per-resource tariff, one row
@@ -1006,10 +1033,11 @@ async fn handle_cost(
     let priced = scale_rows(rows, "DKK", tariff_dkk_per_unit);
     // Once every carrier is in DKK, one line is the answer — separate series would
     // invite reading "electricity vs heat" off a currency axis.
-    if format == Format::Chart {
+    let render = Render::resolve(qs.get("view").map(String::as_str));
+    if format == Format::Html && render == Render::Chart {
         return Ok(ApiResponse::html(200, rows_to_chart(&priced, ChartKind::Total)));
     }
-    Ok(rows_response(&priced, format))
+    Ok(rows_response(&priced, format, render))
 }
 
 /// `GET /meterdata/query/get_emissions` — consumption × per-resource emission
@@ -1039,7 +1067,7 @@ async fn handle_emissions(
     let format = Format::resolve(qs.get("format").map(String::as_str), Format::Json);
     let (level_id, resolution, start, end) = window_params(qs)?;
     let rows = fetch_node_rows(client, table, &level_id, &resolution, &start, &end).await?;
-    Ok(rows_response(&scale_rows(rows, "kg CO₂e", emission_kg_per_unit), format))
+    Ok(rows_response(&scale_rows(rows, "kg CO₂e", emission_kg_per_unit), format, Render::resolve(qs.get("view").map(String::as_str))))
 }
 
 /// One building's cost + CO₂e over the window, with its deviation from the
@@ -1319,7 +1347,7 @@ async fn handle_benchmark(
     let bench_response =
         |b: &Benchmark| match format {
             Format::Json => ApiResponse::json(b),
-            Format::Html | Format::Chart => ApiResponse::html(200, benchmark_to_html(b)),
+            Format::Html => ApiResponse::html(200, benchmark_to_html(b)),
         };
     let (level_id, resolution, start, end) = window_params(qs)?;
     let gran = Gran::from_resolution(&resolution);
@@ -1501,7 +1529,7 @@ async fn handle_alarms(
     };
     Ok(match format {
         Format::Json => ApiResponse::json(&resp),
-        Format::Html | Format::Chart => ApiResponse::html(200, alarms_to_html(&resp)),
+        Format::Html => ApiResponse::html(200, alarms_to_html(&resp)),
     })
 }
 
@@ -1788,9 +1816,12 @@ mod tests {
         assert!(html.contains(r#"application/json"#));
         assert!(html.contains(r#""name":"El""#), "danish label missing: {html}");
         assert!(html.contains(r#""name":"Vand""#));
-        assert!(html.contains("[10,12]"), "electricity series wrong: {html}");
+        assert!(html.contains("[10.0,12.0]"), "electricity series wrong: {html}");
         // water has no reading on the 2nd, so it must still align to the axis.
-        assert!(html.contains("[3,0]"), "series not aligned to a shared axis: {html}");
+        assert!(html.contains("[3.0,0.0]"), "series not aligned to a shared axis: {html}");
+        // Colour is the browser's job; the fragment names the carrier instead.
+        assert!(html.contains(r#""key":"electricity""#), "carrier key missing: {html}");
+        assert!(!html.contains("color"), "colour must not be sent: {html}");
     }
 
     #[test]
@@ -1801,7 +1832,7 @@ mod tests {
         ];
         let html = rows_to_chart(&rows, ChartKind::Total);
         assert!(html.contains(r#""name":"Total""#));
-        assert!(html.contains("[15]"), "carriers not summed: {html}");
+        assert!(html.contains("[15.0]"), "carriers not summed: {html}");
         assert_eq!(html.matches(r#""type":"line""#).count(), 1, "should be one series");
     }
 
@@ -1813,8 +1844,14 @@ mod tests {
     }
 
     #[test]
-    fn format_chart_is_negotiated_from_the_query_string() {
-        assert_eq!(Format::resolve(Some("chart"), Format::Json), Format::Chart);
+    fn render_is_negotiated_separately_from_the_media_type() {
+        // `format` is the media type, `view` picks which HTML rendering. Keeping
+        // them apart is why liveness and raw measurements never have to know a
+        // chart exists.
+        assert_eq!(Render::resolve(Some("chart")), Render::Chart);
+        assert_eq!(Render::resolve(Some("cards")), Render::Cards);
+        assert_eq!(Render::resolve(None), Render::Table);
+        assert_eq!(Render::resolve(Some("nonsense")), Render::Table);
         assert_eq!(Format::resolve(Some("html"), Format::Json), Format::Html);
         assert_eq!(Format::resolve(None, Format::Json), Format::Json);
     }

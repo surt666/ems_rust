@@ -66,7 +66,7 @@ pub async fn handle_liveness(
 
     Ok(match format {
         Format::Json => ApiResponse::json(&rows),
-        Format::Html | Format::Chart => ApiResponse::html(200, render_fragment(&customerid, meterid.as_deref(), &rows)),
+        Format::Html => ApiResponse::html(200, render_fragment(&customerid, meterid.as_deref(), &rows)),
     })
 }
 

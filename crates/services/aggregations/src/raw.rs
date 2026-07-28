@@ -79,7 +79,7 @@ where
     match read(query).await {
         Ok(rows) => Ok(match format {
             Format::Json => ApiResponse::json(&rows),
-            Format::Html | Format::Chart => ApiResponse::html(200, render_fragment(&rows, limit)),
+            Format::Html => ApiResponse::html(200, render_fragment(&rows, limit)),
         }),
         Err(e) => err(format, 500, "Internal", &e.to_string()),
     }
@@ -90,7 +90,7 @@ where
 fn err(format: Format, status: u16, code: &str, message: &str) -> Result<ApiResponse, ApiError> {
     match format {
         Format::Json => Err(ApiError::new(status, code.to_string(), message.to_string())),
-        Format::Html | Format::Chart => Ok(ApiResponse::html(
+        Format::Html => Ok(ApiResponse::html(
             status,
             format!("<tr><td colspan=\"4\">Fejl: {}</td></tr>", esc(message)),
         )),

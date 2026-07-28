@@ -6,12 +6,8 @@
 // contract. Becomes the node view's default tab once backend-integrated; will
 // eventually vary by hierarchy level via the company schema (see spec
 // 2026-06-24-node-dashboard-schema-driven.md).
-import NodeChart from "./NodeChart.astro";
+import AggWidget from "./AggWidget.astro";
 import ResourceCards from "./ResourceCards.astro";
-import CostCard from "./CostCard.astro";
-import EmissionsCard from "./EmissionsCard.astro";
-import BenchmarkCard from "./BenchmarkCard.astro";
-import AlarmsCard from "./AlarmsCard.astro";
 import PurposeSplit from "./PurposeSplit.astro";
 
 // Call to action (biggest energy-waste) has no dedicated backend yet — kept
@@ -32,7 +28,7 @@ const ctaRows = [
         <h2 class="section-title" style="margin-bottom:0">Bygningsbenchmark</h2>
         <span class="muted" style="margin-left:auto">seneste 30 dage</span>
       </div>
-      <BenchmarkCard days={30} />
+      <AggWidget action="get_benchmark" days={30} />
     </div>
 
     <!-- Call to action -->
@@ -58,7 +54,7 @@ const ctaRows = [
         <h2 class="section-title" style="margin-bottom:0">Alarmer</h2>
         <a href="/alarms" class="btn-secondary" style="margin-left:auto">Gå til alarmoversigt</a>
       </div>
-      <AlarmsCard days={30} />
+      <AggWidget action="get_alarms" days={30} />
     </div>
   </div>
 
@@ -75,7 +71,7 @@ const ctaRows = [
         <h2 class="section-title" style="margin-bottom:0">Forbrug pr. ressource</h2>
         <span class="muted" style="margin-left:auto">seneste 30 dage</span>
       </div>
-      <NodeChart resolution="daily" days={30} height={280} />
+      <AggWidget action="get_aggregations" view="chart" days={30} height={280} />
     </div>
 
     <!-- CO₂e card — real, fed by get_emissions (consumption × emission factor). -->
@@ -85,7 +81,7 @@ const ctaRows = [
         <h2 class="section-title" style="margin-bottom:0">CO₂e</h2>
         <span class="muted" style="margin-left:auto">faktorbaseret · seneste 30 dage</span>
       </div>
-      <EmissionsCard resolution="daily" days={30} height={180} />
+      <AggWidget action="get_emissions" view="chart" days={30} height={180} />
     </div>
 
     <!-- Combined cost card — real, fed by get_cost (consumption × tariff). -->
@@ -95,7 +91,7 @@ const ctaRows = [
         <h2 class="section-title" style="margin-bottom:0">Samlet omkostning</h2>
         <span class="muted" style="margin-left:auto">tariffbaseret · seneste 30 dage</span>
       </div>
-      <CostCard resolution="daily" days={30} height={200} />
+      <AggWidget action="get_cost" view="chart" days={30} height={200} />
     </div>
 
     {/* Live per-resource consumption cards (ECharts), fed by the aggregations API —

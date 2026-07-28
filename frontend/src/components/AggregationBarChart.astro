@@ -32,6 +32,7 @@ const RESOLUTIONS = [
     MEASURES, apiResolution, rollup, RESOURCE_COLORS, RESOURCE_LABELS,
     resolveLevelId, aggBase,
   } from "../lib/agg";
+  import * as echarts from "echarts";
   import { drawChart } from "../lib/echarts-card";
 
   const MEASURE_KEYS = ["consumption", "cost", "co2e"];
@@ -166,10 +167,9 @@ const RESOLUTIONS = [
       renderChips();
       renderChart();
     });
-    addEventListener("resize", () => {
-      const c = window.echartsInstanceFor?.($canvas);
-      if (c) c.resize();
-    });
+    // drawChart returns the instance; window.echartsInstanceFor never existed, so
+    // this chart silently never resized.
+    addEventListener("resize", () => echarts.getInstanceByDom($canvas)?.resize());
 
     syncControls();
     await fetchRows();

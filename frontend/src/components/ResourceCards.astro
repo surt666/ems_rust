@@ -1,33 +1,16 @@
 ---
-// Forbrugsoverblik — one card per energy type: period total, daily average, and
-// a sparkline, all rendered by the aggregations lambda
-// (get_aggregations?format=chart&view=cards). Each card carries its own chart
-// config, which Layout's mountDeclaredCharts draws after the swap.
+// Forbrugsoverblik — one card per energy type: period total, daily average and a
+// sparkline, all rendered by the lambda (view=cards).
+import AggWidget from "./AggWidget.astro";
 const { days = 30, resolution = "daily" } = Astro.props;
-const url = `${import.meta.env.PUBLIC_AGG_API_BASE_URL}/meterdata/query/get_aggregations`;
 ---
-<div
-  id="resource-cards"
-  class="rc-grid"
-  hx-get={url}
-  hx-vals={`js:{
-    level_id: window.emsLevelId(),
-    resolution: '${resolution}',
-    start: new Date(Date.now() - ${days} * 864e5).toISOString(),
-    end: new Date().toISOString(),
-    format: 'chart',
-    view: 'cards'
-  }`}
-  hx-trigger="load"
-  hx-swap="innerHTML">
-  <p class="muted chart-state">Indlæser…</p>
-</div>
+<AggWidget action="get_aggregations" view="cards" days={days} resolution={resolution} class="rc-grid" />
 
 <script>
   // Drill into Resource Insights for the clicked energy type. Delegated, so it
   // survives the htmx swap that replaces the cards.
   document.addEventListener("click", (e) => {
-    const card = e.target.closest?.("#resource-cards .rc-card");
+    const card = e.target.closest?.(".rc-card");
     if (!card) return;
     const url = `/rimain/?measure=consumption&resource=${encodeURIComponent(card.dataset.type)}&resolution=monthly`;
     if (window.emsNavigate) window.emsNavigate(url); else location.href = url;
