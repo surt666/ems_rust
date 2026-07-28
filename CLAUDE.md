@@ -97,11 +97,30 @@ curl -s -H "Authorization: Bearer $TOK" "$RUST_API/hierarchy/query/profiles"
 aws cognito-idp admin-delete-user --profile stel-sb --user-pool-id $POOL --username "$U"
 ```
 
-The frontend attaches the token in `frontend/src/lib/auth-headers.ts`, which patches **both**
-`fetch` (React dashboard islands) and `htmx:configRequest` (every fragment). Both are needed —
-missing either 401s that half of the UI. **Deploy the frontend before the authorizer** on any
-future change here, or there is a window where requests are unauthenticated against a backend
-that requires them. The aggregations API (`/meterdata/*`) is **not** behind the authorizer yet.
+**Every data API now requires the same token** — hierarchy, `measurements-aggregations-api`,
+`measurements-query-raw` (DuckDB) and `redshift-measurements-api`. All four validate against the
+one Cognito pool; the authorizer only needs the public issuer/JWKS URL, so the two DAQ-account
+APIs need no cross-account IAM. Deliberately left open: `/meterdata/openapi.json` and
+`/meterdata/docs` — a browser opening Swagger UI cannot present a token, and they describe the
+surface rather than serve data. **This is authentication only; there is no per-user or
+per-company scoping yet** — any valid pool user can read any company's data.
+
+`redshift-measurements-api` has **no IaC** (built by hand, see `tools/rsbench`), so its
+authorizer was added with the CLI and will be lost if that API is ever recreated:
+
+```bash
+aws apigatewayv2 create-authorizer --profile daq_dev --api-id <id> --name cognito-jwt \
+  --authorizer-type JWT --identity-source '$request.header.Authorization' \
+  --jwt-configuration 'Audience=2fidjt2pmacepu39h4nhqcv0h1,Issuer=https://cognito-idp.eu-central-1.amazonaws.com/eu-central-1_gADB2vK24'
+aws apigatewayv2 update-route --profile daq_dev --api-id <id> --route-id <rid> \
+  --authorization-type JWT --authorizer-id <aid>
+```
+
+The frontend attaches the token in `frontend/src/layouts/Layout.astro`, which hooks **both**
+`htmx:configRequest` (every fragment, and `htmx.ajax` on `/measurements`) and `fetch` (the React
+dashboard islands). Both are needed — missing either 401s that half of the UI. It matches our own
+origins only, so Google Maps never sees the token. **Deploy the frontend before any authorizer**,
+or there is a window where requests are unauthenticated against a backend that requires them.
 
 CloudFront forwards `Authorization` (`ALL_VIEWER_EXCEPT_HOST_HEADER`) and does not cache on it,
 but its API cache policy is effectively no-store (TTL 0/1s) — verified that an authenticated 200

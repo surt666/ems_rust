@@ -130,25 +130,53 @@ import "../styles/enity-theme.css";
 
 	configureAmplify();
 
-	// The hierarchy API is behind a Cognito JWT authorizer, so every htmx call to it
-	// needs the ID token. htmx:configRequest is synchronous, hence the cached copy.
+	// Every one of our APIs sits behind a Cognito JWT authorizer, so each call needs
+	// the ID token. Matched against our own origins only — never Google Maps or any
+	// other third party, which must not receive our credentials.
 	//
-	// Scoped to the hierarchy paths on purpose: the aggregations API (/meterdata/*)
-	// has no authorizer, and sending the token cross-origin would leak it and force a
-	// CORS preflight on every request. Only .astro/htmx talks to the hierarchy API —
-	// the React islands call /meterdata/* only — so this is the single place needed.
+	// Two hooks because the app calls the backend two ways: htmx (every .astro
+	// fragment, htmx.ajax on /measurements) and fetch (the React dashboard islands).
+	// Missing either 401s that half of the UI.
+	const API_ORIGINS = [
+		import.meta.env.PUBLIC_AGG_API_BASE_URL,
+		import.meta.env.PUBLIC_DUCK_API_BASE_URL,
+		import.meta.env.PUBLIC_REDSHIFT_API_BASE_URL,
+	].filter(Boolean).map((u) => new URL(u).origin);
+
+	const isOwnApi = (url) => {
+		try {
+			const u = new URL(url, location.origin);
+			if (API_ORIGINS.includes(u.origin)) return true;
+			// Relative paths CloudFront proxies to the hierarchy API.
+			return u.origin === location.origin &&
+				/^\/(command$|query\/|hierarchy\/)/.test(u.pathname);
+		} catch { return false; }
+	};
+
+	// htmx:configRequest is synchronous, hence the cached copy; fetch can await.
 	let idToken = '';
 	const refreshToken = () => fetchAuthSession()
 		.then((s) => { idToken = s.tokens?.idToken?.toString() ?? ''; })
 		.catch(() => { idToken = ''; });
 	refreshToken();
 	document.addEventListener('astro:page-load', refreshToken);
+
 	document.body.addEventListener('htmx:configRequest', (e) => {
-		const path = e.detail?.path ?? '';
-		if (idToken && /^\/(command|query\/|hierarchy\/)/.test(path)) {
+		if (idToken && isOwnApi(e.detail?.path ?? '')) {
 			e.detail.headers['Authorization'] = `Bearer ${idToken}`;
 		}
 	});
+
+	const originalFetch = window.fetch.bind(window);
+	window.fetch = async (input, init) => {
+		const url = typeof input === 'string' ? input : input?.url ?? String(input);
+		if (!isOwnApi(url)) return originalFetch(input, init);
+		const token = idToken || (await refreshToken(), idToken);
+		if (!token) return originalFetch(input, init);
+		const headers = new Headers(init?.headers || undefined);
+		if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+		return originalFetch(input, { ...init, headers });
+	};
 
 	function setupLogout() {
 		document.getElementById('logout-btn')?.addEventListener('click', async () => {
