@@ -73,6 +73,10 @@
   .sdot{width:6px;height:6px;border-radius:50%;background:#3a5866;margin-left:2px}
   .sens.off{opacity:.45}
   .sens.neg .sdot{background:var(--rose)}
+  /* Both ends of a sideways reference — the same sensor seen from two nodes. */
+  .sens.linked{border-left:2px dashed #3a3157;margin-left:-2px;padding-left:10px}
+  .sens.linked .sdot{background:var(--violet);box-shadow:0 0 0 3px rgba(172,143,240,.16)}
+  .sens.linked .sname .id{color:var(--violet)}
   .sname{font-family:var(--mono);font-size:12px;color:var(--ink)}
   .sname .id{color:#5f7385;font-size:10px;margin-left:5px}
   .stag{font-family:var(--mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:0 5px;border-radius:4px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
@@ -351,7 +355,7 @@ function termHTML(t,i){
   const cls = t.w===0 ? "zero" : t.w<0 ? "term neg" : "term";
   const sign = t.w<0 ? `<span class="op neg">−</span>` : (i===0?"":`<span class="op">+</span>`);
   const coef = (Math.abs(t.w)===1||t.w===0) ? "" : `<span class="coef">${Math.abs(t.w)}×</span>`;
-  const from = t.kind==="x" ? `<span class="xref"> ← ${t.from}</span>` : "";
+  const from = t.kind==="x" ? `<span class="xref"> ← samme sensor i ${t.from}</span>` : "";
   return `${sign} ${coef}<span class="${cls}">${fmt(Math.abs(t.v))}</span>`
        + `<span class="ref"> ${t.label}</span>${from}`;
 }
@@ -369,6 +373,15 @@ function formulaHTML(id){
   return `<div class="fx${der?" der":""}">${head}${body} ${eq}${note}</div>`;
 }
 
+// Other nodes whose formula — in the view being shown — names this sensor even
+// though it is attached elsewhere. Used to label BOTH ends of the reference, so
+// the two rows are read as one sensor rather than two meters.
+function borrowedBy(sid){
+  return FORMS.filter(f=>f.et===et && f.pur===pur && f.node!==nodeOf(sid)
+                         && f.terms.some(([r])=>r===sid))
+              .map(f=>N[f.node].name);
+}
+
 function sensorRows(id){
   const own=(N[id].s||[]).filter(s=>SENS[s].et===et);
   const terms = pur==="total" ? totalTerms(id,et,slot) : purposeTerms(id,et,pur,slot);
@@ -377,21 +390,27 @@ function sensorRows(id){
   const foreign = terms.filter(t=>t.kind==="x");
   const rows = own.map(sid=>{
     const t=byRef.get(sid), w=t?t.w:null, v=SENS[sid].v[slot];
+    const elsewhere=borrowedBy(sid);
     let tag="", cls="";
     if(w===0){ tag=`<span class="stag zero">×0 udeladt</span>`; cls=" off"; }
     else if(w!==null&&w<0){ tag=`<span class="stag sub">trækkes fra</span>`; cls=" neg"; }
     else if(w!==null&&w!==1){ tag=`<span class="stag frac">×${w}</span>`; }
     else if(w===null){ cls=" off"; }
+    if(elsewhere.length){
+      tag=`<span class="stag used">samme sensor bruges i ${elsewhere.join(", ")}</span>`;
+      cls+=" linked";
+    }
     return `<div class="sens${cls}">
       <span class="sdot"></span>
       <span class="sname">${SENS[sid].name}<span class="id">${sid}</span></span>
       ${tag||"<span></span>"}
       <span class="sval">${fmt(v)} ${ETYPE[et].unit}</span></div>`;
   });
-  foreign.forEach(t=>rows.push(`<div class="sens neg">
+  // Not attached here — the same sensor, borrowed from the node it belongs to.
+  foreign.forEach(t=>rows.push(`<div class="sens neg linked">
       <span class="sdot"></span>
-      <span class="sname">${t.label}<span class="id">${t.ref} · ${t.from}</span></span>
-      <span class="stag used">hentet udefra</span>
+      <span class="sname">${t.label}<span class="id">${t.ref}</span></span>
+      <span class="stag used">samme sensor som i ${t.from}</span>
       <span class="sval">${fmt(t.v)} ${ETYPE[et].unit}</span></div>`));
   return rows.join("");
 }
