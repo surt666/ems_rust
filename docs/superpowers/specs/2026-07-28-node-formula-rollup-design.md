@@ -72,7 +72,7 @@ drive the model:
 | **D5** | The job emits implicit **`total`** (Σ) and **`unallocated`** (`total − Σ claimed`) alongside declared purposes. | "Øvrigt/fælles forbrug" is a real reported category, not an error state; a node may legitimately be only partly instrumented. Coverage gaps become visible instead of invisible. |
 | **D6** | The Glue job reads **`hierarchy_new` directly cross-account** — reading the **materialised weight matrix**, not raw formulas (§4.2, §8). | No new artifact or write path, always current by construction, and Glue holds **zero** formula semantics: one GSI query, one join, one weighted sum. |
 | **D7** | Dev system: **rename outright, no back-compat scaffolding.** | No real users depend on stored history. Read-fallbacks and dual-writes buy nothing and permanently muddy the model (the current `purpose` attribute holding an energy type is exactly that scar). |
-| **D8** | Meter nesting is a **fact on the sensor** (`contained_in`), not a formula. | See §3.8. Keeps double counting structurally impossible, which the flat explode gives today and a per-node override would have given up. |
+| **D8** | Meter **nesting** (`contained_in`) and **flow direction** (`flow`) are facts on the sensor, not formulas. | See §3.8. Nesting keeps double counting structurally impossible, which the flat explode gives today and a per-node override would have surrendered. Direction said once on the export meter is automatically right at every level; said as a node formula it needs `Purpose::Total` declarable again plus an ancestor-propagation rule that can be silently forgotten. |
 
 ### 2.1 Naming
 
@@ -156,15 +156,30 @@ pub struct NodeFormula {
 }
 ```
 
-and on the sensor:
+and on the sensor, two facts about the installation (§3.8):
 
 ```rust
+/// Which way energy flows through a meter. Import, production and submeters are
+/// `In`; grid export and PV feed-in are `Out` and contribute negatively.
+pub enum Flow { In, Out }
+
 pub struct Sensor {
     …
-    /// The meter this one physically sits inside, if any (§3.8).
+    /// The meter this one physically sits inside, if any.
     pub contained_in: Option<SensorId>,
+    /// Direction of flow. Defaults to `In`.
+    pub flow: Flow,
 }
 ```
+
+**Neither can be inferred.** A survey of the live `raw_data` corpus (2026-07-28)
+found channel names to be vendor-specific and semantically opaque — `a04` alone spans
+42 330 devices, `volume` carries `kWh` while `energy` carries `J`, and a search of the
+whole corpus for `import|export|deliver|receiv|feed|neg|pos|1_8|2_8|produc|generat`
+matched only `valve_position_*` and `temp_in`/`temp_out`. Whether direction is
+determinable at all depends on the meter make and on whether it arrives by CSV or API.
+Both fields are therefore **entered at onboarding**, and both are prompted for on the
+add-sensor form (§5.2).
 
 Wire tokens are lower-case `snake_case` (`space_heating`, `dhw`, `district_heating`, …),
 same convention as before, and are keyed verbatim into the roll-up sort key.
@@ -179,6 +194,7 @@ pub struct Claim {
     pub sensor: SensorId,
     pub coefficient: f64,
     pub derived: bool,              // §3.7
+    pub allocates: bool,            // !derived && !purpose.is_outflow() — see §8.2
 }
 
 /// A `(node, sensor)` pair whose weight in `total` is not the default 1.
@@ -224,9 +240,30 @@ node too. So a `lighting` claim declared on an area appears in its building's, p
 and company's `lighting` series — purpose series roll up the tree exactly like `total`
 does, and `unallocated` at the company reflects everything claimed anywhere below it.
 
-The invariant that keeps this sound: **a sensor may be claimed for a given
-`(energy_type, purpose)` by at most one node in the company** (§5.3). Otherwise a shared
-ancestor would count it twice.
+**One meter may feed many purposes.** A heat pump serving both space heating and hot
+water, with its delivered heat reported alongside, is three formulas over one sensor:
+
+```
+electricity / space_heating = HP_EL × 0.7
+electricity / dhw           = HP_EL × 0.3
+heat        / space_heating = HP_EL × 3.5     ← derived (SCOP), outside every total
+```
+
+`total` counts `HP_EL` once at weight 1, the two physical claims sum to exactly 1, so
+`unallocated` is 0.
+
+Two invariants keep propagation sound (§5.3):
+
+- **All claims naming a sensor are declared on one node.** Splitting them across a node
+  and its ancestor is arithmetically consistent but reports nonsense at the descendant:
+  claims travel up only, so the lower node would show the ancestor's share as
+  `unallocated` when it is in fact allocated. (Siblings cannot both reference a sensor —
+  the subtree rule (§3.5) already means any two nodes referencing the same sensor are in
+  an ancestor/descendant relationship, which is exactly the double-count case.)
+- **A sensor's physical coefficients for one `energy_type` sum to at most 1.** You cannot
+  allocate more of a meter than it measured. Derived claims are a different `energy_type`
+  and sit outside the sum; the bimåler pattern sums to 0 for the submeter (`−1` in space
+  heating, `+1` in DHW) and 1 for the main.
 
 ### 3.7 Physical vs derived claims
 
@@ -276,24 +313,40 @@ the property today's flat explode has, and the one a per-node weight override wo
 surrendered. `Purpose::Total` therefore stays reserved: there is nothing left for a
 `total` formula to express.
 
-**(b) Outflow — `Purpose::Generation`.** A PV export meter measures energy leaving the
-site. Summing it into consumption inflates the total and — because tariff and emission
-factors apply to `total` — bills and emits CO₂ for exported energy. A sensor claimed by
-`Purpose::Generation` therefore contributes **0** to `total` at its own node and every
-ancestor. Unlike containment this is absolute, not relational: export is never
-consumption anywhere.
+**(b) Direction — `Sensor::flow`.** Import and export are always *separate meters* — two
+registers on a bidirectional device, or two channels in a CSV — so the minus sign has to
+live somewhere. Zeroing an export meter is not enough: it only works when export is the
+site's only PV meter, and breaks the moment a production meter exists.
+
+| Meters | Correct answer | Zeroing export | Signed Σ |
+|---|---|---|---|
+| import 50, export 30 | 20 net grid | 50 | **20** ✓ |
+| import 50, production 100, export 30 | 120 consumption | 150 ✗ | **120** ✓ |
+
+So an `Out` meter contributes **−1**, at its own node and every ancestor. Unlike
+containment this is absolute, not relational: exported energy leaves the site everywhere.
 
 Together:
 
 ```
 total(node, energy_type)        = Σ over descendant sensors of that energy type
-                                    × 0 if contained by a sensor present under `node`
-                                    × 0 if claimed as generation
-                                    × 1 otherwise
-unallocated(node, energy_type)  = total − Σ(declared purposes, excluding derived and generation)
+                                    ×  0 if contained by a sensor present under `node`
+                                    × −1 if flow is Out
+                                    × +1 otherwise
+unallocated(node, energy_type)  = total − Σ(claims whose `allocates` flag is set)
 ```
 
-With those rules the building's heat partitions exactly — `space_heating` 85 + `dhw` 35 =
+**`total` therefore means net energy across the node's boundary.** Where production is
+metered that equals consumption; where it is not, it equals the net grid position — and
+consumption is simply not recoverable without a production meter, so the model does not
+pretend otherwise.
+
+`Purpose::Generation` stops being magic: it is now an ordinary reporting purpose (“how
+much did we export”) whose sign is already carried by the meter. It keeps exactly one
+special property — it does not reduce `unallocated`, because exported energy is not a
+slice of consumption.
+
+With these rules the building's heat partitions exactly — `space_heating` 85 + `dhw` 35 =
 `total` 120, `unallocated` 0 — and the chiller's `cooling` 40 equals its `total` 40.
 
 ---
@@ -334,7 +387,7 @@ domain rules stay in `crates/model` and exist exactly once.
 | `kind` | `"claim"` | `"total"` |
 | `sensor_id` | `N` | `N` |
 | `coefficient` | `N` | `N` |
-| `energy_type`, `purpose`, `declaring_node`, `derived` | populated | `purpose`/`derived` absent |
+| `energy_type`, `purpose`, `declaring_node`, `derived`, `allocates` | populated | absent |
 
 One GSI query per company returns the whole matrix.
 
@@ -363,7 +416,10 @@ a sensor):
 - `delete_node_formula` — `{ node, energy_type, purpose }`
 - `rebuild_company_matrix` — `{ company }` (operator escape hatch)
 
-`attach_sensor` and `replace_sensor_device` gain an optional `contained_in`.
+`attach_sensor` and `replace_sensor_device` gain an optional `contained_in` and `flow`.
+Because neither can be inferred from the device (§3.3), both are prompted for on the
+add-sensor form rather than hidden behind an advanced section — a forgotten `flow: Out`
+or `contained_in` silently inflates every total above it.
 
 **Matrix recompute** runs after any command that can change the flattened matrix:
 `set_node_formula`, `delete_node_formula`, `attach_sensor`, `replace_sensor_device`,
@@ -390,7 +446,8 @@ server-rendered maud.
 | `purpose` is declarable (not `total`, not `unallocated`) | 400 |
 | every `reference` is a descendant of the declaring node | 400 |
 | at most one formula per `(node, energy_type, purpose)` | upsert, not an error |
-| a sensor is claimed for a given `(energy_type, purpose)` by at most one node | 409 with the conflicting node |
+| every claim naming a sensor is declared on the **same node** | 409 with the conflicting node |
+| a sensor's physical coefficients for one `energy_type` sum to ≤ 1 | 400 with the running total |
 | `contained_in` names a sensor on the same node or an ancestor, of the same energy type | 400 |
 | `contained_in` does not form a containment cycle | 400 |
 
@@ -460,7 +517,10 @@ key-range — the common read path costs exactly what it does today. `purpose` e
    its ancestor paths (§3.6), then
    `groupBy(node_path, energy_type, purpose, gran, bucket).sum(resample_value × coefficient)`.
 4. **`unallocated`.** Per `(node_path, energy_type, gran, bucket)`:
-   `total − Σ(claims, excluding derived and generation)`.
+   `total − Σ(claims whose `allocates` flag is set)`. The flag is computed in
+   `crates/model` as `!derived && !purpose.is_outflow()`, so the job filters on a
+   boolean and never on a purpose name — the last place a rule could have leaked
+   into PySpark.
 5. **Write.** Unchanged `foreachPartition` + `batch_writer(overwrite_by_pkeys=["pk","sk"])`.
 
 ### 8.3 Stored attributes
@@ -472,8 +532,9 @@ meaningless. `count` stays as a coverage signal.
 ### 8.4 No duplicated semantics
 
 Because the job reads the materialised matrix rather than raw formulas, it holds none of
-the flattening rules — no subtree walk, no containment logic, no derived detection, no
-node-reference expansion. `hierarchy_matrix.py` is a GSI query and two
+the flattening rules — no subtree walk, no containment logic, no direction handling, no
+derived detection, no node-reference expansion, and not even the rule for which claims
+reduce `unallocated` (that arrives as the `allocates` flag). `hierarchy_matrix.py` is a GSI query and two
 `createDataFrame` calls. There is one implementation of the domain, in `crates/model`,
 and therefore nothing to keep in parity.
 
@@ -516,10 +577,21 @@ Consequences of the chosen options, documented rather than fixed:
 - **The materialised matrix can go stale** if a recompute is skipped by a code path that
   should have triggered one. Recompute lives in the command handler and
   `rebuild_company_matrix` is the manual repair.
-- **Unrecorded nesting still double counts.** Containment makes the *model* sound, but
-  nobody can infer from the data that one meter is wired inside another — if
-  `contained_in` is not set, the sum is high. This is an onboarding-data problem, not a
-  modelling one.
+- **Unrecorded nesting or direction still corrupts totals.** Containment and `flow` make
+  the *model* sound, but neither is inferable from the stream (§3.3) — a missing
+  `contained_in` or `flow: Out` silently inflates every total above it. This is an
+  onboarding-data problem, not a modelling one, and the add-sensor form is the only
+  mitigation.
+- **Shared plant cannot be apportioned across siblings.** The subtree rule (§3.5) means a
+  node may only reference its own descendants, so a chiller hanging off a property and
+  serving two buildings 60/40 can only be claimed at the property — neither building can
+  take a share. This is a real EMS requirement the model forecloses; lifting it would mean
+  allowing cross-subtree references, which reintroduces cycles and unsafe reparenting.
+- **Coefficients are time-invariant.** A reversible heat pump heats in January and cools
+  in July, but `electricity/space_heating = HP × 0.7` applies the same split to every
+  hour; the handbook's GUF 28 % has the same character. Time-varying coefficients would
+  break the linearity (D2) that lets evaluation commute with bucketing, so this is a
+  deliberate limit, not an oversight.
 - **Iceberg history is cleared** by the column rename (§7).
 
 ---
@@ -530,7 +602,8 @@ Consequences of the chosen options, documented rather than fixed:
 |---|---|
 | `model` domain | `Purpose` and `EnergyType` wire-token round-trip; reserved purposes rejected; `Term`/`NodeFormula` construction |
 | `model` logic | `flatten`: nested coefficient multiplication, override-only defaults, subtree-rule rejection, derived detection, claim propagation to ancestors |
-| `model` logic (§3.8) | containment yields weight 0 at and above the container's node and 1 below it; `generation` claims contribute 0 everywhere; the handbook cases partition exactly (`space_heating + dhw = total`, `unallocated = 0`) |
+| `model` logic (§3.8) | containment yields weight 0 at and above the container's node and 1 below it; `flow: Out` yields −1 everywhere; the three-meter PV case nets to 120 and the two-meter case to 20; the handbook cases partition exactly (`space_heating + dhw = total`, `unallocated = 0`) |
+| `model` logic (§3.6) | one sensor across several purposes on one node is accepted; claims split across a node and its ancestor are rejected; coefficients summing past 1 are rejected; a derived claim of a different `energy_type` does not count toward the sum |
 | `model` repository | formula + weight-row codec round-trip; `F#HN2#…` and `W#HN2#…` GSI partition queries; cascade delete with the node |
 | `hierarchy` api | `set_node_formula` / `delete_node_formula` happy paths and every validation failure; `writes`-edge gating; matrix recompute fires on each triggering command; `node_formulas` fragment |
 | `hierarchy` html | Formler tab renders terms; reference picker lists only descendants; `contained_in` select lists only same-node/ancestor meters |

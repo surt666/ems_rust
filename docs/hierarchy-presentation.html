@@ -97,9 +97,10 @@
   <p class="eyebrow">Metering model · node formulas</p>
   <h1>Node-formula roll-up</h1>
   <p class="sub">Sensors are plain raw values — no formula, no per-sensor factor. A sensor knows which
-  <b>energy type</b> it measures, and whether it sits inside another meter. Hierarchy nodes carry formulas
-  that declare an <b>(energy type, purpose)</b> output and combine descendant sensors with coefficients.
-  Pick an energy type and a purpose to watch the same tree answer a different question.</p>
+  <b>energy type</b> it measures, which meter it sits inside, and which way energy flows through it.
+  Hierarchy nodes carry formulas that declare an <b>(energy type, purpose)</b> output and combine
+  descendant sensors with coefficients. Pick an energy type and a purpose to watch the same tree answer
+  a different question.</p>
 
   <div class="bar-row" id="etypes"><span class="lbl">Energy type</span></div>
   <div class="bar-row" id="purposes"><span class="lbl">Purpose</span></div>
@@ -126,12 +127,18 @@
         A submeter records <b>which meter it sits inside</b>. It then counts <b>0</b> wherever its container is
         also present, and <b>1</b> where it is not — automatically, at every level. Double counting stays
         structurally impossible instead of depending on someone remembering an override.</div>
+      <div class="card"><span class="hd">Direction is a fact too</span>
+        Import and export are separate meters, so the minus sign has to live somewhere. It lives on the
+        <b>export meter</b> (<code>flow: out</code>), not in a node formula — said once, correct at every level
+        above. Neither this nor nesting can be read off the device, so both are entered at onboarding.</div>
       <div class="card"><span class="hd">Total &amp; unallocated</span>
-        The job always emits <b>total</b> (Σ of everything below) and <b>unallocated</b> (total − claimed).
-        Partial instrumentation shows up as a number instead of disappearing.</div>
+        <b>total</b> is the <b>net energy across the node's boundary</b>: Σ in − Σ out. Fully metered that is
+        consumption; without a production meter it is the net grid position. <b>unallocated</b> = total − claimed,
+        so partial instrumentation shows up as a number instead of disappearing.</div>
       <div class="card"><span class="hd">Claims propagate up</span>
         A purpose claimed on an area is claimed for its building, property and company too — purpose series roll
-        up the tree exactly like total does. A sensor may be claimed for a given purpose by <b>one</b> node only.</div>
+        up the tree exactly like total does. One meter may feed <b>many</b> purposes, but all of its claims are
+        declared on <b>one</b> node, and its coefficients for a given energy type sum to at most 1.</div>
       <div class="card"><span class="hd">Derived rows</span>
         When the declared output energy type differs from the sensors' — gas m³ × brændværdi × virkningsgrad,
         or el × COP — the row is <b>derived</b>. It is delivered energy, not metered consumption, so it never
@@ -165,8 +172,10 @@ const PUR={total:"Total", unallocated:"Unallocated", space_heating:"Space heatin
            cooling:"Cooling", lighting:"Lighting", ventilation:"Ventilation",
            plug_loads:"Plug loads", generation:"Generation"};
 
-// Sensors: raw value series, the energy type they measure, and — where it applies —
-// the meter they physically sit inside. Nothing else. No formula, no factor.
+// Sensors: a raw value series, the energy type they measure, and two facts about
+// the installation that nothing can infer from the data — which meter this one
+// sits inside (`in`), and which way energy flows through it (`flow`, default in).
+// No formula, no factor.
 const SENS={
   L1 :{name:"Phase L1",      et:"electricity",      v:[30,32,31,33]},
   L2 :{name:"Phase L2",      et:"electricity",      v:[28,29,30,31]},
@@ -176,9 +185,11 @@ const SENS={
   cL2:{name:"Chiller L2",    et:"electricity",      v:[14,14,15,15], in:"ACC"},
   cL3:{name:"Chiller L3",    et:"electricity",      v:[13,14,15,16], in:"ACC"},
   IMP:{name:"Grid import",   et:"electricity",      v:[50,55,52,58]},
-  EXP:{name:"Solar export",  et:"electricity",      v:[10,20,15,25]},
+  PRD:{name:"PV production", et:"electricity",      v:[100,110,105,115]},
+  EXP:{name:"Grid export",   et:"electricity",      v:[30,35,28,40], flow:"out"},
   LGT:{name:"Lighting",      et:"electricity",      v:[22,20,22,24]},
   AHU:{name:"Air handling",  et:"electricity",      v:[18,18,20,20]},
+  HP :{name:"Heat pump",     et:"electricity",      v:[24,25,26,27]},
   KIT:{name:"Kitchen",       et:"electricity",      v:[15,16,17,18]},
   HM1:{name:"Heat main",     et:"district_heating", v:[120,118,125,130]},
   DHW:{name:"DHW submeter",  et:"district_heating", v:[35,34,36,38], in:"HM1"},
@@ -204,9 +215,9 @@ const N={
     {et:"district_cooling",pur:"cooling",terms:[["ACC",3.2]],note:"COP 3,2 jf. datablad"},
   ]},
   CHILLPH:{name:"Chiller phase panel",type:"meter",s:["cL1","cL2","cL3"]},
-  A1b:{name:"Area A1b",type:"area",s:["IMP","EXP"],f:[
+  A1b:{name:"Area A1b",type:"area",s:["IMP","PRD","EXP"],f:[
     {et:"electricity",pur:"generation",terms:[["EXP",1]],
-     note:"outflow — never consumption, at any level"},
+     note:"reporting only — the minus sign lives on the meter, not here"},
   ]},
 
   A2:{name:"Building A2",type:"building",s:["HM2"],f:[
@@ -215,9 +226,14 @@ const N={
     {et:"district_heating",pur:"space_heating",terms:[["HM2",0.72]],note:"GAF, the remainder"},
   ]},
 
-  B1:{name:"Building B1",type:"building",s:["LGT","AHU"],f:[
+  B1:{name:"Building B1",type:"building",s:["LGT","AHU","HP"],f:[
     {et:"electricity",pur:"lighting",terms:[["LGT",1]]},
     {et:"electricity",pur:"ventilation",terms:[["AHU",1]]},
+    // One meter, three formulas — all declared on THIS node. The two electricity
+    // coefficients sum to 1, so nothing is over- or under-allocated.
+    {et:"electricity",pur:"space_heating",terms:[["HP",0.7]],note:"heat pump, annual split"},
+    {et:"electricity",pur:"dhw",terms:[["HP",0.3]]},
+    {et:"heat",pur:"space_heating",terms:[["HP",3.5]],note:"SCOP 3,5 — delivered heat"},
   ]},
   B2:{name:"Building B2",type:"building",s:["KIT","GAS"],f:[
     {et:"electricity",pur:"plug_loads",terms:[["KIT",1]]},
@@ -234,17 +250,19 @@ const sensorsUnder=id=>subtree(id).flatMap(n=>N[n].s||[]);
 const FORMS=[]; IDS.forEach(n=>(N[n].f||[]).forEach(f=>FORMS.push({...f,node:n})));
 const isDerived=f=>f.terms.some(([ref])=>SENS[ref].et!==f.et);
 const formAt=(node,et,pur)=>FORMS.find(f=>f.node===node&&f.et===et&&f.pur===pur);
-const genClaimed=sid=>FORMS.some(f=>f.pur==="generation"&&f.terms.some(([r])=>r===sid));
 
 // A sensor's weight in `total`, evaluated AT a node:
-//   0 if it is an outflow (generation) — absolute, everywhere;
-//   0 if the meter it sits inside is also present under this node — relational;
-//   1 otherwise.
+//   0  if the meter it sits inside is also present under this node — relational,
+//      because the same energy is already counted by the container;
+//   −1 if energy flows OUT through it — absolute, at every level;
+//   +1 otherwise.
+// So `total` is the net energy across the node's boundary. Fully metered, that
+// equals consumption; partially metered, it equals the net grid position — and
+// you cannot recover consumption without metering production anyway.
 function totalWeight(sid,nodeId){
-  if(genClaimed(sid)) return 0;
   const container=SENS[sid].in;
-  if(!container) return 1;
-  return sensorsUnder(nodeId).includes(container) ? 0 : 1;
+  if(container && sensorsUnder(nodeId).includes(container)) return 0;
+  return SENS[sid].flow==="out" ? -1 : 1;
 }
 
 // Σ of the claims for one purpose declared anywhere at or below `id`.
@@ -309,15 +327,18 @@ function sparkline(series,der){
 // outflow rules made visible at the node where they actually bite.
 function droppedUnder(id){
   const mine=sensorsUnder(id).filter(s=>SENS[s].et===et);
-  const nested=mine.filter(s=>SENS[s].in&&!genClaimed(s)&&totalWeight(s,id)===0);
-  const out=mine.filter(s=>genClaimed(s));
+  const nested=mine.filter(s=>totalWeight(s,id)===0);
+  const out=mine.filter(s=>totalWeight(s,id)===-1);
   const parts=[];
   if(nested.length){
     const containers=[...new Set(nested.map(s=>SENS[SENS[s].in].name))].join(", ");
-    parts.push(`− ${nested.length} meter${nested.length>1?"s":""} inside ${containers}`);
+    parts.push(`skipping ${nested.length} meter${nested.length>1?"s":""} inside ${containers}`);
   }
-  if(out.length) parts.push(`− ${out.length} outflow meter${out.length>1?"s":""}`);
-  return parts.length?` <span class="note">${parts.join(" ")}</span>`:"";
+  if(out.length){
+    const names=out.map(s=>SENS[s].name).join(", ");
+    parts.push(`minus ${names}`);
+  }
+  return parts.length?` <span class="note">(${parts.join("; ")})</span>`:"";
 }
 
 function formulaHTML(id){
@@ -348,9 +369,11 @@ function sensorRows(id){
     const v=SENS[sid].v[slot];
     let tag="", cls="";
     if(pur==="total"){
-      if(genClaimed(sid)){ tag=`<span class="stag gen">generation · outside total</span>`; cls=" off"; }
-      else if(SENS[sid].in && totalWeight(sid,id)===0){
+      const w=totalWeight(sid,id);
+      if(w===0){
         tag=`<span class="stag inside">inside ${SENS[SENS[sid].in].name}</span>`; cls=" off";
+      }else if(w===-1){
+        tag=`<span class="stag sub">flow out · subtracted</span>`; cls=" neg";
       }else if(SENS[sid].in){
         tag=`<span class="stag own">submeter · counts here</span>`;
       }
