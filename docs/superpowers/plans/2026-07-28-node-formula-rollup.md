@@ -1208,6 +1208,48 @@ Append inside the existing `mod tests` in `crates/model/src/logic/formulas.rs`:
         assert!(validate_containment(&g, &main).unwrap_err().contains("ancestor"));
     }
 
+    /// The physical device can sit anywhere; the SENSOR belongs on the node it
+    /// measures. A property main installed in B1's basement must be attached to
+    /// the property, not to B1 — otherwise it cannot cover a submeter in B2, and
+    /// B1's own total would claim the whole property's consumption.
+    #[test]
+    fn containment_rejects_a_container_on_a_sibling_branch() {
+        let b1 = format!("{CO}|HN4#1");
+        let b2 = format!("{CO}|HN4#2");
+        let g = CompanyGraph {
+            nodes: vec![
+                node(Level::Hn2, 997, CO),
+                node(Level::Hn4, 1, &b1),
+                node(Level::Hn4, 2, &b2),
+            ],
+            sensors: vec![
+                sensor(50, &b1, EnergyType::Electricity, None),      // main, mis-attached
+                sensor(51, &b2, EnergyType::Electricity, Some(50)),  // submeter in B2
+            ],
+            formulas: vec![],
+        };
+        let e = validate_containment(&g, &sens(&g, 51)).unwrap_err();
+        assert!(e.contains("does not contain"), "got: {e}");
+        assert!(e.contains("move it up"), "the message must name the fix; got: {e}");
+    }
+
+    /// …and once the main is attached by coverage, it works across branches.
+    #[test]
+    fn containment_accepts_a_property_wide_main_over_a_submeter_in_another_building() {
+        let b2 = format!("{CO}|HN4#2");
+        let g = CompanyGraph {
+            nodes: vec![node(Level::Hn2, 997, CO), node(Level::Hn4, 2, &b2)],
+            sensors: vec![
+                sensor(50, CO, EnergyType::Electricity, None),       // main on the property
+                sensor(51, &b2, EnergyType::Electricity, Some(50)),  // submeter in B2
+            ],
+            formulas: vec![],
+        };
+        assert!(validate_containment(&g, &sens(&g, 51)).is_ok());
+        assert_eq!(total_weight_at(&g, &sens(&g, 51), &b2), 1.0, "B2 reports its own use");
+        assert_eq!(total_weight_at(&g, &sens(&g, 51), CO), 0.0, "counted once via the main");
+    }
+
     #[test]
     fn containment_rejects_a_different_energy_type() {
         let mut g = chiller_graph();
@@ -1354,8 +1396,14 @@ pub fn validate_containment(g: &CompanyGraph, s: &Sensor) -> Result<(), String> 
         ));
     }
     if !is_at_or_under(parent_path(s), parent_path(container)) {
+        // A sensor attaches to the node whose consumption it MEASURES, not where
+        // the device is installed. A main covering the whole property belongs on
+        // the property node even if the box sits in one building's basement.
         return Err(format!(
-            "sensor {container_id} must be attached to {}'s own node or an ancestor of it",
+            "sensor {container_id} is attached to {}, which does not contain {}'s node. \
+             If {container_id} measures a wider scope than that node, move it up to the \
+             node it actually covers",
+            parent_path(container),
             s.id
         ));
     }
@@ -2145,7 +2193,10 @@ In the add-sensor form in `crates/services/hierarchy/src/html/forms.rs`:
         }
         span class="hint" {
             "Vælg den måling der allerede dækker denne — fx en akkumuleret kanal \
-             over sine fasekanaler — så forbruget ikke tælles dobbelt."
+             over sine fasekanaler — så forbruget ikke tælles dobbelt. Målingen \
+             hører til den node den DÆKKER, ikke der hvor måleren fysisk sidder: \
+             en hovedmåler for hele ejendommen hører på ejendomsnoden, også selv \
+             om kassen sidder i én bygning."
         }
     }
 

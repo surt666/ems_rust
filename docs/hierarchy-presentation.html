@@ -134,6 +134,11 @@
         <b>0</b> wherever the covering one is also present, and <b>1</b> where it is not (a tenant submeter on
         its own area still shows that tenant's use, while the building counts it once via the main). Double
         counting stays structurally impossible instead of depending on someone remembering an override.</div>
+      <div class="card"><span class="hd">Attach by coverage, not by location</span>
+        A sensor belongs to the node whose consumption it <b>measures</b>, never to where the box is bolted.
+        A main covering the whole property hangs off the <b>property</b> node even if the hardware sits in one
+        building's basement — that is what lets it cover a submeter in a different building. Attach it to the
+        building instead and that building's total silently claims the whole property.</div>
       <div class="card"><span class="hd">Direction is a fact too</span>
         Import and export are separate sensors — two registers on one device — so the minus sign has to live
         somewhere. It lives on the <b>export sensor</b> (<code>flow: out</code>), not in a node formula: said

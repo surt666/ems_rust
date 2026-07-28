@@ -319,7 +319,15 @@ the norm, in two shapes. *Same node:* a chiller's accumulating channel already c
 three phase channels — registers on one device, so they hang off one node (the hierarchy
 never nests a meter node inside a meter node; node types come from the company schema).
 *Across nodes:* a tenant submeter on its own area is already covered by the building's
-main sensor one level up. A blind Σ reads 80 kWh instead of
+main sensor one level up.
+
+**A sensor attaches to the node whose consumption it measures — not where the device is
+installed.** A main meter bolted in building B1's basement but covering the whole property
+hangs off the **property** node. Physical location is not a modelling input, and getting
+this wrong is silent: attach that main to B1 and B1's total claims the entire property's
+consumption while B2's is double counted above. This is why the covering sensor must be at
+or above the covered one (§5.3) — a sibling's subtree cannot contain the covered sensor, so
+allowing it would produce wrong numbers rather than an error. A blind Σ reads 80 kWh instead of
 40, and 155 kWh of heat instead of 120.
 
 The fact is *"this sensor's reading is already included in that one's"*, so it is
@@ -479,7 +487,7 @@ server-rendered maud.
 | at most one formula per `(node, energy_type, purpose)` | upsert, not an error |
 | every claim naming a sensor is declared on the **same node** | 409 with the conflicting node |
 | a sensor's physical coefficients for one `energy_type` sum to ≤ 1 | 400 with the running total |
-| `contained_in` names a sensor on the same node or an ancestor, of the same energy type | 400 |
+| `contained_in` names a sensor on the same node or an ancestor, of the same energy type | 400 — the message must name the fix: if the covering sensor measures a wider scope, move **it** up to the node it actually covers, rather than moving the submeter |
 | `contained_in` does not form a cycle | 400 |
 
 ---
@@ -623,6 +631,10 @@ Consequences of the chosen options, documented rather than fixed:
   value silently inflates every total above that sensor. This is an
   onboarding-data problem, not a modelling one, and the add-sensor form is the only
   mitigation.
+- **A sensor's coverage must correspond to a node.** A main sensor covering buildings B1
+  and B2 but not B3 has nowhere to attach unless the schema has a node grouping exactly
+  those two. Same family as the limitation below: the tree has to be able to express the
+  grouping before a sensor can be scoped to it.
 - **Shared plant cannot be apportioned across siblings.** The subtree rule (§3.5) means a
   node may only reference its own descendants, so a chiller sensor hanging off a property
   and serving two buildings 60/40 can only be claimed at the property — neither building
