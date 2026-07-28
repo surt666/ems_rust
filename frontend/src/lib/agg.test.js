@@ -33,9 +33,9 @@ test("bucketKey weekly is UTC-stable for a Monday-midnight timestamp", () => {
 
 test("rollup sums per-resource values into sorted buckets", () => {
   const rows = [
-    { purpose: "electricity", unit: "kWh", timestamp: "2026-03-01T00:00:00", value: 10 },
-    { purpose: "electricity", unit: "kWh", timestamp: "2026-03-15T00:00:00", value: 5 },
-    { purpose: "water", unit: "m3", timestamp: "2026-03-02T00:00:00", value: 3 },
+    { energy_type: "electricity", unit: "kWh", timestamp: "2026-03-01T00:00:00", value: 10 },
+    { energy_type: "electricity", unit: "kWh", timestamp: "2026-03-15T00:00:00", value: 5 },
+    { energy_type: "water", unit: "m3", timestamp: "2026-03-02T00:00:00", value: 3 },
   ];
   const { categories, byResource, unitByResource } = rollup(rows, "monthly");
   assert.deepEqual(categories, ["2026-03"]);
@@ -46,9 +46,9 @@ test("rollup sums per-resource values into sorted buckets", () => {
 
 test("rollup aligns multiple buckets across resources on a shared axis", () => {
   const rows = [
-    { purpose: "electricity", unit: "kWh", timestamp: "2026-01-10T00:00:00", value: 2 },
-    { purpose: "electricity", unit: "kWh", timestamp: "2026-02-10T00:00:00", value: 4 },
-    { purpose: "water", unit: "m3", timestamp: "2026-02-10T00:00:00", value: 7 },
+    { energy_type: "electricity", unit: "kWh", timestamp: "2026-01-10T00:00:00", value: 2 },
+    { energy_type: "electricity", unit: "kWh", timestamp: "2026-02-10T00:00:00", value: 4 },
+    { energy_type: "water", unit: "m3", timestamp: "2026-02-10T00:00:00", value: 7 },
   ];
   const { categories, byResource } = rollup(rows, "monthly");
   assert.deepEqual(categories, ["2026-01", "2026-02"]);
