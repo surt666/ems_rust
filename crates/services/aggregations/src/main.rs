@@ -247,7 +247,7 @@ fn to_rows_dimension(
 // `EnergyType::all()`; the hierarchy context writes the same token into the
 // sensor's `purpose`. Same ubiquitous language, so the type is shared, not
 // re-declared here.
-use model::domain::values::EnergyType;
+use model::domain::values::{EnergyType, Purpose};
 
 struct QueryParams<'a> {
     table: &'a str,
@@ -417,6 +417,9 @@ async fn handler(
                 // handler owns only the HTTP/HTML shape, not the data source.
                 let read = |q| model::repository::measurements::query(athena, q);
                 api::finish(raw::handle_measurements(read, &qs).await, Cors::None)
+            }
+            "get_purpose_split" => {
+                api::finish(handle_purpose_split(client, table, &qs).await, Cors::None)
             }
             "get_cost" => api::finish(handle_cost(client, table, &qs).await, Cors::None),
             "get_emissions" => api::finish(handle_emissions(client, table, &qs).await, Cors::None),
@@ -710,6 +713,82 @@ fn scale_rows(rows: Vec<Row>, unit: &str, factor: impl Fn(&str, &str, &str) -> f
             Row { unit: unit.to_string(), value, ..r }
         })
         .collect()
+}
+
+/// `GET /meterdata/query/get_purpose_split` — a node's end-use breakdown for one
+/// energy type: one series per purpose, including `total` and `unallocated`.
+///
+/// Fans out over `Purpose::all()` concurrently, the same shape as `query_node`'s
+/// fan-out over energy types: each purpose is its own `sk BETWEEN` key-range, so
+/// no query reads outside its own window. Purposes with no rows simply contribute
+/// nothing — the matrix is sparse, so an undeclared purpose has no rows at all.
+///
+/// `total` is returned alongside the parts deliberately: the caller needs it to
+/// show what fraction is accounted for, and `unallocated` is exactly the remainder
+/// (`total` − Σ declared purposes), already materialised by crates/model.
+#[utoipa::path(
+    get,
+    path = "/meterdata/query/get_purpose_split",
+    tag = "aggregations",
+    params(
+        ("level_id" = String, Query, description = "Hierarchy node path (…|HN2#..)"),
+        ("energy_type" = String, Query, description = "Energy type to break down (electricity, district_heating, …)"),
+        ("resolution" = Option<String>, Query, description = "hourly | daily (default daily)"),
+        ("start" = String, Query, description = "ISO-8601 start (required)"),
+        ("end" = String, Query, description = "ISO-8601 end (required)"),
+        ("format" = Option<String>, Query, description = "json (default) | html"),
+    ),
+    responses(
+        (status = 200, description = "One [Row] per (purpose, bucket)", body = Vec<Row>),
+        (status = 400, description = "Missing/invalid start or end", body = api::ErrorResponse),
+    ),
+)]
+async fn handle_purpose_split(
+    client: &Client,
+    table: &str,
+    qs: &HashMap<String, String>,
+) -> Result<ApiResponse, ApiError> {
+    let format = Format::resolve(qs.get("format").map(String::as_str), Format::Json);
+    let (level_id, resolution, start, end) = window_params(qs)?;
+    let energy_type = qs
+        .get("energy_type")
+        .or_else(|| qs.get("resource"))
+        .cloned()
+        .unwrap_or_default();
+
+    let gran = Gran::from_resolution(&resolution);
+    let (pk, sk_path) = match parse_node_keys(&level_id) {
+        Ok(keys) => keys,
+        Err(_) => return Ok(rows_response(&[], format)),
+    };
+    let (start_bucket, end_bucket) = match (bucket_label(&start, gran), bucket_label(&end, gran)) {
+        (Ok(s), Ok(e)) => (s, e),
+        _ => return Err(ApiError::bad_request("start/end must be ISO-8601 timestamps")),
+    };
+
+    let per_purpose = try_join_all(Purpose::all().map(|purpose| {
+        let (pk, sk_path) = (pk.clone(), sk_path.clone());
+        let (start_bucket, end_bucket) = (start_bucket.clone(), end_bucket.clone());
+        let energy_type = energy_type.clone();
+        async move {
+            let p = QueryParams {
+                table,
+                pk: &pk,
+                sk_path: &sk_path,
+                gran,
+                start_bucket: &start_bucket,
+                end_bucket: &end_bucket,
+                energy_type: &energy_type,
+                purpose: purpose.as_str(),
+            };
+            query_one_energy_type(client, &p, &energy_type).await
+        }
+    }))
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let items: Vec<AggItem> = per_purpose.into_iter().flatten().collect();
+    Ok(rows_response(&to_rows(items, &level_id, &resolution, gran), format))
 }
 
 /// `GET /meterdata/query/get_cost` — consumption × per-resource tariff, one row
@@ -1087,7 +1166,7 @@ async fn handle_alarms(
                        meter readings (Datatilegnelse, over Athena). Data routes accept ?format=html|json.",
         version = "0.1.0",
     ),
-    paths(handle_aggregations, handle_cost, handle_emissions, handle_benchmark, handle_alarms, raw::handle_measurements),
+    paths(handle_aggregations, handle_purpose_split, handle_cost, handle_emissions, handle_benchmark, handle_alarms, raw::handle_measurements),
     components(schemas(Row, Benchmark, BuildingStat, Alarm, AlarmsResponse, model::domain::measurement::Measurement, api::ErrorResponse, api::ErrorDetail)),
     tags(
         (name = "aggregations", description = "Hierarchy consumption rollup (Resource-Insights chart)"),
@@ -1353,6 +1432,23 @@ mod tests {
         assert_eq!(purpose, "");
         assert_eq!(gran, "");
         assert_eq!(bucket, "");
+    }
+
+    /// The physical purposes plus unallocated add up to total.
+    #[test]
+    fn purpose_split_rows_are_grouped_by_purpose() {
+        let items = vec![
+            make_item("HN2#2#electricity#total#d#2026-06-07", 100.0, 1, "kWh"),
+            make_item("HN2#2#electricity#lighting#d#2026-06-07", 22.0, 1, "kWh"),
+            make_item("HN2#2#electricity#cooling#d#2026-06-07", 18.0, 1, "kWh"),
+            make_item("HN2#2#electricity#unallocated#d#2026-06-07", 60.0, 1, "kWh"),
+        ];
+        let by: std::collections::BTreeMap<_, _> = to_rows(items, "HN2#2", "daily", Gran::Day)
+            .iter()
+            .map(|r| (r.purpose.clone(), r.value))
+            .collect();
+        assert_eq!(by["total"], 100.0);
+        assert_eq!(by["lighting"] + by["cooling"] + by["unallocated"], by["total"]);
     }
 
     #[test]
