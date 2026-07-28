@@ -312,13 +312,18 @@ def _path(p):
 def _item(img):
     sid = int(img["pk"]["S"][2:])
     daq = img["daq_id"]["S"]
+    # The hierarchy side has been renamed (energy_type / reading_kind); the
+    # pipeline side has not yet (Task 10 renames Flink + Iceberg together with
+    # the sensor-identity table). Until then the bridge TRANSLATES between the
+    # two vocabularies — not a compatibility fallback, just the two halves of an
+    # in-flight migration legitimately differing.
     out = {
         "pk": {"S": _pk(daq)},
         "sk": {"S": daq},
         "logical_id": {"N": str(sid)},
-        "meter_type": {"S": img["meter_type"]["S"]},
+        "meter_type": {"S": img["reading_kind"]["S"]},
         "hierarchy_path": {"S": _path(img["gsi1sk"]["S"])},
-        "purpose": {"S": img["purpose"]["S"]},
+        "purpose": {"S": img["energy_type"]["S"]},
     }
     # resample_minutes is optional in the source sensor row. Omit it when unset so
     # the meter-identity row carries no resample_minutes attribute — Flink's
@@ -327,8 +332,6 @@ def _item(img):
     # resample interval.
     if "resample_minutes" in img:
         out["resample_minutes"] = {"N": img["resample_minutes"]["N"]}
-    if "formula" in img:
-        out["formula"] = {"S": json.dumps(_d.deserialize(img["formula"]), default=str)}
     return out
 
 def _client():
