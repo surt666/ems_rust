@@ -30,7 +30,7 @@ const rows = [
 // The /measurements route lives on the SAME aggregations Function URL as the
 // chart data (one lambda; PUBLIC_AGG_API_BASE_URL). When configured, the table
 // goes live via HTMX (cross-account GET → HTML fragment); until then the
-// representative rows above render so the page still looks correct. `noHeaders`
+// representative rows above render so the page still looks correct.
 // keeps it a simple CORS GET (no preflight); daq_id comes from the URL, the rest
 // from #m-controls.
 // Backends for the SAME readings contract (identical HTML fragment):
@@ -151,8 +151,7 @@ on htmx:afterOnLoad from #m-rows set @data-busy to '0'`;
             hx-trigger="mready"
             hx-include="#m-controls"
             hx-swap="innerHTML"
-            hx-indicator="#m-spinner"
-            hx-request='{"noHeaders":true}'>
+            hx-indicator="#m-spinner">
             <tr><td colspan="4" class="muted">Indlæser…</td></tr>
           </tbody>
         ) : (

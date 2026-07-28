@@ -12,7 +12,7 @@
     </div>
     <div style="display: grid; grid-auto-flow: column; justify-content: end; gap: 0.5rem; align-items: center; margin-top: 1.5rem; margin-bottom: 1rem;">
       <button type="button" class="btn-primary" _="on click call #add-child-dialog.showModal() then send refresh to #add-child-body" data-i18n="node.add_child">Add child</button>
-      <button type="button" class="btn-danger" data-hx-post="/hierarchy/command" data-hx-vals='{"action": "delete_node", "id": "HN2#10003"}' data-hx-request='{"noHeaders": true}' data-hx-swap="none" data-hx-confirm="Slet denne node og alt under den?" hx-on--after-request="if(event.detail.successful){window.location.href='/main';}" data-i18n="node.delete">Slet</button>
+      <button type="button" class="btn-danger" data-hx-post="/hierarchy/command" data-hx-vals='{"action": "delete_node", "id": "HN2#10003"}' data-hx-swap="none" data-hx-confirm="Slet denne node og alt under den?" hx-on--after-request="if(event.detail.successful){window.location.href='/main';}" data-i18n="node.delete">Slet</button>
     </div>
     <dialog id="add-child-dialog" _="on click if event.target == me then call me.close()">
       <div class="dialog-header">
@@ -20,7 +20,7 @@
         <button type="button" class="btn-close" _="on click call #add-child-dialog.close()">&times;</button>
       </div>
       <div class="dialog-body">
-        <div id="add-child-body" data-hx-get="/hierarchy/query/add_child_form" data-hx-vals='{"parent": "HN2#10003"}' data-hx-trigger="refresh" data-hx-request='{"noHeaders": true}' data-hx-target="#add-child-body" data-hx-swap="innerHTML">
+        <div id="add-child-body" data-hx-get="/hierarchy/query/add_child_form" data-hx-vals='{"parent": "HN2#10003"}' data-hx-trigger="refresh" data-hx-target="#add-child-body" data-hx-swap="innerHTML">
           <em data-i18n="common.loading">Loading…</em>
         </div>
       </div>

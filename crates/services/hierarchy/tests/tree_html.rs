@@ -237,10 +237,12 @@ fn data_hx_request_json_is_quot_escaped() {
             "invalid HTML: unescaped double-quote inside data-hx-request (with_permissions={})",
             with_permissions
         );
-        // Valid form: the JSON keys are &quot;-escaped.
+        // The inverse of what this once asserted. `noHeaders` made HTMX drop every
+        // request header, including the Authorization one the page attaches in
+        // htmx:configRequest, so each fragment 401'd behind the Cognito authorizer.
         assert!(
-            html.contains("&quot;noHeaders&quot;"),
-            "data-hx-request JSON not &quot;-escaped (with_permissions={})",
+            !html.contains("noHeaders"),
+            "noHeaders is back; it strips Authorization and 401s the fragment (with_permissions={})",
             with_permissions
         );
     }

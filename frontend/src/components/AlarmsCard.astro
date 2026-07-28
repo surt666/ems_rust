@@ -6,7 +6,6 @@ const url = `${import.meta.env.PUBLIC_AGG_API_BASE_URL}/meterdata/query/get_alar
 ---
 <div
   hx-get={url}
-  hx-request='{"noHeaders": true}'
   hx-vals={`js:{
     level_id: window.emsLevelId(),
     resolution: 'daily',

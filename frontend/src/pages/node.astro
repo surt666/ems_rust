@@ -31,7 +31,6 @@ import NodeDashboard from "../components/NodeDashboard.astro";
          page load using the id from the URL query string. -->
     <div x-show="tab === 'data'" x-cloak
       hx-get="/hierarchy/query/node"
-      hx-request='{"noHeaders": true}'
       hx-vals="js:{id: (new URLSearchParams(location.search).get('id') || sessionStorage.getItem('selectedNodeId')), user: localStorage.getItem('loginId'), path: sessionStorage.getItem('selectedNodePath')}"
       hx-trigger="load"
       hx-swap="innerHTML"

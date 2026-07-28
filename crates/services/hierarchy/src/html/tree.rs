@@ -1,7 +1,7 @@
 use maud::{html, Markup};
 use model::domain::ids::{Level, NodeId};
 
-use super::{level_visual, pct, NO_HEADERS};
+use super::{level_visual, pct};
 
 /// Build the URL query string for the nodes endpoint.
 ///
@@ -107,7 +107,6 @@ pub fn list_item(
             div class="child-rows"
                 style="display:none;"
                 data-hx-get=(perm_url)
-                data-hx-request=(NO_HEADERS)
                 data-hx-target="this"
                 data-hx-swap="innerHTML"
                 data-hx-trigger="loadChildren once"
@@ -134,7 +133,6 @@ pub fn list_item(
             li data-id=(id_str) data-path=(current_path) {
                 div class="icon-wrapper"
                     data-hx-get=(load_url)
-                    data-hx-request=(NO_HEADERS)
                     data-hx-target="next .nested-list"
                     data-hx-trigger="loadChildren"
                 {

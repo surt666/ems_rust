@@ -2,11 +2,14 @@ pub mod forms;
 pub mod node;
 pub mod tree;
 
-/// The `data-hx-request` value that tells HTMX to omit its default request
-/// headers. Shared by every fragment that posts/gets over HTMX (node, forms,
-/// tree) so the literal isn't copy-pasted. Rendered through maud's `(..)`, so the
-/// `"`s come out `&quot;`-escaped (matching the previous inline literals).
-pub(crate) const NO_HEADERS: &str = r#"{"noHeaders": true}"#;
+// NOTE: there used to be a NO_HEADERS constant here — `{"noHeaders": true}` on
+// every fragment, to stop HTMX sending its default HX-* headers.
+//
+// It must not come back. `noHeaders` makes HTMX drop *all* request headers,
+// including the `Authorization` one the page adds in `htmx:configRequest`, so
+// with the Cognito authorizer in front of the API every fragment 401s. The HX-*
+// headers it was suppressing cost nothing: these requests are same-origin
+// through CloudFront, so there is no preflight to avoid.
 
 /// Convert a JSON scalar to its display string. Objects/arrays/null collapse to
 /// the empty string — callers only ever pass scalars, so the non-scalar arm is

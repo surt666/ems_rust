@@ -111,7 +111,7 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 
 					<div class="form-row-2col">
 						<label class="form-label">Brugerprofil</label>
-						<select name="data.profile" class="form-select" hx-get={`${API_BASE_URL}/hierarchy/query/profiles`} hx-request='{"noHeaders": true}' hx-trigger="intersect once" hx-params="none" hx-swap="innerHTML">
+						<select name="data.profile" class="form-select" hx-get={`${API_BASE_URL}/hierarchy/query/profiles`} hx-trigger="intersect once" hx-params="none" hx-swap="innerHTML">
 							<option value="Developer">Udvikler</option>
 							<option value="Standard" selected>Standardbruger</option>
 							<option value="Technician">Tekniker</option>
@@ -122,7 +122,7 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 
 					<div class="form-row-2col">
 						<label class="form-label">Sprog</label>
-						<select name="data.language" class="form-select" hx-get={`${API_BASE_URL}/hierarchy/query/languages`} hx-request='{"noHeaders": true}' hx-trigger="intersect once" hx-params="none" hx-swap="innerHTML">
+						<select name="data.language" class="form-select" hx-get={`${API_BASE_URL}/hierarchy/query/languages`} hx-trigger="intersect once" hx-params="none" hx-swap="innerHTML">
 							<option value="Danish" selected>Dansk (Dansk)</option>
 							<option value="English">English (English)</option>
 						</select>
@@ -130,7 +130,7 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 
 					<div class="form-row-2col">
 						<label class="form-label">Valuta</label>
-						<select name="data.currency" class="form-select" hx-get={`${API_BASE_URL}/hierarchy/query/currencies`} hx-request='{"noHeaders": true}' hx-trigger="intersect once" hx-params="none" hx-swap="innerHTML">
+						<select name="data.currency" class="form-select" hx-get={`${API_BASE_URL}/hierarchy/query/currencies`} hx-trigger="intersect once" hx-params="none" hx-swap="innerHTML">
 							<option value="DKK" selected>DKK - danske kroner</option>
 							<option value="EUR">EUR - Euro</option>
 						</select>
@@ -173,7 +173,6 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 						<div
 							hx-get={`${API_BASE_URL}/hierarchy/query/nodes?permissions=true`}
 							hx-vals="js:{user: localStorage.getItem('loginId')}"
-							hx-request='{"noHeaders": true}'
 							hx-trigger="dataadgangShown from:body once"
 							hx-swap="beforeend"
 							hx-target="#permission-grid">
@@ -241,7 +240,6 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 				</thead>
 				<tbody
 					hx-get={`${API_BASE_URL}/hierarchy/query/users`}
-					hx-request='{"noHeaders": true}'
 					hx-trigger="load"
 					hx-swap="innerHTML">
 					<tr>

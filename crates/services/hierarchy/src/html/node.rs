@@ -111,7 +111,6 @@ fn metadata_edit_form(
         form id="metadata-form" class="form"
             data-hx-post="/hierarchy/command"
             data-hx-swap="none"
-            data-hx-request=(crate::html::NO_HEADERS)
             hx-on--after-request=(METADATA_AFTER_REQUEST_JS)
         {
             input type="hidden" name="action" value="update_node";
@@ -159,7 +158,6 @@ fn add_child_dialog(parent_id_str: &str) -> Markup {
                     data-hx-get="/hierarchy/query/add_child_form"
                     data-hx-vals=(format!(r#"{{"parent": "{}"}}"#, parent_id_str))
                     data-hx-trigger="refresh"
-                    data-hx-request=(crate::html::NO_HEADERS)
                     data-hx-target="#add-child-body"
                     data-hx-swap="innerHTML"
                 {
@@ -278,7 +276,6 @@ pub fn render_node(
                         button type="button" class="btn-danger"
                             data-hx-post="/hierarchy/command"
                             data-hx-vals=(delete_vals)
-                            data-hx-request=(crate::html::NO_HEADERS)
                             data-hx-swap="none"
                             data-hx-confirm="Slet denne node og alt under den?"
                             hx-on--after-request=(after_delete_js)
@@ -643,7 +640,6 @@ fn sensor_block(nid_str: &str, parent_str: &str) -> Markup {
                 data-hx-trigger="load"
                 data-hx-target="#sensor-list"
                 data-hx-swap="innerHTML"
-                data-hx-request=(crate::html::NO_HEADERS)
                 data-hx-indicator="#loading-indicator"
             {
                 li style="color: var(--text-muted);" data-i18n="node.sensors_loading" {

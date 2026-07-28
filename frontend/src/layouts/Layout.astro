@@ -36,6 +36,63 @@ import "../styles/enity-theme.css";
                 <meta name="generator" content={Astro.generator} />
                 <title>{title}</title>
                 <ClientRouter />
+		<!-- Auth header for htmx, attached BEFORE htmx loads.
+		     htmx fires hx-trigger="load" requests (the sidebar tree) during page
+		     load, before any module script has run — so a listener registered in a
+		     module is simply too late and those requests go out unauthenticated.
+		     Amplify keeps the ID token in localStorage under a deterministic key,
+		     so it can be read synchronously here and the race disappears.
+		     The module script below still refreshes it through Amplify proper; this
+		     only covers first paint. -->
+		<script is:inline define:vars={{
+			clientId: import.meta.env.PUBLIC_USER_POOL_CLIENT_ID,
+			apiOrigins: [import.meta.env.PUBLIC_AGG_API_BASE_URL, import.meta.env.PUBLIC_DUCK_API_BASE_URL]
+				.filter(Boolean).map((u) => new URL(u).origin),
+		}}>
+			(function () {
+				window.__emsApiOrigins = apiOrigins;
+				const OWN = /^\/(command$|query\/|hierarchy\/)/;
+				function storedToken() {
+					if (window.__emsIdToken) return window.__emsIdToken;
+					try {
+						const base = "CognitoIdentityServiceProvider." + clientId;
+						const user = localStorage.getItem(base + ".LastAuthUser");
+						return user ? localStorage.getItem(base + "." + user + ".idToken") || "" : "";
+					} catch { return ""; }
+				}
+				// Same reasoning for fetch: the dashboard card scripts are modules and
+				// may run before Layout's module replaces window.fetch, so the wrapper
+				// has to be installed here, synchronously, before any of them.
+				const ownUrl = (url) => {
+					try {
+						const u = new URL(url, location.origin);
+						if (u.origin !== location.origin) return !!window.__emsApiOrigins?.includes(u.origin);
+						return OWN.test(u.pathname);
+					} catch { return false; }
+				};
+				const origFetch = window.fetch.bind(window);
+				window.fetch = function (input, init) {
+					const url = typeof input === "string" ? input : (input && input.url) || String(input);
+					const t = storedToken();
+					if (!t || !ownUrl(url)) return origFetch(input, init);
+					const headers = new Headers((init && init.headers) || undefined);
+					if (!headers.has("Authorization")) headers.set("Authorization", "Bearer " + t);
+					return origFetch(input, Object.assign({}, init, { headers }));
+				};
+
+				document.addEventListener("htmx:configRequest", function (e) {
+					const path = (e.detail && e.detail.path) || "";
+					let own = OWN.test(path);
+					if (!own) {
+						try { own = new URL(path, location.origin).origin !== location.origin; } catch { own = false; }
+					}
+					const t = storedToken();
+					if (own && t && !e.detail.headers["Authorization"]) {
+						e.detail.headers["Authorization"] = "Bearer " + t;
+					}
+				});
+			})();
+		</script>
         </head>
         <body class="app-layout">
 
@@ -156,10 +213,40 @@ import "../styles/enity-theme.css";
 	// htmx:configRequest is synchronous, hence the cached copy; fetch can await.
 	let idToken = '';
 	const refreshToken = () => fetchAuthSession()
-		.then((s) => { idToken = s.tokens?.idToken?.toString() ?? ''; })
+		.then((s) => {
+			idToken = s.tokens?.idToken?.toString() ?? '';
+			// The inline head handler reads this, so a refreshed token reaches the
+			// requests that fire before this module runs on the next navigation.
+			window.__emsIdToken = idToken;
+		})
 		.catch(() => { idToken = ''; });
-	refreshToken();
+
+	// Amplify restores its session asynchronously, so right after load
+	// fetchAuthSession() can resolve with no tokens yet. One call is therefore not
+	// enough - poll briefly rather than concluding the user is signed out and
+	// letting a request go unauthenticated.
+	async function tokenReady(maxMs = 4000) {
+		const t0 = performance.now();
+		while (!idToken && performance.now() - t0 < maxMs) {
+			await refreshToken();
+			if (idToken) break;
+			await new Promise((r) => setTimeout(r, 150));
+		}
+		return idToken;
+	}
+
+	tokenReady();
 	document.addEventListener('astro:page-load', refreshToken);
+
+	// htmx:confirm is the only hook that can DEFER a request, and it has to: the
+	// sidebar tree fires hx-trigger="load" during page load, which raced
+	// fetchAuthSession() and 401'd because configRequest is synchronous and the
+	// cached token was still empty. Hold the request until the session resolves.
+	document.body.addEventListener('htmx:confirm', (e) => {
+		if (idToken || !isOwnApi(e.detail?.path ?? '')) return;
+		e.preventDefault();
+		tokenReady().then(() => e.detail.issueRequest(true));
+	});
 
 	document.body.addEventListener('htmx:configRequest', (e) => {
 		if (idToken && isOwnApi(e.detail?.path ?? '')) {
@@ -167,11 +254,33 @@ import "../styles/enity-theme.css";
 		}
 	});
 
+	// Self-heal a 401. The confirm hook above cannot catch everything: htmx fires
+	// hx-trigger="load" requests (the sidebar tree) while this module script is
+	// still being evaluated, so the very first ones escape before any listener is
+	// attached. Retrying once on 401 fixes that without depending on script order,
+	// and covers a token expiring mid-session for free.
+	document.body.addEventListener('htmx:responseError', async (e) => {
+		const d = e.detail;
+		const cfg = d?.requestConfig ?? {};
+		if (d?.xhr?.status !== 401 || !isOwnApi(cfg.path ?? '')) return;
+		if (d.elt?.dataset?.authRetried) return;
+		if (d.elt?.dataset) d.elt.dataset.authRetried = '1';
+
+		await tokenReady();
+		if (!idToken) return;
+		window.htmx?.ajax(cfg.verb ?? 'get', cfg.path, {
+			source: d.elt,
+			target: d.target ?? d.elt,
+			swap: 'innerHTML',
+			values: cfg.parameters,
+		});
+	});
+
 	const originalFetch = window.fetch.bind(window);
 	window.fetch = async (input, init) => {
 		const url = typeof input === 'string' ? input : input?.url ?? String(input);
 		if (!isOwnApi(url)) return originalFetch(input, init);
-		const token = idToken || (await refreshToken(), idToken);
+		const token = idToken || (await tokenReady());
 		if (!token) return originalFetch(input, init);
 		const headers = new Headers(init?.headers || undefined);
 		if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);

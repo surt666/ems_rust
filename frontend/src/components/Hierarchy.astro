@@ -87,7 +87,6 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 <div id="partners-src" style="display:none"
      hx-get={`${API_BASE_URL}/hierarchy/query/nodes`}
      hx-vals="js:{user: localStorage.getItem('loginId')}"
-     hx-request='{"noHeaders": true}'
      hx-trigger="load delay:100ms once"
      _="on htmx:afterSwap
           set sel to #partner-select
@@ -107,7 +106,6 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
 <div id="companies-src" style="display:none"
      hx-get={`${API_BASE_URL}/hierarchy/query/nodes`}
      hx-vals="js:{user: localStorage.getItem('loginId'), id: document.getElementById('partner-select').value}"
-     hx-request='{"noHeaders": true}'
      hx-trigger="loadCompanies"
      _="on htmx:afterSwap
           set sel to #company-select
@@ -151,7 +149,6 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL;
   <ul id="hier-tree-list" class="nested-list"
       hx-get={`${API_BASE_URL}/hierarchy/query/nodes`}
       hx-vals="js:{user: localStorage.getItem('loginId'), id: (sessionStorage.getItem('selectedCompanyId') || document.getElementById('company-select').value), path: (sessionStorage.getItem('selectedCompanyId') || document.getElementById('company-select').value)}"
-      hx-request='{"noHeaders": true}'
       hx-target="#hier-tree-list"
       hx-swap="innerHTML"
       hx-trigger="loadTree"

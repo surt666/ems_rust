@@ -9,7 +9,12 @@ const mfeUrl = import.meta.env.PUBLIC_RAWDEVICE_MFE_URL || "";
   <div class="page-container">
     <div class="view-header"><h1>Raw Device</h1></div>
     <!-- Microfrontend composition: fetch the whole MFE page from its own origin and
-         swap in ONLY its #raw-device main div. noHeaders keeps it a CORS-simple GET. -->
+         swap in ONLY its #raw-device main div. noHeaders keeps it a CORS-simple GET.
+
+         KEEP noHeaders here, unlike everywhere else: this fetches a third-party
+         microfrontend on another origin, which must never receive our Cognito
+         token. Elsewhere noHeaders had to go precisely because it strips that
+         header and 401s the fragment. -->
     <div id="rd-content"
          style="max-width: 34rem;"
          hx-get={mfeUrl}
