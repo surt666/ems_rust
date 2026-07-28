@@ -78,6 +78,36 @@ cdk deploy OcamlHierarchyStack --require-approval never
   (`RustApiUrl` output, currently `https://xbvb3nzp1h.execute-api.eu-central-1.amazonaws.com`) or
   the live frontend `https://d24beiqs2cj89y.cloudfront.net` (e.g. `GET /hierarchy/query/profiles`).
 
+**The hierarchy API requires a Cognito ID token (since 2026-07-28).** An `HttpJwtAuthorizer` on
+the `ANY /{proxy+}` route validates issuer/audience/expiry before the Lambda is invoked, so an
+unauthenticated call is a **401 from the gateway** and never reaches application code — a bare
+`curl` against `/hierarchy/*`, `/command` or `/query/*` now fails, through CloudFront as well as
+directly. The audience is the app client in `frontend/.env` (`PUBLIC_USER_POOL_CLIENT_ID`), and
+it must be the **ID** token (`token_use: id`, `aud = <clientId>`); an access token carries
+`client_id` instead and is rejected. To call it by hand, mint a throwaway user and delete it after:
+
+```bash
+U=probe-$(date +%s)@example.com; PW='Probe!Passw0rd#2026'; POOL=eu-central-1_gADB2vK24
+aws cognito-idp admin-create-user --profile stel-sb --user-pool-id $POOL --username "$U" --message-action SUPPRESS
+aws cognito-idp admin-set-user-password --profile stel-sb --user-pool-id $POOL --username "$U" --password "$PW" --permanent
+TOK=$(aws cognito-idp admin-initiate-auth --profile stel-sb --user-pool-id $POOL \
+  --client-id 2fidjt2pmacepu39h4nhqcv0h1 --auth-flow ADMIN_USER_PASSWORD_AUTH \
+  --auth-parameters "USERNAME=$U,PASSWORD=$PW" --query 'AuthenticationResult.IdToken' --output text)
+curl -s -H "Authorization: Bearer $TOK" "$RUST_API/hierarchy/query/profiles"
+aws cognito-idp admin-delete-user --profile stel-sb --user-pool-id $POOL --username "$U"
+```
+
+The frontend attaches the token in `frontend/src/lib/auth-headers.ts`, which patches **both**
+`fetch` (React dashboard islands) and `htmx:configRequest` (every fragment). Both are needed —
+missing either 401s that half of the UI. **Deploy the frontend before the authorizer** on any
+future change here, or there is a window where requests are unauthenticated against a backend
+that requires them. The aggregations API (`/meterdata/*`) is **not** behind the authorizer yet.
+
+CloudFront forwards `Authorization` (`ALL_VIEWER_EXCEPT_HOST_HEADER`) and does not cache on it,
+but its API cache policy is effectively no-store (TTL 0/1s) — verified that an authenticated 200
+is not served to a following unauthenticated request. Do not raise that TTL without adding
+`Authorization` to the cache key.
+
 ### Stack 2 — Data pipeline (account `891377204778`)
 
 Builds the Flink fat JAR with sbt, then Go CDK. The canonical path is `build.sh`:

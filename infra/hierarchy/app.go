@@ -5,6 +5,7 @@ import (
 
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2authorizers"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigatewayv2integrations"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awscloudwatch"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
@@ -27,6 +28,10 @@ const (
 
 	// Cognito user pool in THIS account that the frontend authenticates against.
 	userPoolID = "eu-central-1_gADB2vK24"
+	// The app client the frontend signs in with; the ID token's `aud` claim, which
+	// the API's JWT authorizer checks. Must match frontend/.env
+	// PUBLIC_USER_POOL_CLIENT_ID.
+	userPoolClientID = "2fidjt2pmacepu39h4nhqcv0h1"
 )
 
 type OcamlHierarchyStackProps struct {
@@ -191,10 +196,33 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 			MaxAge: awscdk.Duration_Days(jsii.Number(1)),
 		},
 	})
+	// ── Cognito JWT authorizer ──
+	//
+	// The gateway validates the token (signature, issuer, audience, expiry) before the
+	// lambda is invoked, so an unauthenticated request never reaches application code
+	// and costs no Lambda time.
+	//
+	// The audience is the app client the frontend signs in with, and the token is the
+	// **ID** token — that is what `aws-amplify/auth` yields and what carries `aud =
+	// <clientId>`. An access token would carry `client_id` instead and fail this check.
+	//
+	// The frontend must already be attaching the header before this is deployed
+	// (frontend/src/lib/auth-headers.ts) — otherwise every request 401s in the window
+	// between the two deploys.
+	jwtAuthorizer := awsapigatewayv2authorizers.NewHttpJwtAuthorizer(
+		jsii.String("RustHierarchyJwtAuthorizer"),
+		jsii.String("https://cognito-idp."+*stack.Region()+".amazonaws.com/"+userPoolID),
+		&awsapigatewayv2authorizers.HttpJwtAuthorizerProps{
+			AuthorizerName: jsii.String("cognito-jwt"),
+			JwtAudience:    jsii.Strings(userPoolClientID),
+		},
+	)
+
 	rustApi.AddRoutes(&awsapigatewayv2.AddRoutesOptions{
 		Path:        jsii.String("/{proxy+}"),
 		Methods:     &[]awsapigatewayv2.HttpMethod{awsapigatewayv2.HttpMethod_ANY},
 		Integration: awsapigatewayv2integrations.NewHttpLambdaIntegration(jsii.String("RustHierarchyIntegration"), rustFn, &awsapigatewayv2integrations.HttpLambdaIntegrationProps{}),
+		Authorizer:  jwtAuthorizer,
 	})
 	awscdk.NewCfnOutput(stack, jsii.String("RustApiUrl"), &awscdk.CfnOutputProps{
 		Value: rustApi.Url(),

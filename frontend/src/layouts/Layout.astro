@@ -117,6 +117,7 @@ import "../styles/enity-theme.css";
 	import { signOut } from 'aws-amplify/auth';
 	import { navigate } from 'astro:transitions/client';
 	import { configureAmplify } from '../lib/amplify-config';
+	import { installAuthHeaders } from '../lib/auth-headers';
 	import { applyTranslations } from '../lib/i18n';
 
 	// Expose Astro's view-transition navigate so the hierarchy dropdowns can jump
@@ -124,6 +125,9 @@ import "../styles/enity-theme.css";
 	window.emsNavigate = navigate;
 
 	configureAmplify();
+	// Must run after configureAmplify() and before anything calls the API, so every
+	// fetch and every htmx request carries the Cognito ID token.
+	installAuthHeaders();
 
 	function setupLogout() {
 		document.getElementById('logout-btn')?.addEventListener('click', async () => {
