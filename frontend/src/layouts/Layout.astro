@@ -117,17 +117,38 @@ import "../styles/enity-theme.css";
 	import { signOut } from 'aws-amplify/auth';
 	import { navigate } from 'astro:transitions/client';
 	import { configureAmplify } from '../lib/amplify-config';
-	import { installAuthHeaders } from '../lib/auth-headers';
+	import { fetchAuthSession } from 'aws-amplify/auth';
+	import { resolveLevelId } from '../lib/agg';
 	import { applyTranslations } from '../lib/i18n';
 
 	// Expose Astro's view-transition navigate so the hierarchy dropdowns can jump
 	// to /node the same (no-full-reload) way clicking a tree node name does.
 	window.emsNavigate = navigate;
+	// Exposed for hx-vals expressions, so a widget can name the selected node
+	// declaratively instead of re-deriving it from sessionStorage.
+	window.emsLevelId = resolveLevelId;
 
 	configureAmplify();
-	// Must run after configureAmplify() and before anything calls the API, so every
-	// fetch and every htmx request carries the Cognito ID token.
-	installAuthHeaders();
+
+	// The hierarchy API is behind a Cognito JWT authorizer, so every htmx call to it
+	// needs the ID token. htmx:configRequest is synchronous, hence the cached copy.
+	//
+	// Scoped to the hierarchy paths on purpose: the aggregations API (/meterdata/*)
+	// has no authorizer, and sending the token cross-origin would leak it and force a
+	// CORS preflight on every request. Only .astro/htmx talks to the hierarchy API —
+	// the React islands call /meterdata/* only — so this is the single place needed.
+	let idToken = '';
+	const refreshToken = () => fetchAuthSession()
+		.then((s) => { idToken = s.tokens?.idToken?.toString() ?? ''; })
+		.catch(() => { idToken = ''; });
+	refreshToken();
+	document.addEventListener('astro:page-load', refreshToken);
+	document.body.addEventListener('htmx:configRequest', (e) => {
+		const path = e.detail?.path ?? '';
+		if (idToken && /^\/(command|query\/|hierarchy\/)/.test(path)) {
+			e.detail.headers['Authorization'] = `Bearer ${idToken}`;
+		}
+	});
 
 	function setupLogout() {
 		document.getElementById('logout-btn')?.addEventListener('click', async () => {

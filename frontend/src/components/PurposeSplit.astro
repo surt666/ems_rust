@@ -1,19 +1,20 @@
 ---
-// End-use breakdown (formålsopdeling) for the selected node: one row per
-// (energy type, purpose, bucket) from get_purpose_split.
+// End-use breakdown (formålsopdeling) for the selected node.
 //
-// HTML-over-the-wire: the lambda renders the <tr> fragment and this only issues
-// the request. The URL cannot be built at render time — this is a static site and
-// the selected node lives in sessionStorage — so it is assembled on load, the same
-// way the sibling dashboard islands resolve their level.
+// HTML-over-the-wire: the aggregations lambda renders the <tr> fragment
+// (get_purpose_split?format=html) and this only declares the request — same shape
+// as the Data panel in pages/node.astro. The node id is client-side state, so the
+// query is built by hx-vals rather than at render time; that one expression is the
+// only scripting here.
 //
-// `unallocated` is the remainder (total − Σ declared purposes), already computed
-// by crates/model. With no formulas declared it equals `total`, which is correct:
+// `unallocated` is the remainder (total − Σ declared purposes), already computed by
+// crates/model. With no formulas declared it equals `total`, which is correct:
 // nothing is allocated until a formula says so.
 const { energyType = "electricity", days = 30 } = Astro.props;
+const url = `${import.meta.env.PUBLIC_AGG_API_BASE_URL}/meterdata/query/get_purpose_split`;
 ---
 
-<section class="purpose-split card" data-energy-type={energyType} data-days={days}>
+<section class="purpose-split card">
   <div class="section-header">
     <h2 class="section-title" style="margin-bottom:0">Formålsopdeling</h2>
     <span class="muted" style="margin-left:auto">{energyType} · seneste {days} dage</span>
@@ -26,53 +27,24 @@ const { energyType = "electricity", days = 30 } = Astro.props;
           <th class="num">Værdi</th><th>Enhed</th><th class="num">Punkter</th>
         </tr>
       </thead>
-      <tbody id="purpose-split-rows">
+      <tbody
+        hx-get={url}
+        hx-request='{"noHeaders": true}'
+        hx-vals={`js:{
+          level_id: window.emsLevelId(),
+          energy_type: '${energyType}',
+          resolution: 'daily',
+          start: new Date(Date.now() - ${days} * 864e5).toISOString(),
+          end: new Date().toISOString(),
+          format: 'html'
+        }`}
+        hx-trigger="load"
+        hx-swap="innerHTML">
         <tr><td colspan="6" class="muted">Henter…</td></tr>
       </tbody>
     </table>
   </div>
 </section>
-
-<script>
-  import { resolveLevelId } from "../lib/agg";
-
-  function loadPurposeSplit() {
-    const root = document.querySelector<HTMLElement>(".purpose-split");
-    const body = document.getElementById("purpose-split-rows");
-    if (!root || !body) return;
-
-    const level = resolveLevelId();
-    if (!level) {
-      body.innerHTML = '<tr><td colspan="6" class="muted">Ingen node valgt.</td></tr>';
-      return;
-    }
-
-    const days = Number(root.dataset.days || 30);
-    const end = new Date();
-    const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
-    const qs = new URLSearchParams({
-      level_id: level,
-      energy_type: root.dataset.energyType || "electricity",
-      resolution: "daily",
-      start: start.toISOString(),
-      end: end.toISOString(),
-      format: "html",
-    });
-
-    const base = (import.meta.env.PUBLIC_AGG_API_BASE_URL || "").replace(/\/$/, "");
-    // htmx.ajax rather than hx-get: hx-get caches by URL, and the URL changes with
-    // the selected node (see the sidebar-tree/soft-nav notes).
-    (window as any).htmx?.ajax(
-      "GET",
-      `${base}/meterdata/query/get_purpose_split?${qs.toString()}`,
-      { target: "#purpose-split-rows", swap: "innerHTML" },
-    );
-  }
-
-  document.addEventListener("astro:page-load", loadPurposeSplit);
-  document.addEventListener("ems:refresh", loadPurposeSplit);
-  loadPurposeSplit();
-</script>
 
 <style>
   /* Grid, not flex — project convention. */
