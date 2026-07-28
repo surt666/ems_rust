@@ -532,3 +532,45 @@ Steps 2 and 4 are the two places this bites, and step 2 already bit once.
 - Formula versioning / point-in-time restatement (§10).
 - Non-linear operators (`abs`, division, min/max).
 - Time-varying coefficients.
+
+---
+
+## 14. Acceptance (measured 2026-07-28)
+
+Run against the deployed stack — real klepierre sensors under SeedCo01 (`HN2#10003`),
+formulas declared through `POST /command`, roll-up via the `measurements-aggregate`
+Glue job, read back through `GET /meterdata/query/get_purpose_split`.
+
+**Scope.** The presentation's exact numbers (`docs/hierarchy-presentation.html`) are not
+reproduced here: its sensors carry synthetic series that real devices cannot emit. That
+arithmetic is verified separately and more strictly by
+`crates/model::logic::formulas::presentation_fixture_reproduces_the_demo`, which replays
+the whole demo tree against an independently written JavaScript model. What this section
+verifies is the part a unit test cannot: that formulas reach Glue through the materialised
+matrix and come back correct through the API.
+
+| Invariant | Declared | Measured | Result |
+|---|---|---|---|
+| Exact partition | `HN4#10001` dh: dhw `10013×0.28`, space_heating `10013×0.72` | 12,600 + 32,400 = 45,000 = total; unallocated **0**; dhw share 0.2800 | PASS |
+| One sensor, many purposes | `HN4#10006` el: lighting `10016×0.4`, plug_loads `10016×0.6` | 159,147 + 238,721 = 397,868 = total; unallocated **0** | PASS |
+| Sideways reference (bimåler) | `HN4#10005` el total = `10014×1` + `10011×−1`, where 10011 sits in `HN4#10001` | property = 9,902 + 37,950 = 47,852, vs 57,754 if the main were double-counted | PASS |
+| Recursion | — (default) | property total == Σ children, no restating | PASS |
+| Purposes roll up | — | property lighting 159,147 == building lighting | PASS |
+
+**The main cancels symbolically.** After flattening, the property's `electricity/total`
+row set contains only sensor `10014` with coefficient 1 — `10011` has disappeared
+(+1 from one child, −1 from the other). Nothing at the property restates anything; the
+matrix simply no longer mentions the sensor.
+
+### Bug found by this acceptance run
+
+**The roll-up job could not retract rows.** `write_to_dynamo` uses `PutItem`, which is
+idempotent for rows the job still writes but cannot remove rows it has *stopped* writing.
+Declaring the 0.28/0.72 split made `unallocated` cancel to zero, so the (correctly sparse)
+matrix stopped emitting those rows — and the previous run's `unallocated` rows survived and
+kept being served, at exactly the pre-formula value. Their TTL is 90 days hourly / 730 daily,
+so the API would have returned a wrong end-use breakdown for months.
+
+Fixed by `prune_window`: the job recomputes a whole day-aligned window, so anything in that
+window it did not just write is by definition obsolete and is deleted. This needed a
+`dynamodb:Query` grant on the rollup table — the Glue role previously had write only.

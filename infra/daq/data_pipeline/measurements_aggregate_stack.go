@@ -119,6 +119,13 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		),
 	}))
 	table.GrantWriteData(glueRole)
+	// The job prunes rollup rows it no longer produces (a formula change can make a
+	// purpose's rows vanish), which means reading the partition back before deleting.
+	glueRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect:    awsiam.Effect_ALLOW,
+		Actions:   jsii.Strings("dynamodb:Query"),
+		Resources: &[]*string{table.TableArn()},
+	}))
 	scriptBucket.GrantRead(glueRole, nil)
 
 	// ── Lake Formation permissions ──

@@ -92,3 +92,23 @@ def test_company_relative_leaves_an_already_rooted_path_alone():
 def test_company_relative_passes_through_when_there_is_no_hn2():
     import hierarchy_matrix as hm
     assert hm.company_relative("HN0#root|HN1#10001") == "HN0#root|HN1#10001"
+
+
+# ── stale-row pruning ──
+
+def test_bucket_of_sk_reads_the_trailing_bucket():
+    assert m.bucket_of_sk("HN2#2#electricity#total#h#2026-06-07T08") == "2026-06-07T08"
+    assert m.bucket_of_sk("HN2#2|HN3#9#water#dhw#d#2026-06-07") == "2026-06-07"
+
+
+def test_prune_window_range_covers_both_granularities():
+    """The daily label is a prefix of the hourly one, so one string range spans both.
+
+    This is what lets prune_window use a single [start, end] comparison instead of
+    branching on granularity.
+    """
+    start, end = "2026-06-01", "2026-06-07T99"
+    for b in ("2026-06-01", "2026-06-01T00", "2026-06-07", "2026-06-07T23"):
+        assert start <= b <= end, b
+    for b in ("2026-05-31T23", "2026-06-08", "2026-06-08T00"):
+        assert not (start <= b <= end), b

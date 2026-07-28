@@ -208,6 +208,52 @@ def read_counters(spark, window_start: str):
         "hn2", "logical_id", "energy_type", "unit", "resample_value", "resample_timestamp")
 
 
+def bucket_of_sk(sk: str) -> str:
+    """The trailing bucket of `<node_path>#<energy_type>#<purpose>#<gran>#<bucket>`."""
+    return sk.rsplit("#", 1)[-1] if "#" in sk else ""
+
+
+def prune_window(table_name: str, region: str, companies: list, keep: set,
+                 start_bucket: str, end_bucket: str) -> int:
+    """Delete rollup rows in the recomputed window that this run did NOT produce.
+
+    PutItem alone is idempotent for rows the job still writes, but it cannot retract
+    rows it has *stopped* writing — and a formula change does exactly that. Declaring
+    dhw=0.28 and space_heating=0.72 makes `unallocated` cancel to zero, so the matrix
+    (correctly, being sparse) stops emitting those rows; without this the previous
+    run's `unallocated` rows survive and the API keeps serving them. They carry a
+    90/730-day TTL, so they would otherwise be wrong for months.
+
+    The job recomputes the whole day-aligned window from scratch, so anything in the
+    window it did not just write is by definition obsolete.
+    """
+    import boto3
+
+    ddb = boto3.resource("dynamodb", region_name=region)
+    table = ddb.Table(table_name)
+    stale = []
+    for pk in companies:
+        kwargs = {"KeyConditionExpression": boto3.dynamodb.conditions.Key("pk").eq(pk),
+                  "ProjectionExpression": "pk, sk"}
+        while True:
+            page = table.query(**kwargs)
+            for item in page.get("Items", []):
+                sk = item["sk"]
+                if sk in keep:
+                    continue
+                b = bucket_of_sk(sk)
+                if start_bucket <= b <= end_bucket:
+                    stale.append({"pk": item["pk"], "sk": sk})
+            if "LastEvaluatedKey" not in page:
+                break
+            kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+
+    with table.batch_writer() as bw:
+        for k in stale:
+            bw.delete_item(Key=k)
+    return len(stale)
+
+
 def write_to_dynamo(df: DataFrame, table_name: str, region: str) -> None:
     """Upsert rollup items into DynamoDB, partition-parallel. PutItem overwrites (idempotent)."""
     from decimal import Decimal
@@ -282,8 +328,20 @@ def main():
         job.commit()
         return
 
-    rollups = build_rollups(counters, matrix, now.strftime("%Y-%m-%dT%H:%M:%S+00:00"))
+    rollups = build_rollups(counters, matrix, now.strftime("%Y-%m-%dT%H:%M:%S+00:00")).cache()
     write_to_dynamo(rollups, args["rollup_table"], region)
+
+    # Retract rows this run no longer produces (see prune_window). The window is
+    # the day-aligned recompute range, expressed in both bucket labels so hourly
+    # ("YYYY-MM-DDThh") and daily ("YYYY-MM-DD") labels both compare correctly:
+    # the daily label is a prefix of the hourly one, so a plain string range over
+    # [start_day, end_day + "T99"] covers both.
+    written = {r["sk"] for r in rollups.select("sk").distinct().collect()}
+    pks = [r["pk"] for r in rollups.select("pk").distinct().collect()]
+    start_day = window_start[:10]
+    end_day = now.strftime("%Y-%m-%d") + "T99"
+    pruned = prune_window(args["rollup_table"], region, pks, written, start_day, end_day)
+    print("measurements-aggregate: wrote %d rows, pruned %d stale" % (len(written), pruned))
     job.commit()
 
 
