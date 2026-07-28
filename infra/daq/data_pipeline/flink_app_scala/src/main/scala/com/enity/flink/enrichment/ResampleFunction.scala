@@ -19,12 +19,12 @@ import scala.jdk.CollectionConverters.*
   * (Internal algorithm vocabulary still says "bin" for the grid points/windows — e.g.
   * `binSizeMs`, `computeBins` — but nothing named "bin" is persisted or part of any contract.) */
 class ResampleFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
-    extends KeyedProcessFunction[Integer, (EnrichedRecord, MeterMapping), EnrichedRecord]:
+    extends KeyedProcessFunction[Integer, (EnrichedRecord, SensorMapping), EnrichedRecord]:
 
   @transient private lazy val logger = LoggerFactory.getLogger(getClass)
 
   /** Buffer: event timestamp millis → BufferedReadingV2.
-    * Carries the EnrichedRecord plus its mapping (meterType + resampleMinutes). */
+    * Carries the EnrichedRecord plus its mapping (readingKind + resampleMinutes). */
   @transient private var readingBuffer: MapState[java.lang.Long, BufferedReadingV2] = _
 
   /** Track the latest timestamp for which we've emitted bins, to avoid re-emission. */
@@ -56,15 +56,15 @@ class ResampleFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
     )
 
   override def processElement(
-      value: (EnrichedRecord, MeterMapping),
-      ctx: KeyedProcessFunction[Integer, (EnrichedRecord, MeterMapping), EnrichedRecord]#Context,
+      value: (EnrichedRecord, SensorMapping),
+      ctx: KeyedProcessFunction[Integer, (EnrichedRecord, SensorMapping), EnrichedRecord]#Context,
       out: Collector[EnrichedRecord]
   ): Unit =
     val (record, mapping) = value
 
     // Backward-compat fast path for unconfigured meters (resampleMinutes=null):
     // gauges pass through immediately; counters fall through to the buffer-and-delta path.
-    if mapping.resampleMinutes == null && mapping.meterType == "gauge" then
+    if mapping.resampleMinutes == null && mapping.readingKind == "gauge" then
       out.collect(record)
       return
 
@@ -77,7 +77,7 @@ class ResampleFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
 
   override def onTimer(
       timerTs: Long,
-      ctx: KeyedProcessFunction[Integer, (EnrichedRecord, MeterMapping), EnrichedRecord]#OnTimerContext,
+      ctx: KeyedProcessFunction[Integer, (EnrichedRecord, SensorMapping), EnrichedRecord]#OnTimerContext,
       out: Collector[EnrichedRecord]
   ): Unit =
     val entries = sortedEntries
@@ -104,7 +104,7 @@ class ResampleFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
   private def emitFromBuffer(
       eventTs: Long,
       priorLatest: Long,
-      ctx: KeyedProcessFunction[Integer, (EnrichedRecord, MeterMapping), EnrichedRecord]#Context,
+      ctx: KeyedProcessFunction[Integer, (EnrichedRecord, SensorMapping), EnrichedRecord]#Context,
       out: Collector[EnrichedRecord]
   ): Unit =
     val current = readingBuffer.get(eventTs)
@@ -133,13 +133,13 @@ class ResampleFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
             error = "No predecessor in buffer — needs batch recomputation"
           ))
 
-  /** Compute and emit bin rows between two readings. Branches on meterType inside computeBins. */
+  /** Compute and emit bin rows between two readings. Branches on readingKind inside computeBins. */
   private def emitBins(
       prev: BufferedReadingV2,
       current: BufferedReadingV2,
       prevTs: Long,
       currentTs: Long,
-      ctx: KeyedProcessFunction[Integer, (EnrichedRecord, MeterMapping), EnrichedRecord]#Context,
+      ctx: KeyedProcessFunction[Integer, (EnrichedRecord, SensorMapping), EnrichedRecord]#Context,
       out: Collector[EnrichedRecord]
   ): Unit =
     val mapping = current.mapping
@@ -147,7 +147,7 @@ class ResampleFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
     // Counter with resampleMinutes=null: preserve old CounterDeltaFunction behavior — emit one
     // row per (prev, current) pair with value=delta, resample_* fields null.
     if mapping.resampleMinutes == null then
-      mapping.meterType match
+      mapping.readingKind match
         case "counter" =>
           if current.cumulativeValue < prev.cumulativeValue then
             ctx.output(SideOutputTags.ANOMALY, ErrorRecord(
@@ -201,7 +201,7 @@ class ResampleFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
 
 object ResampleFunction:
 
-  /** `resample_method` values written to `logical_meter_data`. Must stay in sync with the
+  /** `resample_method` values written to `logical_data`. Must stay in sync with the
     * Python equivalents in `glue/late_recomputation.py` — change in lock-step. */
   object BinMethod:
     val LinearInterpolation = "linear_interpolation"
@@ -217,11 +217,11 @@ object ResampleFunction:
       current: BufferedReadingV2,
       prevTs: Long,
       currentTs: Long,
-      mapping: MeterMapping
+      mapping: SensorMapping
   ): Result =
     val binSizeMs = mapping.resampleMinutes.intValue().toLong * 60L * 1000L
 
-    mapping.meterType match
+    mapping.readingKind match
       case "counter" =>
         if current.cumulativeValue < prev.cumulativeValue then Anomaly
         else

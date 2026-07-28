@@ -34,12 +34,12 @@ func main() {
 		StackProps:        awscdk.StackProps{Env: defaultEnv()},
 		ErrorStreamArn:    *pipeline.ErrorStream.StreamArn(),
 		ErrorStreamName:   *pipeline.ErrorStream.StreamName(),
-		MeterIdentityArn:  *pipeline.MeterIdentityTable.TableArn(),
-		MeterIdentityName: *pipeline.MeterIdentityTable.TableName(),
-		MeterIdentityStreamArn: *pipeline.MeterIdentityTable.TableStreamArn(),
+		SensorIdentityArn:  *pipeline.SensorIdentityTable.TableArn(),
+		SensorIdentityName: *pipeline.SensorIdentityTable.TableName(),
+		SensorIdentityStreamArn: *pipeline.SensorIdentityTable.TableStreamArn(),
 		TableBucket:       tableBucketName,
 	})
-	lateRecomp.AddDependency(pipeline.Stack, jsii.String("LateRecomputation depends on meter-identity / error stream"))
+	lateRecomp.AddDependency(pipeline.Stack, jsii.String("LateRecomputation depends on sensor-identity / error stream"))
 
 	NewMeasurementsAggregateStack(app, "MeasurementsAggregateStack", &MeasurementsAggregateStackProps{
 		StackProps:   awscdk.StackProps{Env: defaultEnv()},
@@ -76,7 +76,7 @@ func main() {
 	// The Lambda + DDB stream subscription live in ems_ocaml/infra/hierarchy/app.go.
 	NewOcamlBridgeWriterRoleStack(app, "OcamlBridgeWriterRoleStack", &OcamlBridgeWriterRoleStackProps{
 		StackProps:           awscdk.StackProps{Env: emsAccountEnv()},
-		MeterIdentityTableArn: *pipeline.MeterIdentityTable.TableArn(),
+		SensorIdentityTableArn: *pipeline.SensorIdentityTable.TableArn(),
 	})
 
 	awscdk.Tags_Of(pipeline.Stack).Add(jsii.String("version"), jsii.String(runNr), nil)

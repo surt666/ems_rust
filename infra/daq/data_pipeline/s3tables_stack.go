@@ -49,7 +49,7 @@ func NewS3TablesStack(scope constructs.Construct, id string, props *awscdk.Stack
 	awss3tables.NewCfnTable(stack, jsii.String("MeterReadings"), &awss3tables.CfnTableProps{
 		TableBucketArn:  jsii.String(measurementsBucketArn),
 		Namespace:       jsii.String("all"),
-		TableName:       jsii.String("logical_meter_data"),
+		TableName:       jsii.String("logical_data"),
 		OpenTableFormat: jsii.String("ICEBERG"),
 		IcebergMetadata: map[string]any{
 			"icebergSchema": map[string]any{
@@ -70,7 +70,7 @@ func NewS3TablesStack(scope constructs.Construct, id string, props *awscdk.Stack
 					field("hn7", "int", false),
 					field("hn8", "int", false),
 					field("hn9", "int", false),
-					field("purpose", "string", false),
+					field("energy_type", "string", false),
 					field("resample_value", "double", false),
 					field("resample_method", "string", false),
 					field("resample_timestamp", "timestamp", false),

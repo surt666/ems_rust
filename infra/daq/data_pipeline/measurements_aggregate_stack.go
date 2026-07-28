@@ -67,7 +67,11 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		awsiam.ManagedPolicy_FromAwsManagedPolicyName(jsii.String("AWSLakeFormationDataAdmin")),
 		awsiam.ManagedPolicy_FromAwsManagedPolicyName(jsii.String("AmazonS3FullAccess")),
 	}
+	// Explicitly named: the hierarchy account's HierarchyReaderRole trusts this ARN
+	// cross-account. A CFN-generated name carries a random suffix, so any future role
+	// replacement would silently break the roll-up's read of the coefficient matrix.
 	glueRole := awsiam.NewRole(stack, jsii.String("AggGlueJobRole"), &awsiam.RoleProps{
+		RoleName:        jsii.String("MeasurementsAggregateGlueRole"),
 		AssumedBy:       awsiam.NewServicePrincipal(jsii.String("glue.amazonaws.com"), nil),
 		ManagedPolicies: &managedPolicies,
 	})
@@ -93,6 +97,13 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		Effect:    awsiam.Effect_ALLOW,
 		Actions:   jsii.Strings("sts:AssumeRole"),
 		Resources: jsii.Strings("arn:aws:iam::" + account + ":role/aws-service-role/lakeformation.amazonaws.com/AWSServiceRoleForLakeFormationDataAccess"),
+	}))
+	// Cross-account: read the materialised coefficient matrix out of hierarchy_new
+	// in the hierarchy account (spec §8). The role there trusts this role by name.
+	glueRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect:    awsiam.Effect_ALLOW,
+		Actions:   jsii.Strings("sts:AssumeRole"),
+		Resources: jsii.Strings("arn:aws:iam::339712745226:role/HierarchyReaderRole"),
 	}))
 
 	// Glue catalog access for S3 Tables
@@ -137,7 +148,7 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		DataLakePrincipal: dlPrincipal,
 		Resource: &awslakeformation.CfnPermissions_ResourceProperty{
 			TableResource: &awslakeformation.CfnPermissions_TableResourceProperty{
-				DatabaseName: jsii.String("all"), Name: jsii.String("logical_meter_data"),
+				DatabaseName: jsii.String("all"), Name: jsii.String("logical_data"),
 				CatalogId: jsii.String(s3tablesCatalogId),
 			},
 		},

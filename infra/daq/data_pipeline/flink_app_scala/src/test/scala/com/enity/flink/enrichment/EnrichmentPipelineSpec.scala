@@ -11,19 +11,19 @@ class EnrichmentPipelineSpec extends AnyFlatSpec with Matchers {
 
   private val FifteenMin = java.lang.Integer.valueOf(15)
 
-  private val counterMapping = MeterMapping(
+  private val counterMapping = SensorMapping(
     logicalId = 1001,
-    meterType = "counter",
+    readingKind = "counter",
     hn1 = 1, hn2 = 1,
     hn3 = java.lang.Integer.valueOf(1), hn4 = java.lang.Integer.valueOf(1), hn5 = null,
     hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-    purpose = "volume",
+    energyType = "volume",
     resampleMinutes = FifteenMin
   )
 
   private val gaugeMapping = counterMapping.copy(
     logicalId = 2002,
-    meterType = "gauge"
+    readingKind = "gauge"
   )
 
   private def makeSensorRecord(value: Double, ts: String): SensorRecord =
@@ -116,15 +116,15 @@ class EnrichmentPipelineSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "preserve hierarchy context through the pipeline" in {
-    val mapping = MeterMapping(
+    val mapping = SensorMapping(
       logicalId = 9001,
-      meterType = "gauge",
+      readingKind = "gauge",
       hn1 = 10, hn2 = 20,
       hn3 = java.lang.Integer.valueOf(30),
       hn4 = java.lang.Integer.valueOf(40),
       hn5 = java.lang.Integer.valueOf(50),
       hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-      purpose = "test",
+      energyType = "test",
       resampleMinutes = FifteenMin
     )
     val enriched = MeterEnrichmentFunction.enrich(

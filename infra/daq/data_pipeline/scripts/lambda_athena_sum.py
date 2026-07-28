@@ -16,7 +16,7 @@ def handler(event, context):
 
     query = """
         SELECT value
-        FROM "s3tablescatalog/measurements"."all"."logical_meter_data"
+        FROM "s3tablescatalog/measurements"."all"."logical_data"
         WHERE partner_id = 1
           AND company_id = 1
           AND property_id = 1

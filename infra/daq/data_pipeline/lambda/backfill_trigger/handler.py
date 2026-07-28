@@ -1,8 +1,8 @@
 """
-Lambda trigger: on new meter-identity INSERT, backfill historical raw_data
-into logical_meter_data by starting the existing Glue recomputation job.
+Lambda trigger: on new sensor-identity INSERT, backfill historical raw_data
+into logical_data by starting the existing Glue recomputation job.
 
-Triggered by DynamoDB Streams on the meter-identity table.
+Triggered by DynamoDB Streams on the sensor-identity table.
 Filters for INSERT events, extracts the daq_id from the new mapping,
 and starts a targeted Glue job with time_range_end = now (the DDB write time)
 so that only pre-existing raw data is backfilled — new streaming data is
@@ -11,7 +11,7 @@ handled by the Flink pipeline.
 Environment variables:
   GLUE_JOB_NAME          Name of the Glue recomputation job
   REGION                 AWS region
-  METER_IDENTITY_TABLE   DynamoDB table name
+  SENSOR_IDENTITY_TABLE   DynamoDB table name
   TABLE_BUCKET_NAME      S3 Tables bucket name
   ACCOUNT_ID             AWS account ID
 """
@@ -29,13 +29,13 @@ glue_client = boto3.client("glue")
 
 GLUE_JOB_NAME = os.environ["GLUE_JOB_NAME"]
 REGION = os.environ["REGION"]
-METER_IDENTITY_TABLE = os.environ["METER_IDENTITY_TABLE"]
+SENSOR_IDENTITY_TABLE = os.environ["SENSOR_IDENTITY_TABLE"]
 TABLE_BUCKET_NAME = os.environ["TABLE_BUCKET_NAME"]
 ACCOUNT_ID = os.environ["ACCOUNT_ID"]
 
 
 def handler(event, context):
-    """Process DynamoDB Stream records for new meter-identity inserts."""
+    """Process DynamoDB Stream records for new sensor-identity inserts."""
     records = event.get("Records", [])
     if not records:
         return {"statusCode": 200, "body": "No records"}
@@ -125,7 +125,7 @@ def start_glue_job(daq_ids_csv: str, cutoff_iso: str):
         "--daq_ids": daq_ids_csv,
         "--time_range_end": cutoff_iso,
         "--region": REGION,
-        "--meter_identity_table": METER_IDENTITY_TABLE,
+        "--sensor_identity_table": SENSOR_IDENTITY_TABLE,
         "--table_bucket_name": TABLE_BUCKET_NAME,
         "--account_id": ACCOUNT_ID,
     }

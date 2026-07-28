@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backup and restore the meter-identity DynamoDB table.
+"""Backup and restore the sensor-identity DynamoDB table.
 
 Usage:
   # Backup (before stack destroy)
@@ -19,8 +19,8 @@ import time
 
 import boto3
 
-TABLE_NAME = "meter-identity"
-BACKUP_FILE = "meter-identity-backup.json"
+TABLE_NAME = "sensor-identity"
+BACKUP_FILE = "sensor-identity-backup.json"
 REGION = "eu-central-1"
 
 
@@ -140,7 +140,7 @@ def restore(table_name: str, input_file: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Backup/restore meter-identity DynamoDB table")
+    parser = argparse.ArgumentParser(description="Backup/restore sensor-identity DynamoDB table")
     parser.add_argument("action", choices=["backup", "delete", "restore"],
                         help="Action to perform")
     parser.add_argument("--table", default=TABLE_NAME, help="DynamoDB table name")

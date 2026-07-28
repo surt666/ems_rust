@@ -18,33 +18,34 @@ object DdbBootstrapLoader:
   def partitionKey(daqId: String): String =
     zeroPad(Math.abs(daqId.hashCode) % NUM_PARTITIONS)
 
-  def parseDdbItem(item: java.util.Map[String, AttributeValue]): (String, MeterMapping) =
+  def parseDdbItem(item: java.util.Map[String, AttributeValue]): (String, SensorMapping) =
     val daqId = item.get("sk").s()
     val logicalId = item.get("logical_id").n().toInt
-    val meterType = item.get("meter_type").s()
+    val readingKind = item.get(LogicalDataSchema.SensorIdentityAttrs.readingKind).s()
     val hierarchyPath = item.get("hierarchy_path").s()
     val ids = HierarchyPathParser.parse(hierarchyPath)
-    val purpose = if item.containsKey("purpose") then item.get("purpose").s() else ""
+    val energyType = if item.containsKey(LogicalDataSchema.SensorIdentityAttrs.energyType) then
+        item.get(LogicalDataSchema.SensorIdentityAttrs.energyType).s() else ""
     val resampleMinutes: java.lang.Integer =
       if item.containsKey("resample_minutes") && item.get("resample_minutes").n() != null then
         Integer.valueOf(item.get("resample_minutes").n().toInt)
       else null
 
-    val mapping = MeterMapping(
+    val mapping = SensorMapping(
       logicalId = logicalId,
-      meterType = meterType,
+      readingKind = readingKind,
       hn1 = ids.hn1, hn2 = ids.hn2,
       hn3 = ids.hn3, hn4 = ids.hn4, hn5 = ids.hn5,
       hn6 = ids.hn6, hn7 = ids.hn7, hn8 = ids.hn8, hn9 = ids.hn9,
-      purpose = purpose,
+      energyType = energyType,
       resampleMinutes = resampleMinutes
     )
     (daqId, mapping)
 
   /** Parallel DynamoDB Scan to load all meter mappings. Uses parallel segments for throughput. */
-  def loadAll(client: DynamoDbClient, tableName: String): Map[String, MeterMapping] =
+  def loadAll(client: DynamoDbClient, tableName: String): Map[String, SensorMapping] =
     val startTime = System.currentTimeMillis()
-    val buffer = new ConcurrentHashMap[String, MeterMapping]()
+    val buffer = new ConcurrentHashMap[String, SensorMapping]()
     val executor = Executors.newFixedThreadPool(SCAN_SEGMENTS)
 
     val futures = (0 until SCAN_SEGMENTS).map { segment =>
@@ -65,7 +66,7 @@ object DdbBootstrapLoader:
       client: DynamoDbClient,
       tableName: String,
       segment: Int,
-      buffer: ConcurrentHashMap[String, MeterMapping],
+      buffer: ConcurrentHashMap[String, SensorMapping],
       exclusiveStartKey: Option[java.util.Map[String, AttributeValue]] = None
   ): Unit =
     val requestBuilder = ScanRequest.builder()

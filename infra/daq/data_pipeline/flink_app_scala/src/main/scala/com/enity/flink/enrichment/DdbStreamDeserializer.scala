@@ -29,20 +29,20 @@ class DdbStreamDeserializer extends DeserializationSchema[IdMappingChange]:
         val newImage = dynamodb("NewImage").asInstanceOf[Map[String, Any]]
         val daqId = extractString(newImage, "sk")
         val logicalId = extractRequiredNumber(newImage, "logical_id").toInt
-        val meterType = extractString(newImage, "meter_type")
+        val readingKind = extractString(newImage, LogicalDataSchema.SensorIdentityAttrs.readingKind)
         val hierarchyPath = extractString(newImage, "hierarchy_path")
         val ids = HierarchyPathParser.parse(hierarchyPath)
-        val purpose = extractOptionalString(newImage, "purpose").getOrElse("")
+        val energyType = extractOptionalString(newImage, LogicalDataSchema.SensorIdentityAttrs.energyType).getOrElse("")
         val resampleMinutes: java.lang.Integer =
           extractOptionalNumber(newImage, "resample_minutes")
 
-        val mapping = MeterMapping(
+        val mapping = SensorMapping(
           logicalId = logicalId,
-          meterType = meterType,
+          readingKind = readingKind,
           hn1 = ids.hn1, hn2 = ids.hn2,
           hn3 = ids.hn3, hn4 = ids.hn4, hn5 = ids.hn5,
           hn6 = ids.hn6, hn7 = ids.hn7, hn8 = ids.hn8, hn9 = ids.hn9,
-          purpose = purpose,
+          energyType = energyType,
           resampleMinutes = resampleMinutes
         )
         IdMappingChange(eventName, daqId, Some(mapping))

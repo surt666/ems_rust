@@ -14,24 +14,24 @@ const (
 
 type OcamlBridgeWriterRoleStackProps struct {
 	awscdk.StackProps
-	MeterIdentityTableArn string
+	SensorIdentityTableArn string
 }
 
 // Account A: IAM role assumed by the ems_ocaml bridge Lambda (deployed from
-// ems_ocaml/infra/hierarchy/app.go) to upsert/delete `meter-identity` rows.
+// ems_ocaml/infra/hierarchy/app.go) to upsert/delete `sensor-identity` rows.
 func NewOcamlBridgeWriterRoleStack(scope constructs.Construct, id string, props *OcamlBridgeWriterRoleStackProps) awscdk.Stack {
 	stack := awscdk.NewStack(scope, &id, &props.StackProps)
 
 	role := awsiam.NewRole(stack, jsii.String("WriterRole"), &awsiam.RoleProps{
 		RoleName:    jsii.String(bridgeRoleName),
 		AssumedBy:   awsiam.NewAccountPrincipal(jsii.String(emsAccountB)),
-		Description: jsii.String("Assumed by ems_ocaml bridge Lambda to upsert meter-identity"),
+		Description: jsii.String("Assumed by ems_ocaml bridge Lambda to upsert sensor-identity"),
 	})
 
 	role.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 		Effect:    awsiam.Effect_ALLOW,
 		Actions:   jsii.Strings("dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:UpdateItem"),
-		Resources: jsii.Strings(props.MeterIdentityTableArn),
+		Resources: jsii.Strings(props.SensorIdentityTableArn),
 	}))
 
 	awscdk.NewCfnOutput(stack, jsii.String("WriterRoleArn"), &awscdk.CfnOutputProps{Value: role.RoleArn()})

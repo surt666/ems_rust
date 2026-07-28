@@ -21,9 +21,9 @@ type LateRecomputationStackProps struct {
 	awscdk.StackProps
 	ErrorStreamArn         string
 	ErrorStreamName        string
-	MeterIdentityArn       string
-	MeterIdentityName      string
-	MeterIdentityStreamArn string
+	SensorIdentityArn       string
+	SensorIdentityName      string
+	SensorIdentityStreamArn string
 	TableBucket            string
 }
 
@@ -122,7 +122,7 @@ func NewLateRecomputationStack(scope constructs.Construct, id string, props *Lat
 		DataLakePrincipal: dlPrincipal,
 		Resource: &awslakeformation.CfnPermissions_ResourceProperty{
 			TableResource: &awslakeformation.CfnPermissions_TableResourceProperty{
-				DatabaseName: jsii.String("all"), Name: jsii.String("logical_meter_data"),
+				DatabaseName: jsii.String("all"), Name: jsii.String("logical_data"),
 				CatalogId: jsii.String(s3tablesCatalogId),
 			},
 		},
@@ -142,7 +142,7 @@ func NewLateRecomputationStack(scope constructs.Construct, id string, props *Lat
 		nil)
 
 	// DynamoDB read for meter identity
-	addPolicy(jsii.Strings("dynamodb:Scan", "dynamodb:Query"), &[]*string{jsii.String(props.MeterIdentityArn)}, nil)
+	addPolicy(jsii.Strings("dynamodb:Scan", "dynamodb:Query"), &[]*string{jsii.String(props.SensorIdentityArn)}, nil)
 	scriptBucket.GrantRead(glueRole, nil)
 
 	// ── Glue job ──
@@ -167,7 +167,7 @@ func NewLateRecomputationStack(scope constructs.Construct, id string, props *Lat
 		},
 		DefaultArguments: &map[string]string{
 			"--region":                              region,
-			"--meter_identity_table":                props.MeterIdentityName,
+			"--sensor_identity_table":                props.SensorIdentityName,
 			"--table_bucket_name":                   props.TableBucket,
 			"--account_id":                          account,
 			"--conf":                                "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
@@ -189,7 +189,7 @@ func NewLateRecomputationStack(scope constructs.Construct, id string, props *Lat
 		Environment: &map[string]*string{
 			"GLUE_JOB_NAME":        jsii.String("late-data-recomputation"),
 			"REGION":               jsii.String(region),
-			"METER_IDENTITY_TABLE": jsii.String(props.MeterIdentityName),
+			"SENSOR_IDENTITY_TABLE": jsii.String(props.SensorIdentityName),
 			"TABLE_BUCKET_NAME":    jsii.String(props.TableBucket),
 			"ACCOUNT_ID":           jsii.String(account),
 		},
@@ -211,7 +211,7 @@ func NewLateRecomputationStack(scope constructs.Construct, id string, props *Lat
 		),
 	}))
 
-	// ── Backfill trigger Lambda (DDB stream on meter-identity, INSERT only) ──
+	// ── Backfill trigger Lambda (DDB stream on sensor-identity, INSERT only) ──
 	backfillFn := awslambda.NewFunction(stack, jsii.String("BackfillTrigger"), &awslambda.FunctionProps{
 		FunctionName: jsii.String("backfill-trigger"),
 		Runtime:      awslambda.Runtime_PYTHON_3_12(),
@@ -222,17 +222,17 @@ func NewLateRecomputationStack(scope constructs.Construct, id string, props *Lat
 		Environment: &map[string]*string{
 			"GLUE_JOB_NAME":        jsii.String("late-data-recomputation"),
 			"REGION":               jsii.String(region),
-			"METER_IDENTITY_TABLE": jsii.String(props.MeterIdentityName),
+			"SENSOR_IDENTITY_TABLE": jsii.String(props.SensorIdentityName),
 			"TABLE_BUCKET_NAME":    jsii.String(props.TableBucket),
 			"ACCOUNT_ID":           jsii.String(account),
 		},
 		LogRetention: awslogs.RetentionDays_ONE_WEEK,
 	})
 
-	meterIdTable := awsdynamodb.Table_FromTableAttributes(stack, jsii.String("MeterIdentityRef"),
+	sensorIdTable := awsdynamodb.Table_FromTableAttributes(stack, jsii.String("SensorIdentityRef"),
 		&awsdynamodb.TableAttributes{
-			TableName:      jsii.String(props.MeterIdentityName),
-			TableStreamArn: jsii.String(props.MeterIdentityStreamArn),
+			TableName:      jsii.String(props.SensorIdentityName),
+			TableStreamArn: jsii.String(props.SensorIdentityStreamArn),
 		})
 
 	// DLQ backstop: anything that still can't be backfilled after the retry
@@ -242,7 +242,7 @@ func NewLateRecomputationStack(scope constructs.Construct, id string, props *Lat
 		RetentionPeriod: awscdk.Duration_Days(jsii.Number(14)),
 	})
 
-	backfillFn.AddEventSource(awslambdaeventsources.NewDynamoEventSource(meterIdTable, &awslambdaeventsources.DynamoEventSourceProps{
+	backfillFn.AddEventSource(awslambdaeventsources.NewDynamoEventSource(sensorIdTable, &awslambdaeventsources.DynamoEventSourceProps{
 		StartingPosition:  awslambda.StartingPosition_LATEST,
 		BatchSize:         jsii.Number(10),
 		MaxBatchingWindow: awscdk.Duration_Seconds(jsii.Number(30)),

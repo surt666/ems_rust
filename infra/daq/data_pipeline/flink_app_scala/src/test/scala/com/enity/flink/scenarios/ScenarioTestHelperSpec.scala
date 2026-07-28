@@ -1,7 +1,7 @@
 package com.enity.flink.scenarios
 
 import com.enity.flink.SensorRecord
-import com.enity.flink.enrichment.MeterMapping
+import com.enity.flink.enrichment.SensorMapping
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -14,11 +14,11 @@ class ScenarioTestHelperSpec extends AnyFlatSpec with Matchers with MiniClusterT
       sensorId = "s1", value = value.toString, unit = unit
     )
 
-  private val gaugeMapping = MeterMapping(
-    logicalId = 7, meterType = "gauge",
+  private val gaugeMapping = SensorMapping(
+    logicalId = 7, readingKind = "gauge",
     hn1 = 1, hn2 = 1,
     hn3 = null, hn4 = null, hn5 = null, hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-    purpose = "test"
+    energyType = "test"
   )
 
   "ScenarioTestHelper" should "run a gauge record through the pipeline" in {

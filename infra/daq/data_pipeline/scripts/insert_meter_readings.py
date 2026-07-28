@@ -30,7 +30,7 @@ spark.conf.set(
 )
 spark.conf.set("spark.sql.catalog.s3tables.warehouse", "s3://measurements/warehouse/")
 
-table_ref = "all.logical_meter_data"
+table_ref = "all.logical_data"
 
 # --- Configuration ---
 partner_id = 1

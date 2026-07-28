@@ -1,7 +1,7 @@
 package com.enity.flink.scenarios
 
 import com.enity.flink.SensorRecord
-import com.enity.flink.enrichment.MeterMapping
+import com.enity.flink.enrichment.SensorMapping
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -17,22 +17,22 @@ class EnrichmentMiniClusterSpec extends AnyFlatSpec with Matchers with MiniClust
       sensorId = "energy", value = value.toString, unit = unit
     )
 
-  private def counterMapping(daqId: String, logicalId: Int): (String, MeterMapping) =
-    daqId -> MeterMapping(
-      logicalId = logicalId, meterType = "counter",
+  private def counterMapping(daqId: String, logicalId: Int): (String, SensorMapping) =
+    daqId -> SensorMapping(
+      logicalId = logicalId, readingKind = "counter",
       hn1 = 1, hn2 = 1,
       hn3 = java.lang.Integer.valueOf(10),
       hn4 = java.lang.Integer.valueOf(20),
       hn5 = null, hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-      purpose = "energy"
+      energyType = "energy"
     )
 
-  private def gaugeMapping(daqId: String, logicalId: Int): (String, MeterMapping) =
-    daqId -> MeterMapping(
-      logicalId = logicalId, meterType = "gauge",
+  private def gaugeMapping(daqId: String, logicalId: Int): (String, SensorMapping) =
+    daqId -> SensorMapping(
+      logicalId = logicalId, readingKind = "gauge",
       hn1 = 1, hn2 = 1,
       hn3 = null, hn4 = null, hn5 = null, hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-      purpose = "test"
+      energyType = "test"
     )
 
   "Counter out-of-order" should "produce corrected deltas after watermark" in {
@@ -57,12 +57,12 @@ class EnrichmentMiniClusterSpec extends AnyFlatSpec with Matchers with MiniClust
 
   "Mapping update" should "use updated mapping for later records" in {
     val daqId = "daq:test:cdc"
-    val mapping1 = MeterMapping(
-      logicalId = 1, meterType = "gauge",
+    val mapping1 = SensorMapping(
+      logicalId = 1, readingKind = "gauge",
       hn1 = 1, hn2 = 1,
       hn3 = java.lang.Integer.valueOf(10),
       hn4 = null, hn5 = null, hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-      purpose = "test"
+      energyType = "test"
     )
 
     val result1 = ScenarioTestHelper.buildAndRunFromRecords(

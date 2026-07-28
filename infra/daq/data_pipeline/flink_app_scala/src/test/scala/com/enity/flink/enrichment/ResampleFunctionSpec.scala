@@ -10,14 +10,14 @@ class ResampleFunctionSpec extends AnyFlatSpec with Matchers {
   private val FifteenMin = java.lang.Integer.valueOf(15)
   private val OneHour = java.lang.Integer.valueOf(60)
 
-  private def mapping(meterType: String, resampleMinutes: java.lang.Integer = FifteenMin): MeterMapping =
-    MeterMapping(
+  private def mapping(readingKind: String, resampleMinutes: java.lang.Integer = FifteenMin): SensorMapping =
+    SensorMapping(
       logicalId = 101,
-      meterType = meterType,
+      readingKind = readingKind,
       hn1 = 1, hn2 = 2,
       hn3 = null, hn4 = java.lang.Integer.valueOf(8), hn5 = null,
       hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-      purpose = "test",
+      energyType = "test",
       resampleMinutes = resampleMinutes
     )
 
@@ -31,10 +31,10 @@ class ResampleFunctionSpec extends AnyFlatSpec with Matchers {
       hn1 = 1, hn2 = 2,
       hn3 = null, hn4 = java.lang.Integer.valueOf(8), hn5 = null,
       hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-      purpose = "test"
+      energyType = "test"
     )
 
-  private def buffered(value: Double, ts: String, m: MeterMapping): BufferedReadingV2 =
+  private def buffered(value: Double, ts: String, m: SensorMapping): BufferedReadingV2 =
     BufferedReadingV2(value, enriched(value, ts), m)
 
   private def epochMs(ts: String): Long = Instant.parse(ts).toEpochMilli
@@ -251,6 +251,6 @@ class ResampleFunctionSpec extends AnyFlatSpec with Matchers {
     val b = BufferedReadingV2(1234.5, r, m)
     b.cumulativeValue shouldBe 1234.5
     b.record.logicalId shouldBe 101
-    b.mapping.meterType shouldBe "counter"
+    b.mapping.readingKind shouldBe "counter"
   }
 }

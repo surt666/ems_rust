@@ -13,19 +13,19 @@ import scala.jdk.CollectionConverters.*
 class ResampleHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach {
 
   private var harness: KeyedOneInputStreamOperatorTestHarness[
-    java.lang.Integer, (EnrichedRecord, MeterMapping), EnrichedRecord
+    java.lang.Integer, (EnrichedRecord, SensorMapping), EnrichedRecord
   ] = _
 
   private val FifteenMin = java.lang.Integer.valueOf(15)
 
-  private def mapping(meterType: String, resampleMinutes: java.lang.Integer = FifteenMin, logicalId: Int = 1): MeterMapping =
-    MeterMapping(
+  private def mapping(readingKind: String, resampleMinutes: java.lang.Integer = FifteenMin, logicalId: Int = 1): SensorMapping =
+    SensorMapping(
       logicalId = logicalId,
-      meterType = meterType,
+      readingKind = readingKind,
       hn1 = 1, hn2 = 1,
       hn3 = null, hn4 = null, hn5 = null,
       hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-      purpose = "test",
+      energyType = "test",
       resampleMinutes = resampleMinutes
     )
 
@@ -39,7 +39,7 @@ class ResampleHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterE
       hn1 = 1, hn2 = 1,
       hn3 = null, hn4 = null, hn5 = null,
       hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-      purpose = "test"
+      energyType = "test"
     )
 
   private def tsMillis(ts: String): Long = java.time.Instant.parse(ts).toEpochMilli
@@ -48,8 +48,8 @@ class ResampleHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterE
     val operator = new KeyedProcessOperator(new ResampleFunction(6 * 3600 * 1000L))
     harness = new KeyedOneInputStreamOperatorTestHarness(
       operator,
-      new KeySelector[(EnrichedRecord, MeterMapping), java.lang.Integer] {
-        override def getKey(value: (EnrichedRecord, MeterMapping)): java.lang.Integer =
+      new KeySelector[(EnrichedRecord, SensorMapping), java.lang.Integer] {
+        override def getKey(value: (EnrichedRecord, SensorMapping)): java.lang.Integer =
           java.lang.Integer.valueOf(value._1.logicalId)
       },
       Types.INT
@@ -159,8 +159,8 @@ class ResampleHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterE
     val operator = new KeyedProcessOperator(new ResampleFunction(shortRetention))
     harness = new KeyedOneInputStreamOperatorTestHarness(
       operator,
-      new KeySelector[(EnrichedRecord, MeterMapping), java.lang.Integer] {
-        override def getKey(value: (EnrichedRecord, MeterMapping)): java.lang.Integer =
+      new KeySelector[(EnrichedRecord, SensorMapping), java.lang.Integer] {
+        override def getKey(value: (EnrichedRecord, SensorMapping)): java.lang.Integer =
           java.lang.Integer.valueOf(value._1.logicalId)
       },
       Types.INT

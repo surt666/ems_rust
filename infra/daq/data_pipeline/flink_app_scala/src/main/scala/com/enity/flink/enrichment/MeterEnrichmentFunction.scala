@@ -16,15 +16,15 @@ import java.time.Instant
   *
   * Main input: SensorRecord stream
   * Broadcast input: IdMappingChange stream (from DDB Streams via Kinesis)
-  * Output: (EnrichedRecord, MeterMapping) tuples — mapping carries meterType + resampleMinutes for ResampleFunction
+  * Output: (EnrichedRecord, SensorMapping) tuples — mapping carries readingKind + resampleMinutes for ResampleFunction
   *
   * On open(), performs a full DynamoDB scan to bootstrap the local cache.
   * CDC events from the broadcast stream update broadcast state, which takes priority. */
 class MeterEnrichmentFunction(region: String, tableName: String)
-    extends BroadcastProcessFunction[SensorRecord, IdMappingChange, (EnrichedRecord, MeterMapping)]:
+    extends BroadcastProcessFunction[SensorRecord, IdMappingChange, (EnrichedRecord, SensorMapping)]:
 
   @transient private lazy val logger = LoggerFactory.getLogger(getClass)
-  @transient private var bootstrapCache: Map[String, MeterMapping] = Map.empty
+  @transient private var bootstrapCache: Map[String, SensorMapping] = Map.empty
 
   override def open(parameters: Configuration): Unit =
     super.open(parameters)
@@ -42,8 +42,8 @@ class MeterEnrichmentFunction(region: String, tableName: String)
 
   override def processElement(
       record: SensorRecord,
-      ctx: BroadcastProcessFunction[SensorRecord, IdMappingChange, (EnrichedRecord, MeterMapping)]#ReadOnlyContext,
-      out: Collector[(EnrichedRecord, MeterMapping)]
+      ctx: BroadcastProcessFunction[SensorRecord, IdMappingChange, (EnrichedRecord, SensorMapping)]#ReadOnlyContext,
+      out: Collector[(EnrichedRecord, SensorMapping)]
   ): Unit =
     val state = ctx.getBroadcastState(MeterEnrichmentFunction.ID_MAP)
     // Broadcast state takes priority, fall back to bootstrap cache
@@ -64,8 +64,8 @@ class MeterEnrichmentFunction(region: String, tableName: String)
 
   override def processBroadcastElement(
       change: IdMappingChange,
-      ctx: BroadcastProcessFunction[SensorRecord, IdMappingChange, (EnrichedRecord, MeterMapping)]#Context,
-      out: Collector[(EnrichedRecord, MeterMapping)]
+      ctx: BroadcastProcessFunction[SensorRecord, IdMappingChange, (EnrichedRecord, SensorMapping)]#Context,
+      out: Collector[(EnrichedRecord, SensorMapping)]
   ): Unit =
     val state = ctx.getBroadcastState(MeterEnrichmentFunction.ID_MAP)
     change.eventType match
@@ -80,17 +80,17 @@ class MeterEnrichmentFunction(region: String, tableName: String)
 
 object MeterEnrichmentFunction:
 
-  val ID_MAP: MapStateDescriptor[String, MeterMapping] =
-    new MapStateDescriptor[String, MeterMapping](
+  val ID_MAP: MapStateDescriptor[String, SensorMapping] =
+    new MapStateDescriptor[String, SensorMapping](
       "meter-id-map",
       BasicTypeInfo.STRING_TYPE_INFO,
-      TypeInformation.of(classOf[MeterMapping])
+      TypeInformation.of(classOf[SensorMapping])
     )
 
   /** Pure function for testability. Passes through the original timestamp un-floored.
     * ResampleFunction downstream computes resample_timestamp / resample_value / resample_method from
     * the raw timestamp + per-meter resampleMinutes config. */
-  def enrich(record: SensorRecord, m: MeterMapping): EnrichedRecord =
+  def enrich(record: SensorRecord, m: SensorMapping): EnrichedRecord =
     EnrichedRecord(
       logicalId = m.logicalId,
       timestamp = record.timestamp,
@@ -106,5 +106,5 @@ object MeterEnrichmentFunction:
       hn7 = m.hn7,
       hn8 = m.hn8,
       hn9 = m.hn9,
-      purpose = m.purpose
+      energyType = m.energyType
     )

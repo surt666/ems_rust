@@ -4,7 +4,7 @@ Verify that historical counter data was ingested correctly.
 
 Checks:
   1. raw_data: all records present with correct cumulative values
-  2. logical_meter_data: delta records present with correct computed deltas
+  2. logical_data: delta records present with correct computed deltas
   3. Consistency: sum of deltas ≈ last_cumulative - first_cumulative
 
 Usage:
@@ -98,8 +98,8 @@ def check_raw_data(athena, daq_id: str):
 
 
 def check_enriched(athena, logical_id: str):
-    """Check logical_meter_data for the given logical_id."""
-    print(f"\n--- logical_meter_data: {logical_id} ---")
+    """Check logical_data for the given logical_id."""
+    print(f"\n--- logical_data: {logical_id} ---")
 
     count_query = f"""
         SELECT COUNT(*) as cnt,
@@ -113,7 +113,7 @@ def check_enriched(athena, logical_id: str):
                 PARTITION BY logical_id, timestamp
                 ORDER BY created DESC
             ) as rn
-            FROM "all"."logical_meter_data"
+            FROM "all"."logical_data"
             WHERE logical_id = '{logical_id}'
         )
         WHERE rn = 1
@@ -137,7 +137,7 @@ def check_enriched(athena, logical_id: str):
                 PARTITION BY logical_id, timestamp
                 ORDER BY created DESC
             ) as rn
-            FROM "all"."logical_meter_data"
+            FROM "all"."logical_data"
             WHERE logical_id = '{logical_id}'
         )
         WHERE rn = 1 AND value < 0
@@ -170,7 +170,7 @@ def check_consistency(athena, daq_id: str, logical_id: str):
                 PARTITION BY logical_id, timestamp
                 ORDER BY created DESC
             ) as rn
-            FROM "all"."logical_meter_data"
+            FROM "all"."logical_data"
             WHERE logical_id = '{logical_id}'
         )
         WHERE rn = 1

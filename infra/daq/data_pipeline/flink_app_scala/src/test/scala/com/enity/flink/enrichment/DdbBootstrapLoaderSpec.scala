@@ -36,13 +36,13 @@ class DdbBootstrapLoaderSpec extends AnyFlatSpec with Matchers {
     item.put("pk", AttributeValue.builder().s("04821").build())
     item.put("sk", AttributeValue.builder().s("daq:std:cust:m1:temp").build())
     item.put("logical_id", AttributeValue.builder().n("101").build())
-    item.put("meter_type", AttributeValue.builder().s("gauge").build())
+    item.put("reading_kind", AttributeValue.builder().s("gauge").build())
     item.put("hierarchy_path", AttributeValue.builder().s("HN0#root|HN1#1|HN2#2|HN3#8|HN4#3").build())
 
     val (daqId, mapping) = DdbBootstrapLoader.parseDdbItem(item)
     daqId shouldBe "daq:std:cust:m1:temp"
     mapping.logicalId shouldBe 101
-    mapping.meterType shouldBe "gauge"
+    mapping.readingKind shouldBe "gauge"
     mapping.hn1 shouldBe 1
     mapping.hn2 shouldBe 2
     mapping.hn3 shouldBe java.lang.Integer.valueOf(8)
@@ -50,19 +50,19 @@ class DdbBootstrapLoaderSpec extends AnyFlatSpec with Matchers {
     mapping.resampleMinutes shouldBe null
   }
 
-  it should "parse resample_minutes and purpose when present" in {
+  it should "parse resample_minutes and energyType when present" in {
     val item = new java.util.HashMap[String, AttributeValue]()
     item.put("pk", AttributeValue.builder().s("00001").build())
     item.put("sk", AttributeValue.builder().s("daq:std:cust:m2:energy").build())
     item.put("logical_id", AttributeValue.builder().n("42").build())
-    item.put("meter_type", AttributeValue.builder().s("counter").build())
+    item.put("reading_kind", AttributeValue.builder().s("counter").build())
     item.put("hierarchy_path", AttributeValue.builder().s("HN0#root|HN1#1|HN2#2|HN3#3").build())
     item.put("resample_minutes", AttributeValue.builder().n("15").build())
-    item.put("purpose", AttributeValue.builder().s("main meter").build())
+    item.put("energy_type", AttributeValue.builder().s("electricity").build())
 
     val (_, mapping) = DdbBootstrapLoader.parseDdbItem(item)
     mapping.resampleMinutes shouldBe java.lang.Integer.valueOf(15)
-    mapping.purpose shouldBe "main meter"
+    mapping.energyType shouldBe "electricity"
   }
 
 }

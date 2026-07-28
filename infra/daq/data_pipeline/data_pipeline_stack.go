@@ -28,7 +28,7 @@ type DaqPipelineStackProps struct {
 type DaqPipelineStack struct {
 	awscdk.Stack
 	ErrorStream        awskinesis.Stream
-	MeterIdentityTable awsdynamodb.Table
+	SensorIdentityTable awsdynamodb.Table
 }
 
 func NewDaqPipelineStack(scope constructs.Construct, id string, props *DaqPipelineStackProps) *DaqPipelineStack {
@@ -41,8 +41,8 @@ func NewDaqPipelineStack(scope constructs.Construct, id string, props *DaqPipeli
 	inputStream := awskinesis.Stream_FromStreamArn(stack, jsii.String("InputJsonStream"),
 		jsii.String("arn:aws:kinesis:"+region+":"+account+":stream/DAQ_INPUT_STREAM"))
 
-	meterIdentity := awsdynamodb.NewTable(stack, jsii.String("MeterIdentity"), &awsdynamodb.TableProps{
-		TableName:           jsii.String("meter-identity"),
+	sensorIdentity := awsdynamodb.NewTable(stack, jsii.String("SensorIdentity"), &awsdynamodb.TableProps{
+		TableName:           jsii.String("sensor-identity"),
 		PartitionKey:        &awsdynamodb.Attribute{Name: jsii.String("pk"), Type: awsdynamodb.AttributeType_STRING},
 		SortKey:             &awsdynamodb.Attribute{Name: jsii.String("sk"), Type: awsdynamodb.AttributeType_STRING},
 		BillingMode:         awsdynamodb.BillingMode_PAY_PER_REQUEST,
@@ -57,7 +57,7 @@ func NewDaqPipelineStack(scope constructs.Construct, id string, props *DaqPipeli
 		RetentionPeriod: awscdk.Duration_Hours(jsii.Number(24)),
 	})
 
-	cfnTable := meterIdentity.Node().DefaultChild().(awsdynamodb.CfnTable)
+	cfnTable := sensorIdentity.Node().DefaultChild().(awsdynamodb.CfnTable)
 	cfnTable.AddPropertyOverride(jsii.String("KinesisStreamSpecification"), map[string]interface{}{
 		"StreamArn": ddbChangeStream.StreamArn(),
 	})
@@ -114,7 +114,7 @@ func NewDaqPipelineStack(scope constructs.Construct, id string, props *DaqPipeli
 		jsii.Strings("arn:aws:s3:::*/*"+account+"*", "arn:aws:s3:::*/*"+account+"*/*"),
 	)
 	// DDB bootstrap scan
-	addPolicy(jsii.Strings("dynamodb:Query", "dynamodb:Scan"), &[]*string{meterIdentity.TableArn()})
+	addPolicy(jsii.Strings("dynamodb:Query", "dynamodb:Scan"), &[]*string{sensorIdentity.TableArn()})
 	// DDB CDC stream
 	addPolicy(
 		jsii.Strings("kinesis:GetShardIterator", "kinesis:GetRecords", "kinesis:DescribeStream",
@@ -224,7 +224,7 @@ func NewDaqPipelineStack(scope constructs.Construct, id string, props *DaqPipeli
 								"AWS_REGION":              jsii.String(region),
 								"ACCOUNT_ID":              jsii.String(account),
 								"TABLE_BUCKET_NAME":       jsii.String(props.TableBucket),
-								"METER_IDENTITY_TABLE":    meterIdentity.TableName(),
+								"SENSOR_IDENTITY_TABLE":    sensorIdentity.TableName(),
 								"DDB_CHANGE_STREAM":       ddbChangeStream.StreamName(),
 								"ERROR_STREAM":            errorStream.StreamName(),
 								"MAX_OUT_OF_ORDERNESS_MS": jsii.String("3600000"),
@@ -264,6 +264,6 @@ func NewDaqPipelineStack(scope constructs.Construct, id string, props *DaqPipeli
 	return &DaqPipelineStack{
 		Stack:              stack,
 		ErrorStream:        errorStream,
-		MeterIdentityTable: meterIdentity,
+		SensorIdentityTable: sensorIdentity,
 	}
 }

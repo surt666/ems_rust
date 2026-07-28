@@ -8,7 +8,7 @@ batches by daq_id, computes time ranges, and triggers the Glue job.
 Environment variables:
   GLUE_JOB_NAME          Name of the Glue recomputation job
   REGION                 AWS region
-  METER_IDENTITY_TABLE   DynamoDB table name
+  SENSOR_IDENTITY_TABLE   DynamoDB table name
   TABLE_BUCKET_NAME      S3 Tables bucket name
   ACCOUNT_ID             AWS account ID
 """
@@ -28,7 +28,7 @@ glue_client = boto3.client("glue")
 
 GLUE_JOB_NAME = os.environ["GLUE_JOB_NAME"]
 REGION = os.environ["REGION"]
-METER_IDENTITY_TABLE = os.environ["METER_IDENTITY_TABLE"]
+SENSOR_IDENTITY_TABLE = os.environ["SENSOR_IDENTITY_TABLE"]
 TABLE_BUCKET_NAME = os.environ["TABLE_BUCKET_NAME"]
 ACCOUNT_ID = os.environ["ACCOUNT_ID"]
 
@@ -136,7 +136,7 @@ def start_glue_job(daq_id: str, time_start: str, time_end: str):
         "--time_range_start": time_start,
         "--time_range_end": time_end,
         "--region": REGION,
-        "--meter_identity_table": METER_IDENTITY_TABLE,
+        "--sensor_identity_table": SENSOR_IDENTITY_TABLE,
         "--table_bucket_name": TABLE_BUCKET_NAME,
         "--account_id": ACCOUNT_ID,
     }

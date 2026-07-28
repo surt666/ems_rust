@@ -6,13 +6,13 @@ import org.scalatest.matchers.should.Matchers
 
 class MeterEnrichmentFunctionSpec extends AnyFlatSpec with Matchers {
 
-  private val testMapping = MeterMapping(
+  private val testMapping = SensorMapping(
     logicalId = 101,
-    meterType = "gauge",
+    readingKind = "gauge",
     hn1 = 1, hn2 = 2,
     hn3 = null, hn4 = java.lang.Integer.valueOf(8), hn5 = java.lang.Integer.valueOf(3),
     hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-    purpose = "supply temp"
+    energyType = "district_heating"
   )
 
   private val testRecord = SensorRecord(
@@ -32,7 +32,7 @@ class MeterEnrichmentFunctionSpec extends AnyFlatSpec with Matchers {
     enriched.hn4 shouldBe java.lang.Integer.valueOf(8)
     enriched.hn5 shouldBe java.lang.Integer.valueOf(3)
     enriched.hn3 shouldBe null
-    enriched.purpose shouldBe "supply temp"
+    enriched.energyType shouldBe "district_heating"
   }
 
   it should "correctly parse string value to double" in {

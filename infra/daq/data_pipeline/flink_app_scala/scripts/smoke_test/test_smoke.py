@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 REGION = "eu-central-1"
 TEST_PREFIX = "test_smoke_"
-METER_IDENTITY_TABLE = "meter-identity"
+SENSOR_IDENTITY_TABLE = "sensor-identity"
 ATHENA_DATABASE = "s3tablescatalog"
 ATHENA_OUTPUT = "s3://athena-results-891377204778-eu-central-1/"
 CHECKPOINT_WAIT_S = 420    # 7 minutes (5-min checkpoint + buffer)
@@ -32,7 +32,7 @@ class SmokeTestRunner:
         self.kinesis = boto3.client("kinesis", region_name=REGION)
         self.athena = boto3.client("athena", region_name=REGION)
         self.dynamodb = boto3.resource("dynamodb", region_name=REGION)
-        self.table = self.dynamodb.Table(METER_IDENTITY_TABLE)
+        self.table = self.dynamodb.Table(SENSOR_IDENTITY_TABLE)
         self.input_stream = input_stream
         self.error_stream = error_stream
         self.verbose = verbose
@@ -47,7 +47,7 @@ class SmokeTestRunner:
 
     def _put_mapping(self, daq_id: str, logical_id: str, meter_type: str,
                      partner_id: int = 1, company_id: int = 1):
-        """Insert a test mapping into DynamoDB meter-identity table."""
+        """Insert a test mapping into DynamoDB sensor-identity table."""
         self.table.put_item(Item={
             "daq_id": daq_id,
             "logical_id": logical_id,
@@ -126,7 +126,7 @@ class SmokeTestRunner:
             time.sleep(CHECKPOINT_WAIT_S)
 
             rows = self._query_athena(
-                f"SELECT * FROM all.logical_meter_data "
+                f"SELECT * FROM all.logical_data "
                 f"WHERE logical_id = '{logical_id}' "
                 f"ORDER BY ingested_time DESC LIMIT 1"
             )
@@ -145,7 +145,7 @@ class SmokeTestRunner:
             return SmokeScenarioResult(name, "FAIL", time.time() - start, error=str(e))
         finally:
             self._delete_mapping(daq_id)
-            self._delete_iceberg_rows("all.logical_meter_data", "logical_id", logical_id)
+            self._delete_iceberg_rows("all.logical_data", "logical_id", logical_id)
 
     # ── Scenario 2: Counter delta end-to-end ──
 
@@ -176,7 +176,7 @@ class SmokeTestRunner:
             time.sleep(CHECKPOINT_WAIT_S)
 
             rows = self._query_athena(
-                f"SELECT value FROM all.logical_meter_data "
+                f"SELECT value FROM all.logical_data "
                 f"WHERE logical_id = '{logical_id}' "
                 f"ORDER BY ingested_time DESC LIMIT 1"
             )
@@ -195,7 +195,7 @@ class SmokeTestRunner:
             return SmokeScenarioResult(name, "FAIL", time.time() - start, error=str(e))
         finally:
             self._delete_mapping(daq_id)
-            self._delete_iceberg_rows("all.logical_meter_data", "logical_id", logical_id)
+            self._delete_iceberg_rows("all.logical_data", "logical_id", logical_id)
 
     # ── Scenario 3: Raw record write ──
 

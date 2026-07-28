@@ -21,7 +21,7 @@ object HierarchyPathParser:
     *
     * Input shape: `HN0#root|HN1#<int>|HN2#<int>|...` — pipe-separated `HN<n>#<id>` segments
     * starting at the root (`HN0#root`, ignored) and descending. The trailing `S#<id>` segment
-    * (the sensor itself) must NOT be present in the meter-identity `hierarchy_path` value;
+    * (the sensor itself) must NOT be present in the sensor-identity `hierarchy_path` value;
     * the sensor id is the table's `logical_id`.
     *
     * hn1 (partner) and hn2 (company) are required; hn3..hn9 are filled if present, else null. */

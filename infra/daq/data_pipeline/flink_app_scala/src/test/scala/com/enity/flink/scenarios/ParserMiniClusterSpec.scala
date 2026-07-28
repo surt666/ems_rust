@@ -1,7 +1,7 @@
 package com.enity.flink.scenarios
 
 import com.enity.flink.SensorRecord
-import com.enity.flink.enrichment.MeterMapping
+import com.enity.flink.enrichment.SensorMapping
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -18,24 +18,24 @@ class ParserMiniClusterSpec extends AnyFlatSpec with Matchers with MiniClusterTe
       sensorId = sensorId, value = value.toString, unit = unit
     )
 
-  private def gaugeMapping(daqId: String, logicalId: Int, hn1: Int = 1, hn2: Int = 1): (String, MeterMapping) =
-    daqId -> MeterMapping(
-      logicalId = logicalId, meterType = "gauge",
+  private def gaugeMapping(daqId: String, logicalId: Int, hn1: Int = 1, hn2: Int = 1): (String, SensorMapping) =
+    daqId -> SensorMapping(
+      logicalId = logicalId, readingKind = "gauge",
       hn1 = hn1, hn2 = hn2,
       hn3 = java.lang.Integer.valueOf(10),
       hn4 = java.lang.Integer.valueOf(20),
       hn5 = null, hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-      purpose = "test"
+      energyType = "test"
     )
 
-  private def counterMapping(daqId: String, logicalId: Int): (String, MeterMapping) =
-    daqId -> MeterMapping(
-      logicalId = logicalId, meterType = "counter",
+  private def counterMapping(daqId: String, logicalId: Int): (String, SensorMapping) =
+    daqId -> SensorMapping(
+      logicalId = logicalId, readingKind = "counter",
       hn1 = 1, hn2 = 1,
       hn3 = java.lang.Integer.valueOf(10),
       hn4 = java.lang.Integer.valueOf(20),
       hn5 = null, hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-      purpose = "test"
+      energyType = "test"
     )
 
   "EMU gauge" should "flow through pipeline with correct enrichment" in {

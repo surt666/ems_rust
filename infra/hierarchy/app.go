@@ -18,12 +18,12 @@ import (
 	"github.com/aws/jsii-runtime-go"
 )
 
-// EMS account A — owns meter-identity. The role + table ARNs are stable.
+// EMS account A — owns sensor-identity. The role + table ARNs are stable.
 const (
-	emsAccount            = "891377204778"
-	emsRegion             = "eu-central-1"
-	emsWriterRoleArn      = "arn:aws:iam::" + emsAccount + ":role/OcamlBridgeWriterRole"
-	emsMeterIdentityTable = "meter-identity"
+	emsAccount             = "891377204778"
+	emsRegion              = "eu-central-1"
+	emsWriterRoleArn       = "arn:aws:iam::" + emsAccount + ":role/OcamlBridgeWriterRole"
+	emsSensorIdentityTable = "sensor-identity"
 
 	// Cognito user pool in THIS account that the frontend authenticates against.
 	userPoolID = "eu-central-1_gADB2vK24"
@@ -94,6 +94,27 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 		},
 		ProjectionType: awsdynamodb.ProjectionType_ALL,
 	})
+
+	// ── Cross-account read of the materialised coefficient matrix ──
+	//
+	// The DAQ account's measurements-aggregate Glue job assumes this to read the
+	// (node, energy_type, purpose, sensor) → coefficient rows out of the `W#HN2#<id>`
+	// gsi1 partition (spec §4.2, §8). Read-only, and scoped to this table.
+	//
+	// The trusted principal is named explicitly rather than via the account root: it is
+	// the one Glue role that needs this, and MeasurementsAggregateGlueRole carries a
+	// fixed RoleName precisely so this ARN stays valid across role replacements.
+	readerRole := awsiam.NewRole(stack, jsii.String("HierarchyReaderRole"), &awsiam.RoleProps{
+		RoleName: jsii.String("HierarchyReaderRole"),
+		AssumedBy: awsiam.NewArnPrincipal(
+			jsii.String("arn:aws:iam::891377204778:role/MeasurementsAggregateGlueRole")),
+		Description: jsii.String("Assumed by the DAQ roll-up Glue job to read the coefficient matrix"),
+	})
+	readerRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Effect:    awsiam.Effect_ALLOW,
+		Actions:   jsii.Strings("dynamodb:Query"),
+		Resources: jsii.Strings(*table.TableArn(), *table.TableArn()+"/index/gsi1"),
+	}))
 
 	// ── Rust hierarchy lambda (parallel deploy, arm64) — folds Cognito in synchronously ──
 	rustPoolArn := jsii.String("arn:aws:cognito-idp:" + *stack.Region() + ":" + *stack.Account() + ":userpool/" + userPoolID)
@@ -186,9 +207,9 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 		Description:   jsii.String("Rust Hierarchy API Gateway URL (frontend origin)"),
 	})
 
-	// ── Cross-account bridge: hierarchy_new DDB stream → EMS meter-identity ──
+	// ── Cross-account bridge: hierarchy_new DDB stream → EMS sensor-identity ──
 	// Triggered by sensor-row changes in this account; assumes a role in EMS account A
-	// to upsert/delete the matching meter-identity row that Flink/Glue consume.
+	// to upsert/delete the matching sensor-identity row that Flink/Glue consume.
 	bridgeRole := awsiam.NewRole(stack, jsii.String("OcamlBridgeFunctionRole"), &awsiam.RoleProps{
 		AssumedBy: awsiam.NewServicePrincipal(jsii.String("lambda.amazonaws.com"), nil),
 		ManagedPolicies: &[]awsiam.IManagedPolicy{
@@ -208,7 +229,7 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 	})
 
 	bridgeFunction := awslambda.NewFunction(stack, jsii.String("OcamlBridgeFunction"), &awslambda.FunctionProps{
-		FunctionName: jsii.String("ocaml-meter-identity-bridge"),
+		FunctionName: jsii.String("sensor-identity-bridge"),
 		Runtime:      awslambda.Runtime_PYTHON_3_12(),
 		Handler:      jsii.String("index.handler"),
 		Code:         awslambda.Code_FromInline(jsii.String(bridgeHandlerSource)),
@@ -218,10 +239,10 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 		LogRetention: awslogs.RetentionDays_ONE_MONTH,
 		Environment: &map[string]*string{
 			"TARGET_ROLE_ARN": jsii.String(emsWriterRoleArn),
-			"TARGET_TABLE":    jsii.String(emsMeterIdentityTable),
+			"TARGET_TABLE":    jsii.String(emsSensorIdentityTable),
 			"TARGET_REGION":   jsii.String(emsRegion),
 		},
-		Description: jsii.String("Bridges sensor changes from hierarchy_new to EMS meter-identity"),
+		Description: jsii.String("Bridges sensor changes from hierarchy_new to EMS sensor-identity"),
 	})
 
 	// Batches that survive RetryAttempts (a malformed sensor row, or a transient
@@ -230,7 +251,7 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 	// message is failure metadata (shard/sequence + error), not the row payload —
 	// enough to locate and replay the offending change. 14-day retention.
 	bridgeDlq := awssqs.NewQueue(stack, jsii.String("OcamlBridgeDlq"), &awssqs.QueueProps{
-		QueueName:       jsii.String("ocaml-meter-identity-bridge-dlq"),
+		QueueName:       jsii.String("sensor-identity-bridge-dlq"),
 		RetentionPeriod: awscdk.Duration_Days(jsii.Number(14)),
 	})
 
@@ -254,14 +275,14 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 	}))
 
 	// Alarm the moment anything lands in the DLQ — a non-empty DLQ means a sensor
-	// change failed to propagate to meter-identity and needs a look. Maximum over
+	// change failed to propagate to sensor-identity and needs a look. Maximum over
 	// a 5-min period so a single message trips it; missing data = empty queue = OK.
 	bridgeDlq.MetricApproximateNumberOfMessagesVisible(&awscloudwatch.MetricOptions{
 		Period:    awscdk.Duration_Minutes(jsii.Number(5)),
 		Statistic: jsii.String("Maximum"),
 	}).CreateAlarm(stack, jsii.String("OcamlBridgeDlqDepthAlarm"), &awscloudwatch.CreateAlarmOptions{
-		AlarmName:          jsii.String("ocaml-meter-identity-bridge-dlq-not-empty"),
-		AlarmDescription:   jsii.String("meter-identity bridge DLQ has messages — sensor changes failed to propagate"),
+		AlarmName:          jsii.String("sensor-identity-bridge-dlq-not-empty"),
+		AlarmDescription:   jsii.String("sensor-identity bridge DLQ has messages — sensor changes failed to propagate"),
 		Threshold:          jsii.Number(1),
 		EvaluationPeriods:  jsii.Number(1),
 		ComparisonOperator: awscloudwatch.ComparisonOperator_GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
@@ -279,7 +300,7 @@ func NewOcamlHierarchyStack(scope constructs.Construct, id string, props *OcamlH
 }
 
 // Bridge handler — translates an active-sensor row in hierarchy_new to the
-// matching meter-identity row in EMS account A. Inlined here so the bridge has
+// matching sensor-identity row in EMS account A. Inlined here so the bridge has
 // no external code asset; partition-key formula must match
 // flink_app_scala/.../DdbBootstrapLoader.partitionKey (Java String.hashCode % 20000).
 const bridgeHandlerSource = `
@@ -312,21 +333,16 @@ def _path(p):
 def _item(img):
     sid = int(img["pk"]["S"][2:])
     daq = img["daq_id"]["S"]
-    # The hierarchy side has been renamed (energy_type / reading_kind); the
-    # pipeline side has not yet (Task 10 renames Flink + Iceberg together with
-    # the sensor-identity table). Until then the bridge TRANSLATES between the
-    # two vocabularies — not a compatibility fallback, just the two halves of an
-    # in-flight migration legitimately differing.
     out = {
         "pk": {"S": _pk(daq)},
         "sk": {"S": daq},
         "logical_id": {"N": str(sid)},
-        "meter_type": {"S": img["reading_kind"]["S"]},
+        "reading_kind": {"S": img["reading_kind"]["S"]},
         "hierarchy_path": {"S": _path(img["gsi1sk"]["S"])},
-        "purpose": {"S": img["energy_type"]["S"]},
+        "energy_type": {"S": img["energy_type"]["S"]},
     }
     # resample_minutes is optional in the source sensor row. Omit it when unset so
-    # the meter-identity row carries no resample_minutes attribute — Flink's
+    # the sensor-identity row carries no resample_minutes attribute — Flink's
     # DdbBootstrapLoader / DdbStreamDeserializer treat an absent value as null
     # (raw passthrough, no resampling). A sentinel like 0 would be an invalid
     # resample interval.

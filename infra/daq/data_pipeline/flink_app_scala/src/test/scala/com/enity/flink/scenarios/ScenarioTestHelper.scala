@@ -27,7 +27,7 @@ object ScenarioTestHelper:
   /** Run full pipeline from raw JSON strings (tests parsing + enrichment + delta). */
   def buildAndRunFromJson(
       jsonStrings: List[String],
-      mappings: Map[String, MeterMapping],
+      mappings: Map[String, SensorMapping],
       config: ScenarioConfig = ScenarioConfig()
   ): ScenarioResult =
     val env = StreamExecutionEnvironment.getExecutionEnvironment
@@ -77,7 +77,7 @@ object ScenarioTestHelper:
   /** Run pipeline from pre-parsed SensorRecords (tests enrichment + delta only). */
   def buildAndRunFromRecords(
       sensorRecords: List[SensorRecord],
-      mappings: Map[String, MeterMapping],
+      mappings: Map[String, SensorMapping],
       config: ScenarioConfig = ScenarioConfig()
   ): ScenarioResult =
     val env = StreamExecutionEnvironment.getExecutionEnvironment
@@ -94,10 +94,10 @@ object ScenarioTestHelper:
 
   private def wireEnrichmentPipeline(
       sensorStream: org.apache.flink.streaming.api.datastream.DataStream[SensorRecord],
-      mappings: Map[String, MeterMapping],
+      mappings: Map[String, SensorMapping],
       config: ScenarioConfig
   ): Unit =
-    val javaMap = new java.util.HashMap[String, MeterMapping]()
+    val javaMap = new java.util.HashMap[String, SensorMapping]()
     mappings.foreach { case (k, v) => javaMap.put(k, v) }
 
     val watermarkStrategy = WatermarkStrategy
@@ -118,7 +118,7 @@ object ScenarioTestHelper:
       .addSink(new ErrorSink("DEAD_LETTER"))
 
     val binnedStream = enrichedStream
-      .keyBy((t: (EnrichedRecord, MeterMapping)) => java.lang.Integer.valueOf(t._1.logicalId))
+      .keyBy((t: (EnrichedRecord, SensorMapping)) => java.lang.Integer.valueOf(t._1.logicalId))
       .process(new ResampleFunction(config.bufferRetentionMs))
 
     binnedStream.addSink(new EnrichedSink())

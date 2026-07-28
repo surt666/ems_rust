@@ -21,7 +21,7 @@ class DdbStreamDeserializerSpec extends AnyFlatSpec with Matchers {
       "pk": {"S": "04821"},
       "sk": {"S": "daq:std_json_v1:cust:meter1:temp"},
       "logical_id": {"N": "101"},
-      "meter_type": {"S": "gauge"},
+      "reading_kind": {"S": "gauge"},
       "hierarchy_path": {"S": "HN0#root|HN1#1|HN2#2|HN3#8|HN4#3"}
     }"""
     val result = deserializer.deserialize(makeJson("INSERT", image))
@@ -31,7 +31,7 @@ class DdbStreamDeserializerSpec extends AnyFlatSpec with Matchers {
     result.mapping shouldBe defined
     val m = result.mapping.get
     m.logicalId shouldBe 101
-    m.meterType shouldBe "gauge"
+    m.readingKind shouldBe "gauge"
     m.hn1 shouldBe 1
     m.hn2 shouldBe 2
     m.hn3 shouldBe java.lang.Integer.valueOf(8)
@@ -43,14 +43,14 @@ class DdbStreamDeserializerSpec extends AnyFlatSpec with Matchers {
       "pk": {"S": "00001"},
       "sk": {"S": "daq:emu:cust:m2:energy"},
       "logical_id": {"N": "42"},
-      "meter_type": {"S": "counter"},
+      "reading_kind": {"S": "counter"},
       "hierarchy_path": {"S": "HN0#root|HN1#5|HN2#10|HN3#3|HN4#7"}
     }"""
     val result = deserializer.deserialize(makeJson("MODIFY", image))
 
     result.eventType shouldBe "MODIFY"
     result.daqId shouldBe "daq:emu:cust:m2:energy"
-    result.mapping.get.meterType shouldBe "counter"
+    result.mapping.get.readingKind shouldBe "counter"
     result.mapping.get.hn3 shouldBe java.lang.Integer.valueOf(3)
     result.mapping.get.hn4 shouldBe java.lang.Integer.valueOf(7)
   }
@@ -67,19 +67,19 @@ class DdbStreamDeserializerSpec extends AnyFlatSpec with Matchers {
     result.mapping shouldBe None
   }
 
-  it should "parse resample_minutes and purpose when present" in {
+  it should "parse resample_minutes and energyType when present" in {
     val image = s"""{
       "pk": {"S": "00001"},
       "sk": {"S": "daq:std:cust:m1:energy"},
       "logical_id": {"N": "12"},
-      "meter_type": {"S": "counter"},
+      "reading_kind": {"S": "counter"},
       "hierarchy_path": {"S": "HN0#root|HN1#1|HN2#2|HN3#3"},
       "resample_minutes": {"N": "15"},
-      "purpose": {"S": "main meter"}
+      "energy_type": {"S": "electricity"}
     }"""
     val result = deserializer.deserialize(makeJson("INSERT", image))
     result.mapping.get.resampleMinutes shouldBe java.lang.Integer.valueOf(15)
-    result.mapping.get.purpose shouldBe "main meter"
+    result.mapping.get.energyType shouldBe "electricity"
   }
 
 
@@ -88,11 +88,11 @@ class DdbStreamDeserializerSpec extends AnyFlatSpec with Matchers {
       "pk": {"S": "00001"},
       "sk": {"S": "daq:std:cust:m1:temp"},
       "logical_id": {"N": "9"},
-      "meter_type": {"S": "gauge"},
+      "reading_kind": {"S": "gauge"},
       "hierarchy_path": {"S": "HN0#root|HN1#1|HN2#2|HN3#3"}
     }"""
     val result = deserializer.deserialize(makeJson("INSERT", image))
     result.mapping.get.resampleMinutes shouldBe null
-    result.mapping.get.purpose shouldBe ""
+    result.mapping.get.energyType shouldBe ""
   }
 }

@@ -9,13 +9,13 @@ import java.time.Instant
 
 /** Replaces MeterEnrichmentFunction for tests.
   * Pre-loaded mappings instead of DDB bootstrap + broadcast state. */
-class TestEnrichmentMapper(mappings: java.util.Map[String, MeterMapping])
-    extends ProcessFunction[SensorRecord, (EnrichedRecord, MeterMapping)]:
+class TestEnrichmentMapper(mappings: java.util.Map[String, SensorMapping])
+    extends ProcessFunction[SensorRecord, (EnrichedRecord, SensorMapping)]:
 
   override def processElement(
       record: SensorRecord,
-      ctx: ProcessFunction[SensorRecord, (EnrichedRecord, MeterMapping)]#Context,
-      out: Collector[(EnrichedRecord, MeterMapping)]
+      ctx: ProcessFunction[SensorRecord, (EnrichedRecord, SensorMapping)]#Context,
+      out: Collector[(EnrichedRecord, SensorMapping)]
   ): Unit =
     val mapping = mappings.get(record.daqId)
     if mapping != null then

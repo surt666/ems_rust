@@ -2,8 +2,8 @@
 Glue Spark job: recompute counter deltas and bins for late-arriving data.
 
 Reads raw cumulative values from the raw_data Iceberg table, joins with
-meter-identity from DynamoDB, computes deltas via LAG() window function,
-and appends corrected records to logical_meter_data.
+sensor-identity from DynamoDB, computes deltas via LAG() window function,
+and appends corrected records to logical_data.
 
 For meters with `resample_minutes` configured, also computes resample_timestamp / resample_value /
 resample_method per the 2026-05-01 resampling spec:
@@ -19,7 +19,7 @@ Parameters:
   --time_range_start     ISO-8601 start (inclusive), optional
   --time_range_end       ISO-8601 end (inclusive), optional
   --region               AWS region
-  --meter_identity_table DynamoDB table name for meter identity
+  --sensor_identity_table DynamoDB table name for meter identity
   --table_bucket_name    S3 Tables bucket name
   --account_id           AWS account ID
 """
@@ -53,7 +53,7 @@ job.init("late-data-recomputation", {})
 
 # ── Parse args ──
 
-REQUIRED_ARGS = ["JOB_NAME", "region", "meter_identity_table", "table_bucket_name", "account_id"]
+REQUIRED_ARGS = ["JOB_NAME", "region", "sensor_identity_table", "table_bucket_name", "account_id"]
 OPTIONAL_ARGS = {"daq_ids": "*", "time_range_start": "", "time_range_end": ""}
 
 args = getResolvedOptions(sys.argv, REQUIRED_ARGS)
@@ -97,7 +97,7 @@ spark.conf.set("spark.sql.catalog.s3tables.warehouse", warehouse)
 def parse_hierarchy_path(path: str) -> dict:
     """Parse hierarchy path "HN0#root|HN1#<int>|HN2#<int>|..." into hn1..hn9 ints.
     HN0 is the root and ignored. Sensor segment (S#<int>) must NOT be present — the sensor
-    id is the meter-identity row's logical_id, not part of hierarchy_path."""
+    id is the sensor-identity row's logical_id, not part of hierarchy_path."""
     result: dict = {f"hn{i}": None for i in range(1, 10)}
     for segment in path.split("|"):
         if not segment or segment == "HN0#root":
@@ -114,20 +114,20 @@ def parse_hierarchy_path(path: str) -> dict:
 def parse_ddb_item(item: dict) -> dict:
     daq_id = item["sk"]["S"]
     logical_id = int(item["logical_id"]["N"])
-    meter_type = item["meter_type"]["S"]
+    reading_kind = item["reading_kind"]["S"]
     hierarchy_path = item["hierarchy_path"]["S"]
     resample_field = item.get("resample_minutes")
     resample_minutes = int(resample_field["N"]) if resample_field and "N" in resample_field else None
-    purpose_field = item.get("purpose")
-    purpose = purpose_field["S"] if purpose_field and "S" in purpose_field else None
+    energy_type_field = item.get("energy_type")
+    energy_type = energy_type_field["S"] if energy_type_field and "S" in energy_type_field else None
     ids = parse_hierarchy_path(hierarchy_path)
     return {
-        "daq_id": daq_id, "logical_id": logical_id, "meter_type": meter_type,
-        "resample_minutes": resample_minutes, "purpose": purpose, **ids,
+        "daq_id": daq_id, "logical_id": logical_id, "reading_kind": reading_kind,
+        "resample_minutes": resample_minutes, "energy_type": energy_type, **ids,
     }
 
 
-def load_meter_identity(rgn: str, table_name: str, ids: list[str] | None) -> list[dict]:
+def load_sensor_identity(rgn: str, table_name: str, ids: list[str] | None) -> list[dict]:
     client = boto3.client("dynamodb", region_name=rgn)
     items = []
     scan_kwargs = {"TableName": table_name}
@@ -307,7 +307,7 @@ def compute_counter_bins(joined_df: DataFrame) -> DataFrame:
     """For counter readings: compute delta, then for resampled meters fan out time-proportionally
     across overlapping bins in (prev_ts, current_ts]. Unbinned meters get one row per reading
     with delta in `value` and bin_* = NULL."""
-    counters = joined_df.filter(F.col("meter_type") == "counter")
+    counters = joined_df.filter(F.col("reading_kind") == "counter")
     counters = counters.withColumn("prev_ts", F.lag("timestamp").over(window))
     counters = counters.withColumn("prev_value", F.lag("value").over(window))
     counters = counters.filter(F.col("prev_value").isNotNull())
@@ -355,7 +355,7 @@ def compute_gauge_bins(joined_df: DataFrame) -> DataFrame:
     """For gauge readings: for resampled meters, fan out across bins in (prev_ts, current_ts]
     with linear interpolation between (prev, current). Unbinned gauges pass through with
     bin_* = NULL. Single-reading-only meters produce no bin rows (consistent with Flink)."""
-    gauges = joined_df.filter(F.col("meter_type") == "gauge")
+    gauges = joined_df.filter(F.col("reading_kind") == "gauge")
     gauges = gauges.withColumn("prev_ts", F.lag("timestamp").over(window))
     gauges = gauges.withColumn("prev_value", F.lag("value").over(window))
 
@@ -412,7 +412,7 @@ def build_output(df: DataFrame) -> DataFrame:
         F.col("hn7").cast(IntegerType()),
         F.col("hn8").cast(IntegerType()),
         F.col("hn9").cast(IntegerType()),
-        F.col("purpose"),
+        F.col("energy_type"),
         F.when(F.col("resample_value").isNotNull(), F.col("resample_value") * F.col("_unit_factor"))
          .otherwise(F.lit(None).cast("double")).alias("resample_value"),
         F.col("resample_method"),
@@ -425,14 +425,14 @@ def build_output(df: DataFrame) -> DataFrame:
 # Window used by both gauge and counter resampling paths
 window = Window.partitionBy("logical_id").orderBy("timestamp")
 
-identity_records = load_meter_identity(region, args["meter_identity_table"], daq_ids)
+identity_records = load_sensor_identity(region, args["sensor_identity_table"], daq_ids)
 if identity_records:
     identity_schema = StructType([
         StructField("daq_id", StringType(), False),
         StructField("logical_id", IntegerType(), False),
-        StructField("meter_type", StringType(), False),
+        StructField("reading_kind", StringType(), False),
         StructField("resample_minutes", IntegerType(), True),
-        StructField("purpose", StringType(), True),
+        StructField("energy_type", StringType(), True),
         StructField("hn1", IntegerType(), True),
         StructField("hn2", IntegerType(), True),
         StructField("hn3", IntegerType(), True),
@@ -464,7 +464,7 @@ if identity_records:
         output_df = build_output(result_df)
 
         output_count = output_df.count()
-        logger.info("Writing %d recomputed records to logical_meter_data", output_count)
+        logger.info("Writing %d recomputed records to logical_data", output_count)
 
         if output_count > 0:
             # Collect and re-create DataFrame to sever lineage to raw_data's S3 Tables
@@ -474,7 +474,7 @@ if identity_records:
             output_schema = output_df.schema
             output_rows = output_df.collect()
             write_df = spark.createDataFrame(output_rows, output_schema)
-            write_df.writeTo("all.logical_meter_data").append()
+            write_df.writeTo("all.logical_data").append()
     else:
         logger.info("No raw records found for the given filters")
 else:

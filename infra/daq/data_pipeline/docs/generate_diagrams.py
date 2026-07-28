@@ -117,7 +117,7 @@ def diagram_context():
 
     # Meter Registry (external)
     draw_box(ax, 0.88, 0.75, 0.18, 0.10, "Meter Registry",
-             "DynamoDB\nmeter-identity",
+             "DynamoDB\nsensor-identity",
              color=C["system_ext"], fontsize=10, sublabel_size=8)
 
     # Data Lake (downstream)
@@ -183,7 +183,7 @@ def diagram_containers():
              "Kinesis Data Stream",
              color=C["stream"], fontsize=10, sublabel_size=8)
 
-    draw_box(ax, 0.88, 0.84, 0.18, 0.07, "meter-identity",
+    draw_box(ax, 0.88, 0.84, 0.18, 0.07, "sensor-identity",
              "DynamoDB table",
              color=C["store"], fontsize=10, sublabel_size=8)
 
@@ -267,7 +267,7 @@ def diagram_containers():
                   color=C["store"], fontsize=10, sublabel_size=7)
 
     draw_cylinder(ax, 0.56, 0.28, 0.24, 0.10,
-                  "logical_meter_data",
+                  "logical_data",
                   "Iceberg table\n(enriched deltas)",
                   color=C["store"], fontsize=9, sublabel_size=7)
 
@@ -405,7 +405,7 @@ def diagram_flink_internals():
     draw_arrow(ax, 0.82, 0.52, 0.59, 0.50, "INSERT/MODIFY/\nREMOVE", fontsize=7)
 
     # DDB bootstrap
-    draw_box(ax, 0.88, 0.46, 0.16, 0.05, "meter-identity",
+    draw_box(ax, 0.88, 0.46, 0.16, 0.05, "sensor-identity",
              "DynamoDB",
              color=C["store"], fontsize=8, sublabel_size=7)
     draw_arrow(ax, 0.82, 0.46, 0.43, 0.48, "Startup scan\n(20 segments)", fontsize=7,
@@ -563,7 +563,7 @@ def diagram_error_flow():
                   "Read cumulative values",
                   color=C["store"], fontsize=9, sublabel_size=7)
 
-    draw_cylinder(ax, 0.18, 0.10, 0.16, 0.08, "meter-identity",
+    draw_cylinder(ax, 0.18, 0.10, 0.16, 0.08, "sensor-identity",
                   "DDB lookup",
                   color=C["store"], fontsize=9, sublabel_size=7)
 
@@ -572,7 +572,7 @@ def diagram_error_flow():
 
     # Output
     draw_cylinder(ax, 0.75, 0.18, 0.24, 0.08,
-                  "logical_meter_data",
+                  "logical_data",
                   "Append recomputed deltas\n(created=now)",
                   color=C["store"], fontsize=9, sublabel_size=7)
 

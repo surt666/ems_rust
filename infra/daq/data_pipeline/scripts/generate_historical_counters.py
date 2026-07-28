@@ -152,7 +152,7 @@ def main():
     send_to_kinesis(messages, args.stream, args.region, dry_run=args.dry_run)
 
     # Print daq_ids for DDB registration
-    print(f"\nDAQ IDs to register in meter-identity:")
+    print(f"\nDAQ IDs to register in sensor-identity:")
     for sensor_id in sensor_ids:
         daq_id = f"daq:std_json_v1:countertest:{sensor_id}:volume"
         print(f"  {daq_id}")

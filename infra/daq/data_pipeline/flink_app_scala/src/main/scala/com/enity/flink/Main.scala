@@ -160,7 +160,7 @@ object Main:
       .build()
 
     // Read new environment properties
-    val meterIdentityTable = properties.getOrElse("METER_IDENTITY_TABLE", "meter-identity")
+    val sensorIdentityTable = properties.getOrElse("SENSOR_IDENTITY_TABLE", "sensor-identity")
     val ddbChangeStream = properties.getOrElse("DDB_CHANGE_STREAM", "")
     val errorStreamName = properties.getOrElse("ERROR_STREAM", "")
 
@@ -268,7 +268,7 @@ object Main:
 
       val enrichedStream = watermarkedStream
         .connect(broadcastStream)
-        .process(new MeterEnrichmentFunction(region, meterIdentityTable))
+        .process(new MeterEnrichmentFunction(region, sensorIdentityTable))
         .uid("meter-enrichment")
 
       val deadLetters = enrichedStream.getSideOutput(SideOutputTags.DEAD_LETTER)
@@ -276,7 +276,7 @@ object Main:
       // ── Step 5: Resampling (delta + interpolation per the 2026-05-01 resampling spec) ──
 
       val resampledStream = enrichedStream
-        .keyBy((t: (EnrichedRecord, MeterMapping)) => java.lang.Integer.valueOf(t._1.logicalId))
+        .keyBy((t: (EnrichedRecord, SensorMapping)) => java.lang.Integer.valueOf(t._1.logicalId))
         .process(new ResampleFunction(bufferRetentionMs))
         .uid("resample")
 
@@ -301,13 +301,13 @@ object Main:
         .field("hn7", DataTypes.INT())
         .field("hn8", DataTypes.INT())
         .field("hn9", DataTypes.INT())
-        .field("purpose", DataTypes.STRING())
+        .field("energy_type", DataTypes.STRING())
         .field("resample_value", DataTypes.DOUBLE())
         .field("resample_method", DataTypes.STRING())
         .field("resample_timestamp", DataTypes.TIMESTAMP(6))
         .build()
 
-      val enrichedTableId = TableIdentifier.of(Namespace.of("all"), "logical_meter_data")
+      val enrichedTableId = TableIdentifier.of(Namespace.of("all"), "logical_data")
       val enrichedTableLoader = TableLoader.fromCatalog(catalogLoader, enrichedTableId)
 
       val enrichedRowStream = resampledStream
@@ -333,16 +333,14 @@ object Main:
             java.lang.Integer.valueOf(record.hn2),
             record.hn3, record.hn4, record.hn5,
             record.hn6, record.hn7, record.hn8, record.hn9,
-            record.purpose,
+            record.energyType,
             normalizedResampleValue,
             record.resampleMethod,
             resampleTs
           )
         }
         .returns(Types.ROW_NAMED(
-          Array("logical_id", "timestamp", "value", "unit", "ingested_time",
-                "hn1", "hn2", "hn3", "hn4", "hn5", "hn6", "hn7", "hn8", "hn9",
-                "purpose", "resample_value", "resample_method", "resample_timestamp"),
+          LogicalDataSchema.columns,
           Types.INT, Types.INSTANT, Types.DOUBLE, Types.STRING, Types.INSTANT,
           Types.INT, Types.INT, Types.INT, Types.INT, Types.INT,
           Types.INT, Types.INT, Types.INT, Types.INT,
