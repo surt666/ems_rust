@@ -14,12 +14,18 @@ use std::pin::Pin;
 
 use aws_sdk_dynamodb::Client as DynamoClient;
 
-use model::domain::ids::{NodeId, UserId};
+use model::domain::ids::{Level, NodeId, UserId};
 use model::domain::node::Node;
+use model::domain::node_formula::NodeFormula;
+use model::domain::sensor::Sensor;
 use model::domain::user::User;
-use model::domain::values::EdgeKind;
+use model::domain::values::{EdgeKind, EnergyType, Purpose};
 use model::errors::RepositoryError;
-use model::repository::dynamodb::{edge, node as ddb_node, user};
+use model::logic::formulas::MatrixRow;
+use model::repository::dynamodb::{
+    edge, node as ddb_node, node_formula as ddb_formula, sensor as ddb_sensor, user,
+    weight as ddb_weight,
+};
 use model::repository::EdgeSpec;
 
 /// A boxed, `Send` repository future. Names the async-block type so the factories
@@ -187,5 +193,94 @@ pub fn repo_parts(e: &RepositoryError) -> (u16, &'static str, String) {
         }
         RepositoryError::Codec(m) => (500, "Internal", m.clone()),
         RepositoryError::Aws(m) => (500, "Internal", m.clone()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Node formulas + the materialised coefficient matrix
+// ---------------------------------------------------------------------------
+
+pub fn put_node_formula_fn(
+    ddb: &'static DynamoClient,
+    table: String,
+) -> impl Fn(NodeFormula, String, String) -> RepoFut<()> + Clone {
+    move |f, node_path, company_path| {
+        let t = table.clone();
+        Box::pin(async move {
+            ddb_formula::put_node_formula(ddb, &t, &f, &node_path, &company_path).await
+        })
+    }
+}
+
+pub fn delete_node_formula_fn(
+    ddb: &'static DynamoClient,
+    table: String,
+) -> impl Fn(NodeId, EnergyType, Purpose) -> RepoFut<()> + Clone {
+    move |node, energy_type, purpose| {
+        let t = table.clone();
+        Box::pin(async move {
+            ddb_formula::delete_node_formula(ddb, &t, &node, energy_type, purpose).await
+        })
+    }
+}
+
+pub fn list_company_formulas_fn(
+    ddb: &'static DynamoClient,
+    table: String,
+) -> impl Fn(String) -> RepoFut<Vec<NodeFormula>> + Clone {
+    move |company_path| {
+        let t = table.clone();
+        Box::pin(async move { ddb_formula::list_company_formulas(ddb, &t, &company_path).await })
+    }
+}
+
+/// Every active sensor in a company. The company path arrives WITHOUT a trailing
+/// separator; the GSI prefix query needs one, or `HN2#1` would match `HN2#10`.
+pub fn list_company_sensors_fn(
+    ddb: &'static DynamoClient,
+    table: String,
+) -> impl Fn(String) -> RepoFut<Vec<Sensor>> + Clone {
+    move |company_path| {
+        let t = table.clone();
+        Box::pin(async move {
+            let prefix = format!("{company_path}{}", model::domain::node::PATH_SEP);
+            ddb_sensor::list_sensors_under_path(ddb, &t, &prefix).await
+        })
+    }
+}
+
+/// Every node in a company, the company itself included — the roots of the
+/// recursion. Nodes are indexed per LEVEL (`gsi1pk = "HN<d>"`), so this fans out
+/// over HN2..HN9 and filters by path.
+pub fn list_company_nodes_fn(
+    ddb: &'static DynamoClient,
+    table: String,
+) -> impl Fn(String) -> RepoFut<Vec<Node>> + Clone {
+    move |company_path| {
+        let t = table.clone();
+        Box::pin(async move {
+            let mut out = Vec::new();
+            for level in [
+                Level::Hn2, Level::Hn3, Level::Hn4, Level::Hn5,
+                Level::Hn6, Level::Hn7, Level::Hn8, Level::Hn9,
+            ] {
+                let found =
+                    ddb_node::list_by_level_under_path(ddb, &t, level, &company_path).await?;
+                out.extend(found);
+            }
+            Ok(out)
+        })
+    }
+}
+
+pub fn replace_matrix_fn(
+    ddb: &'static DynamoClient,
+    table: String,
+) -> impl Fn(String, Vec<MatrixRow>) -> RepoFut<()> + Clone {
+    move |company_path, matrix| {
+        let t = table.clone();
+        Box::pin(async move {
+            ddb_weight::replace_company_matrix(ddb, &t, &company_path, &matrix).await
+        })
     }
 }

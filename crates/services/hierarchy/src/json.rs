@@ -254,6 +254,25 @@ pub fn node_to_json(n: &Node) -> Value {
 }
 
 // ---------------------------------------------------------------------------
+// formula_to_json
+// ---------------------------------------------------------------------------
+
+/// Serialise a `NodeFormula`. `terms` is the same shape the command accepts, so
+/// a response can be posted straight back.
+pub fn formula_to_json(f: &model::domain::node_formula::NodeFormula) -> Value {
+    json!({
+        "node":        f.node.to_string(),
+        "energy_type": f.energy_type.to_string(),
+        "purpose":     f.purpose.to_string(),
+        "terms": f.terms.iter().map(|t| json!({
+            "ref":         t.reference.to_string(),
+            "coefficient": t.coefficient,
+        })).collect::<Vec<_>>(),
+        "note": f.note,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // sensor_to_json
 // ---------------------------------------------------------------------------
 

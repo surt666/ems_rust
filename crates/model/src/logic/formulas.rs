@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use crate::domain::ids::{NodeId, SensorId};
-use crate::domain::node::Node;
+use crate::domain::node::{is_at_or_under, Node};
 use crate::domain::node_formula::{NodeFormula, Reference};
 use crate::domain::sensor::{parent_path, Sensor};
 use crate::domain::values::{EnergyType, Purpose};
@@ -228,7 +228,6 @@ pub fn validate(g: &CompanyGraph, f: &NodeFormula) -> Result<(), String> {
     };
     let own: Vec<SensorId> = g.own_sensors(&f.node).iter().map(|s| s.id).collect();
     let children: Vec<NodeId> = g.children(&f.node).map(|n| n.id.clone()).collect();
-    let sep = crate::domain::node::PATH_SEP;
 
     for t in &f.terms {
         if !t.coefficient.is_finite() {
@@ -250,8 +249,9 @@ pub fn validate(g: &CompanyGraph, f: &NodeFormula) -> Result<(), String> {
                 };
                 // For Total, a sensor deeper in this node's own subtree already
                 // arrives via the child chain.
-                let deeper =
-                    !own.contains(id) && s.path.starts_with(&format!("{node_path}{sep}"));
+                // A sensor's path always ends in `|S#<n>`, so it is never equal
+                // to a node path — `is_at_or_under` is exactly "in my subtree".
+                let deeper = !own.contains(id) && is_at_or_under(&s.path, node_path);
                 if f.purpose == Purpose::Total && deeper {
                     return Err(format!(
                         "sensor {id} is already counted through {}'s children — override the \

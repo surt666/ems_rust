@@ -266,23 +266,10 @@ where
 // company_prefix_of_path (internal)
 // ---------------------------------------------------------------------------
 
-/// Extract the path prefix up to and including the HN2 (company) segment,
-/// with a trailing `|`.
+/// The company prefix **with** a trailing `|` — the `begins_with` form, which
+/// keeps `HN2#1` from matching `HN2#10`.
 fn company_prefix_of_path(path: &str) -> Option<String> {
-    let segs: Vec<&str> = path.split('|').filter(|s| !s.is_empty()).collect();
-    let mut acc: Vec<&str> = Vec::new();
-    for seg in &segs {
-        acc.push(seg);
-        if let Ok(nid) = NodeId::parse(seg) {
-            if nid.level() == crate::domain::ids::Level::Hn2 {
-                // Build prefix with trailing |
-                let mut p = acc.join("|");
-                p.push('|');
-                return Some(p);
-            }
-        }
-    }
-    None
+    crate::domain::node::company_prefix(path).map(|p| format!("{p}{}", crate::domain::node::PATH_SEP))
 }
 
 // ---------------------------------------------------------------------------

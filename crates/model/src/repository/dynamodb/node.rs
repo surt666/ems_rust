@@ -418,6 +418,27 @@ fn levels_at_or_below(starting_level: Level) -> Vec<Level> {
         .collect()
 }
 
+/// Every node at `level` whose path lies at or under `ancestor_path`.
+///
+/// Nodes are indexed per level (`gsi1pk = "HN<d>"`) with the path as `gsi1sk`,
+/// so this is one partition query per level. The `begins_with` is deliberately
+/// followed by a segment-aware filter — otherwise `HN2#997` would also match
+/// `HN2#9970`.
+pub async fn list_by_level_under_path(
+    client: &Client,
+    table: &str,
+    level: Level,
+    ancestor_path: &str,
+) -> Result<Vec<Node>, RepositoryError> {
+    let partition = codec::node_gsi1pk(level);
+    let rows = query_gsi_partition(client, table, &partition, ancestor_path).await;
+    Ok(rows
+        .iter()
+        .filter_map(|i| codec::node_of_item(i).ok())
+        .filter(|n| crate::domain::node::is_at_or_under(&n.path, ancestor_path))
+        .collect())
+}
+
 /// Page through the GSI partition `gsi1pk_v` for rows whose `gsi1sk` begins
 /// with `path_prefix`.
 pub(crate) async fn query_gsi_partition(

@@ -21,18 +21,22 @@ use serde_json::{json, Value};
 
 use model::domain::ids::{NodeId, SensorId, UserId};
 use model::domain::node::Node;
+use model::domain::node_formula::{NodeFormula, Reference, Term};
 use model::domain::sensor::Sensor;
 use model::domain::user::User;
-use model::domain::values::{CognitoGroup, Currency, EdgeKind, Language, ReadingKind, Profile, EnergyType};
+use model::domain::values::{CognitoGroup, Currency, EdgeKind, EnergyType, Language, Profile, Purpose, ReadingKind};
 use model::errors::RepositoryError;
+use model::logic::formulas::{self as formulas_logic, CompanyGraph, MatrixRow};
 use model::logic::{access, hierarchy, sensors, users};
 use model::repository::EdgeSpec;
 
 use crate::command::Command;
 use crate::json;
 use crate::repo_fns::{
-    delete_edge_fn, delete_user_fn, get_node_fn, get_user_fn, list_access_edges_fn,
-    list_blocked_nodes_fn, list_children_fn, put_edge_fn, put_node_fn, put_user_fn, repo_parts,
+    delete_edge_fn, delete_node_formula_fn, delete_user_fn, get_node_fn, get_user_fn,
+    list_access_edges_fn, list_blocked_nodes_fn, list_children_fn, list_company_formulas_fn,
+    list_company_nodes_fn, list_company_sensors_fn, put_edge_fn, put_node_formula_fn, put_node_fn,
+    put_user_fn, replace_matrix_fn, repo_parts,
 };
 
 // ---------------------------------------------------------------------------
@@ -797,6 +801,385 @@ where
 // Top-level dispatch — prod entry point
 // ---------------------------------------------------------------------------
 
+
+// ---------------------------------------------------------------------------
+// Node formulas
+// ---------------------------------------------------------------------------
+
+/// Parse the `terms` payload: a JSON array, or a JSON-encoded string of one
+/// (the HTML form builds it client-side to avoid dynamic field names).
+fn parse_terms(v: &Value) -> Result<Vec<Term>, String> {
+    let arr = match v {
+        Value::Array(a) => a.clone(),
+        Value::String(s) => serde_json::from_str::<Vec<Value>>(s)
+            .map_err(|e| format!("terms is not a JSON array: {e}"))?,
+        _ => return Err("terms must be a JSON array".to_string()),
+    };
+    arr.iter()
+        .map(|t| {
+            let r = t
+                .get("ref")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "term missing \"ref\"".to_string())?;
+            let c = t
+                .get("coefficient")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| "term missing numeric \"coefficient\"".to_string())?;
+            Ok(Term {
+                reference: Reference::parse(r)?,
+                coefficient: c,
+            })
+        })
+        .collect()
+}
+
+/// Load a company's graph: its nodes, its sensors and its formulas.
+async fn load_company_graph<FLF, FLFFut, FLS, FLSFut, FLN, FLNFut>(
+    company_path: String,
+    list_company_formulas: FLF,
+    list_company_sensors: FLS,
+    list_company_nodes: FLN,
+) -> Result<CompanyGraph, RepositoryError>
+where
+    FLF: FnOnce(String) -> FLFFut,
+    FLFFut: Future<Output = Result<Vec<NodeFormula>, RepositoryError>>,
+    FLS: FnOnce(String) -> FLSFut,
+    FLSFut: Future<Output = Result<Vec<model::domain::sensor::Sensor>, RepositoryError>>,
+    FLN: FnOnce(String) -> FLNFut,
+    FLNFut: Future<Output = Result<Vec<Node>, RepositoryError>>,
+{
+    let formulas = list_company_formulas(company_path.clone()).await?;
+    let sensors = list_company_sensors(company_path.clone()).await?;
+    let nodes = list_company_nodes(company_path).await?;
+    Ok(CompanyGraph { nodes, sensors, formulas })
+}
+
+/// Flatten a company and replace its materialised matrix.
+///
+/// Called by **every** command that can change the matrix — formula writes and
+/// deletes, but also sensor attach/replace/delete and node add/delete, since all
+/// of those change what the recursion sums. Recompute-on-formula-write alone
+/// would leave the matrix silently stale.
+pub async fn recompute_matrix_for_company<FLF, FLFFut, FLS, FLSFut, FLN, FLNFut, FRM, FRMFut>(
+    company_path: String,
+    list_company_formulas: FLF,
+    list_company_sensors: FLS,
+    list_company_nodes: FLN,
+    replace_matrix: FRM,
+) -> Result<(), RepositoryError>
+where
+    FLF: FnOnce(String) -> FLFFut,
+    FLFFut: Future<Output = Result<Vec<NodeFormula>, RepositoryError>>,
+    FLS: FnOnce(String) -> FLSFut,
+    FLSFut: Future<Output = Result<Vec<model::domain::sensor::Sensor>, RepositoryError>>,
+    FLN: FnOnce(String) -> FLNFut,
+    FLNFut: Future<Output = Result<Vec<Node>, RepositoryError>>,
+    FRM: FnOnce(String, Vec<MatrixRow>) -> FRMFut,
+    FRMFut: Future<Output = Result<(), RepositoryError>>,
+{
+    let graph = load_company_graph(
+        company_path.clone(),
+        list_company_formulas,
+        list_company_sensors,
+        list_company_nodes,
+    )
+    .await?;
+    replace_matrix(company_path, formulas_logic::flatten(&graph)).await
+}
+
+/// Resolve the node's company, then rebuild. Use this only when the node still
+/// exists — for a delete, capture the company path first and call
+/// [`recompute_matrix_for_company`].
+pub async fn recompute_matrix<FGN, FGNFut, FLF, FLFFut, FLS, FLSFut, FLN, FLNFut, FRM, FRMFut>(
+    node: NodeId,
+    get_node: FGN,
+    list_company_formulas: FLF,
+    list_company_sensors: FLS,
+    list_company_nodes: FLN,
+    replace_matrix: FRM,
+) -> Result<(), RepositoryError>
+where
+    FGN: Fn(NodeId) -> FGNFut,
+    FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
+    FLF: FnOnce(String) -> FLFFut,
+    FLFFut: Future<Output = Result<Vec<NodeFormula>, RepositoryError>>,
+    FLS: FnOnce(String) -> FLSFut,
+    FLSFut: Future<Output = Result<Vec<model::domain::sensor::Sensor>, RepositoryError>>,
+    FLN: FnOnce(String) -> FLNFut,
+    FLNFut: Future<Output = Result<Vec<Node>, RepositoryError>>,
+    FRM: FnOnce(String, Vec<MatrixRow>) -> FRMFut,
+    FRMFut: Future<Output = Result<(), RepositoryError>>,
+{
+    let Some(n) = get_node(node.clone()).await? else {
+        return Err(RepositoryError::NotFound(node));
+    };
+    let Some(company_path) = model::domain::node::company_prefix(&n.path) else {
+        // Above company level there is no matrix to rebuild.
+        return Ok(());
+    };
+    recompute_matrix_for_company(
+        company_path,
+        list_company_formulas,
+        list_company_sensors,
+        list_company_nodes,
+        replace_matrix,
+    )
+    .await
+}
+
+/// `set_node_formula` — validate, write, then rebuild the company matrix.
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_set_node_formula<
+    FGN, FGNFut, FLF, FLFFut, FLS, FLSFut, FLN, FLNFut, FPF, FPFFut, FRM, FRMFut,
+>(
+    node_id: String,
+    energy_type_s: String,
+    purpose_s: String,
+    terms_val: Value,
+    note: Option<String>,
+    get_node: FGN,
+    list_company_formulas: FLF,
+    list_company_sensors: FLS,
+    list_company_nodes: FLN,
+    put_node_formula: FPF,
+    replace_matrix: FRM,
+) -> Value
+where
+    FGN: Fn(NodeId) -> FGNFut + Clone,
+    FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
+    FLF: Fn(String) -> FLFFut + Clone,
+    FLFFut: Future<Output = Result<Vec<NodeFormula>, RepositoryError>>,
+    FLS: Fn(String) -> FLSFut + Clone,
+    FLSFut: Future<Output = Result<Vec<model::domain::sensor::Sensor>, RepositoryError>>,
+    FLN: Fn(String) -> FLNFut + Clone,
+    FLNFut: Future<Output = Result<Vec<Node>, RepositoryError>>,
+    FPF: FnOnce(NodeFormula, String, String) -> FPFFut,
+    FPFFut: Future<Output = Result<(), RepositoryError>>,
+    FRM: FnOnce(String, Vec<MatrixRow>) -> FRMFut,
+    FRMFut: Future<Output = Result<(), RepositoryError>>,
+{
+    let node = match NodeId::parse(&node_id) {
+        Ok(n) => n,
+        Err(e) => return bad_request(&format!("bad node_id: {e}")),
+    };
+    let energy_type = match energy_type_s.parse::<EnergyType>() {
+        Ok(e) => e,
+        Err(e) => return bad_request(&format!("bad energy_type: {e}")),
+    };
+    let purpose = match purpose_s.parse::<Purpose>() {
+        Ok(p) => p,
+        Err(e) => return bad_request(&format!("bad purpose: {e}")),
+    };
+    let terms = match parse_terms(&terms_val) {
+        Ok(t) => t,
+        Err(e) => return bad_request(&e),
+    };
+
+    let n = match get_node(node.clone()).await {
+        Ok(Some(n)) => n,
+        Ok(None) => return repo_error_response(RepositoryError::NotFound(node)),
+        Err(e) => return repo_error_response(e),
+    };
+    let Some(company_path) = model::domain::node::company_prefix(&n.path) else {
+        return bad_request(&format!("{node} has no company (HN2) ancestor"));
+    };
+
+    let graph = match load_company_graph(
+        company_path.clone(),
+        list_company_formulas.clone(),
+        list_company_sensors.clone(),
+        list_company_nodes.clone(),
+    )
+    .await
+    {
+        Ok(g) => g,
+        Err(e) => return repo_error_response(e),
+    };
+
+    let f = NodeFormula { node, energy_type, purpose, terms, note };
+    if let Err(msg) = formulas_logic::validate(&graph, &f) {
+        return bad_request(&msg);
+    }
+    if let Err(e) = put_node_formula(f.clone(), n.path.clone(), company_path.clone()).await {
+        return repo_error_response(e);
+    }
+
+    // Rebuild from the graph WITH the new formula in it.
+    let mut updated = graph;
+    updated.formulas.retain(|o| {
+        !(o.node == f.node && o.energy_type == f.energy_type && o.purpose == f.purpose)
+    });
+    updated.formulas.push(f.clone());
+    if let Err(e) = replace_matrix(company_path, formulas_logic::flatten(&updated)).await {
+        return repo_error_response(e);
+    }
+    ok(json::formula_to_json(&f))
+}
+
+/// `delete_node_formula` — remove one, reverting that pair to its default.
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_delete_node_formula<
+    FGN, FGNFut, FDF, FDFFut, FLF, FLFFut, FLS, FLSFut, FLN, FLNFut, FRM, FRMFut,
+>(
+    node_id: String,
+    energy_type_s: String,
+    purpose_s: String,
+    get_node: FGN,
+    delete_node_formula: FDF,
+    list_company_formulas: FLF,
+    list_company_sensors: FLS,
+    list_company_nodes: FLN,
+    replace_matrix: FRM,
+) -> Value
+where
+    FGN: Fn(NodeId) -> FGNFut + Clone,
+    FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
+    FDF: FnOnce(NodeId, EnergyType, Purpose) -> FDFFut,
+    FDFFut: Future<Output = Result<(), RepositoryError>>,
+    FLF: Fn(String) -> FLFFut + Clone,
+    FLFFut: Future<Output = Result<Vec<NodeFormula>, RepositoryError>>,
+    FLS: Fn(String) -> FLSFut + Clone,
+    FLSFut: Future<Output = Result<Vec<model::domain::sensor::Sensor>, RepositoryError>>,
+    FLN: Fn(String) -> FLNFut + Clone,
+    FLNFut: Future<Output = Result<Vec<Node>, RepositoryError>>,
+    FRM: FnOnce(String, Vec<MatrixRow>) -> FRMFut,
+    FRMFut: Future<Output = Result<(), RepositoryError>>,
+{
+    let node = match NodeId::parse(&node_id) {
+        Ok(n) => n,
+        Err(e) => return bad_request(&format!("bad node_id: {e}")),
+    };
+    let energy_type = match energy_type_s.parse::<EnergyType>() {
+        Ok(e) => e,
+        Err(e) => return bad_request(&format!("bad energy_type: {e}")),
+    };
+    let purpose = match purpose_s.parse::<Purpose>() {
+        Ok(p) => p,
+        Err(e) => return bad_request(&format!("bad purpose: {e}")),
+    };
+
+    if let Err(e) = delete_node_formula(node.clone(), energy_type, purpose).await {
+        return repo_error_response(e);
+    }
+    match recompute_matrix(
+        node,
+        get_node,
+        list_company_formulas,
+        list_company_sensors,
+        list_company_nodes,
+        replace_matrix,
+    )
+    .await
+    {
+        Ok(()) => ok(json!({ "ok": true })),
+        Err(e) => repo_error_response(e),
+    }
+}
+
+/// `rebuild_company_matrix` — the operator escape hatch when a recompute has
+/// been missed.
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_rebuild_company_matrix<
+    FGN, FGNFut, FLF, FLFFut, FLS, FLSFut, FLN, FLNFut, FRM, FRMFut,
+>(
+    company_id: String,
+    get_node: FGN,
+    list_company_formulas: FLF,
+    list_company_sensors: FLS,
+    list_company_nodes: FLN,
+    replace_matrix: FRM,
+) -> Value
+where
+    FGN: Fn(NodeId) -> FGNFut + Clone,
+    FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
+    FLF: Fn(String) -> FLFFut + Clone,
+    FLFFut: Future<Output = Result<Vec<NodeFormula>, RepositoryError>>,
+    FLS: Fn(String) -> FLSFut + Clone,
+    FLSFut: Future<Output = Result<Vec<model::domain::sensor::Sensor>, RepositoryError>>,
+    FLN: Fn(String) -> FLNFut + Clone,
+    FLNFut: Future<Output = Result<Vec<Node>, RepositoryError>>,
+    FRM: FnOnce(String, Vec<MatrixRow>) -> FRMFut,
+    FRMFut: Future<Output = Result<(), RepositoryError>>,
+{
+    let node = match NodeId::parse(&company_id) {
+        Ok(n) => n,
+        Err(e) => return bad_request(&format!("bad company: {e}")),
+    };
+    match recompute_matrix(
+        node,
+        get_node,
+        list_company_formulas,
+        list_company_sensors,
+        list_company_nodes,
+        replace_matrix,
+    )
+    .await
+    {
+        Ok(()) => ok(json!({ "ok": true })),
+        Err(e) => repo_error_response(e),
+    }
+}
+
+/// The company a node belongs to, resolved from the live table.
+///
+/// Call this **before** a mutation that might remove the node — a delete needs
+/// the company path captured while the node still exists.
+async fn company_of_node(
+    ddb: &'static aws_sdk_dynamodb::Client,
+    table: &str,
+    node_id: &str,
+) -> Option<String> {
+    use model::repository::dynamodb::node as ddb_node;
+    let id = NodeId::parse(node_id).ok()?;
+    let n = ddb_node::get_node(ddb, table, &id).await.ok()??;
+    model::domain::node::company_prefix(&n.path)
+}
+
+/// The company a sensor belongs to.
+async fn company_of_sensor(
+    ddb: &'static aws_sdk_dynamodb::Client,
+    table: &str,
+    sensor_id: &str,
+) -> Option<String> {
+    use model::repository::dynamodb::sensor as ddb_sensor;
+    let id = SensorId::parse(sensor_id).ok()?;
+    let s = ddb_sensor::get_active_sensor(ddb, table, &id).await.ok()??;
+    model::domain::node::company_prefix(&s.path)
+}
+
+/// Rebuild a company's matrix after a successful mutation.
+///
+/// Every command that changes what the recursion sums must call this — sensor
+/// attach/replace/delete and node add/delete as much as formula writes.
+/// Recompute-on-formula-write alone leaves the matrix silently stale, and the
+/// matrix is what the roll-up job reads. A rebuild failure is surfaced rather
+/// than swallowed, for the same reason.
+async fn rebuild_after(
+    ddb: &'static aws_sdk_dynamodb::Client,
+    table: &str,
+    company: Option<String>,
+    out: Value,
+) -> Value {
+    if out["statusCode"].as_u64() != Some(200) {
+        return out;
+    }
+    let Some(company_path) = company else {
+        return out;
+    };
+    match recompute_matrix_for_company(
+        company_path,
+        list_company_formulas_fn(ddb, table.to_string()),
+        list_company_sensors_fn(ddb, table.to_string()),
+        list_company_nodes_fn(ddb, table.to_string()),
+        replace_matrix_fn(ddb, table.to_string()),
+    )
+    .await
+    {
+        Ok(()) => out,
+        Err(e) => repo_error_response(e),
+    }
+}
+
 /// Dispatch a `Command` to the real AWS-backed repository.
 ///
 /// Obtains shared clients (OnceCell) and builds the real repository closures.
@@ -817,7 +1200,8 @@ pub async fn run(cmd: Command) -> Value {
             metadata,
             schema,
         } => {
-            handle_add_node(
+            let company = company_of_node(ddb, &table, &parent_id).await;
+            let out = handle_add_node(
                 parent_id,
                 name,
                 level,
@@ -848,11 +1232,14 @@ pub async fn run(cmd: Command) -> Value {
                     }
                 },
             )
-            .await
+            .await;
+            rebuild_after(ddb, &table, company, out).await
         }
 
         Command::DeleteNode { id } => {
-            handle_delete_node(
+            // Capture the company BEFORE the node is gone.
+            let company = company_of_node(ddb, &table, &id).await;
+            let out = handle_delete_node(
                 id,
                 get_node_fn(ddb, table.clone()),
                 {
@@ -863,7 +1250,8 @@ pub async fn run(cmd: Command) -> Value {
                     }
                 },
             )
-            .await
+            .await;
+            rebuild_after(ddb, &table, company, out).await
         }
 
         Command::UpdateNode { id, metadata } => {
@@ -893,7 +1281,8 @@ pub async fn run(cmd: Command) -> Value {
             let daq_owner = ddb_sensor::find_active_by_daq(ddb, &table, &daq_id)
                 .await
                 .unwrap_or(None);
-            handle_attach_sensor(
+            let company = company_of_node(ddb, &table, &parent_id).await;
+            let out = handle_attach_sensor(
                 parent_id,
                 daq_id,
                 energy_type,
@@ -932,7 +1321,8 @@ pub async fn run(cmd: Command) -> Value {
                 // is already attached elsewhere ⇒ Conflict.
                 move |_daq: &str| daq_owner.clone(),
             )
-            .await
+            .await;
+            rebuild_after(ddb, &table, company, out).await
         }
 
         Command::ReplaceSensorDevice { sensor_id, daq_id } => {
@@ -952,7 +1342,10 @@ pub async fn run(cmd: Command) -> Value {
             let (current, new_daq_owner) =
                 tokio::join!(current_fut, ddb_sensor::find_active_by_daq(ddb, &table, &daq_id));
             let new_daq_owner = new_daq_owner.unwrap_or(None);
-            handle_replace_sensor_device(
+            let company = current
+                .as_ref()
+                .and_then(|c| model::domain::node::company_prefix(&c.path));
+            let out = handle_replace_sensor_device(
                 sensor_id,
                 daq_id,
                 move |_sid| current.clone(),
@@ -967,11 +1360,13 @@ pub async fn run(cmd: Command) -> Value {
                     }
                 },
             )
-            .await
+            .await;
+            rebuild_after(ddb, &table, company, out).await
         }
 
         Command::DeleteSensor { sensor_id } => {
-            handle_delete_sensor(
+            let company = company_of_sensor(ddb, &table, &sensor_id).await;
+            let out = handle_delete_sensor(
                 sensor_id,
                 // Async active-row lookup (resolves the parent for the edge delete).
                 {
@@ -989,7 +1384,8 @@ pub async fn run(cmd: Command) -> Value {
                     }
                 },
             )
-            .await
+            .await;
+            rebuild_after(ddb, &table, company, out).await
         }
 
         Command::CreateUser {
@@ -1085,6 +1481,59 @@ pub async fn run(cmd: Command) -> Value {
                 get_user_fn(ddb, table.clone()),
                 get_node_fn(ddb, table.clone()),
                 put_edge_fn(ddb, table.clone()),
+            )
+            .await
+        }
+        Command::SetNodeFormula {
+            node_id,
+            energy_type,
+            purpose,
+            terms,
+            note,
+        } => {
+            handle_set_node_formula(
+                node_id,
+                energy_type,
+                purpose,
+                terms,
+                note,
+                get_node_fn(ddb, table.clone()),
+                list_company_formulas_fn(ddb, table.clone()),
+                list_company_sensors_fn(ddb, table.clone()),
+                list_company_nodes_fn(ddb, table.clone()),
+                put_node_formula_fn(ddb, table.clone()),
+                replace_matrix_fn(ddb, table.clone()),
+            )
+            .await
+        }
+
+        Command::DeleteNodeFormula {
+            node_id,
+            energy_type,
+            purpose,
+        } => {
+            handle_delete_node_formula(
+                node_id,
+                energy_type,
+                purpose,
+                get_node_fn(ddb, table.clone()),
+                delete_node_formula_fn(ddb, table.clone()),
+                list_company_formulas_fn(ddb, table.clone()),
+                list_company_sensors_fn(ddb, table.clone()),
+                list_company_nodes_fn(ddb, table.clone()),
+                replace_matrix_fn(ddb, table.clone()),
+            )
+            .await
+        }
+
+        Command::RebuildCompanyMatrix { company } => {
+            handle_rebuild_company_matrix(
+                company,
+                get_node_fn(ddb, table.clone()),
+                list_company_formulas_fn(ddb, table.clone()),
+                list_company_sensors_fn(ddb, table.clone()),
+                list_company_nodes_fn(ddb, table.clone()),
+                replace_matrix_fn(ddb, table.clone()),
             )
             .await
         }
@@ -1948,7 +2397,254 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: attach_sensor with formula
+    // Node formulas
+    // -----------------------------------------------------------------------
+
+    /// The three company-scoped read ports, backed by the in-memory store.
+    /// One helper each, matching the `make_*` convention above.
+    fn make_list_company_formulas(
+        s: Rc<Store>,
+    ) -> impl Fn(String) -> std::future::Ready<Result<Vec<NodeFormula>, RepositoryError>> + Clone {
+        move |p: String| std::future::ready(Ok(s.list_company_formulas(&p)))
+    }
+
+    fn make_list_company_sensors(
+        s: Rc<Store>,
+    ) -> impl Fn(String) -> std::future::Ready<Result<Vec<Sensor>, RepositoryError>> + Clone {
+        move |p: String| std::future::ready(Ok(s.list_sensors_under_path(&p)))
+    }
+
+    fn make_list_company_nodes(
+        s: Rc<Store>,
+    ) -> impl Fn(String) -> std::future::Ready<Result<Vec<Node>, RepositoryError>> + Clone {
+        move |p: String| std::future::ready(Ok(s.list_company_nodes(&p)))
+    }
+
+    async fn set_formula(
+        store: &Rc<Store>,
+        node: &str,
+        et: &str,
+        purpose: &str,
+        terms: Value,
+    ) -> Value {
+        let (pf, rm) = (store.clone(), store.clone());
+        handle_set_node_formula(
+            node.to_string(),
+            et.to_string(),
+            purpose.to_string(),
+            terms,
+            None,
+            make_get_node(store.clone()),
+            make_list_company_formulas(store.clone()),
+            make_list_company_sensors(store.clone()),
+            make_list_company_nodes(store.clone()),
+            move |f, _np, _cp| {
+                pf.put_node_formula(&f);
+                std::future::ready(Ok(()))
+            },
+            move |cp: String, m| {
+                rm.replace_company_matrix(&cp, m);
+                std::future::ready(Ok(()))
+            },
+        )
+        .await
+    }
+
+    /// Seed a company with a building and one electricity sensor on it.
+    async fn seed_company_with_sensor(store: &Rc<Store>) -> (NodeId, NodeId, String) {
+        let c2 = seed_building_company(store);
+        let bldg = seed_building(store, c2.clone()).await;
+        let add = handle_attach_sensor(
+            bldg.to_string(),
+            "daq:f1".to_string(),
+            "Electricity".to_string(),
+            "counter".to_string(),
+            Some("kWh".to_string()),
+            None,
+            make_get_node(store.clone()),
+            make_add_sensor(store.clone()),
+            |_daq: &str| None,
+        )
+        .await;
+        assert_eq!(status(&add), 200, "seed sensor; got {add:?}");
+        let sid = body(&add)["id"].as_str().expect("sensor id").to_string();
+        (c2, bldg, sid)
+    }
+
+    #[tokio::test]
+    async fn set_node_formula_stores_and_rebuilds_the_matrix() {
+        let store = Rc::new(Store::new());
+        let (_, bldg, sid) = seed_company_with_sensor(&store).await;
+
+        let out = set_formula(
+            &store,
+            &bldg.to_string(),
+            "electricity",
+            "cooling",
+            json!([{ "ref": sid, "coefficient": 1 }]),
+        )
+        .await;
+
+        assert_eq!(status(&out), 200, "set_node_formula; got {out:?}");
+        assert_eq!(store.list_node_formulas(&bldg).len(), 1, "formula stored");
+        assert!(
+            !store.weight_rows().is_empty(),
+            "the matrix is what Glue reads — it must be rebuilt on every write"
+        );
+    }
+
+    /// Attaching a sensor changes the matrix too — recompute-on-formula-write
+    /// alone would leave it stale.
+    #[tokio::test]
+    async fn attach_sensor_rebuilds_the_matrix() {
+        let store = Rc::new(Store::new());
+        let (_, bldg, sid) = seed_company_with_sensor(&store).await;
+        set_formula(
+            &store,
+            &bldg.to_string(),
+            "electricity",
+            "cooling",
+            json!([{ "ref": sid, "coefficient": 1 }]),
+        )
+        .await;
+        let before = store.weight_rows().len();
+
+        let add = handle_attach_sensor(
+            bldg.to_string(),
+            "daq:f2".to_string(),
+            "Electricity".to_string(),
+            "counter".to_string(),
+            Some("kWh".to_string()),
+            None,
+            make_get_node(store.clone()),
+            make_add_sensor(store.clone()),
+            |_daq: &str| None,
+        )
+        .await;
+        assert_eq!(status(&add), 200);
+
+        let rm = store.clone();
+        recompute_matrix(
+            bldg.clone(),
+            make_get_node(store.clone()),
+            make_list_company_formulas(store.clone()),
+            make_list_company_sensors(store.clone()),
+            make_list_company_nodes(store.clone()),
+            move |cp: String, m| {
+                rm.replace_company_matrix(&cp, m);
+                std::future::ready(Ok(()))
+            },
+        )
+        .await
+        .expect("recompute");
+
+        assert!(
+            store.weight_rows().len() > before,
+            "a new sensor must appear in the matrix"
+        );
+    }
+
+    /// Node references must point DOWN. An upward one is the cycle risk the
+    /// direct-child rule exists to prevent: the parent already sums this node.
+    #[tokio::test]
+    async fn set_node_formula_rejects_an_upward_node_reference() {
+        let store = Rc::new(Store::new());
+        let (c2, bldg, _) = seed_company_with_sensor(&store).await;
+        let out = set_formula(
+            &store,
+            &bldg.to_string(),
+            "electricity",
+            "total",
+            json!([{ "ref": c2.to_string(), "coefficient": 1.0 }]),
+        )
+        .await;
+        assert_eq!(status(&out), 400, "got {out:?}");
+    }
+
+    /// …but a genuine direct child is fine.
+    #[tokio::test]
+    async fn set_node_formula_accepts_a_direct_child_reference() {
+        let store = Rc::new(Store::new());
+        let (c2, bldg, _) = seed_company_with_sensor(&store).await;
+        let out = set_formula(
+            &store,
+            &c2.to_string(),
+            "electricity",
+            "total",
+            json!([{ "ref": bldg.to_string(), "coefficient": 0.5 }]),
+        )
+        .await;
+        assert_eq!(status(&out), 200, "got {out:?}");
+    }
+
+    #[tokio::test]
+    async fn set_node_formula_rejects_a_reserved_purpose() {
+        let store = Rc::new(Store::new());
+        let (_, bldg, sid) = seed_company_with_sensor(&store).await;
+        let out = set_formula(
+            &store,
+            &bldg.to_string(),
+            "electricity",
+            "unallocated",
+            json!([{ "ref": sid, "coefficient": 1 }]),
+        )
+        .await;
+        assert_eq!(status(&out), 400, "got {out:?}");
+    }
+
+    #[tokio::test]
+    async fn set_node_formula_rejects_malformed_terms() {
+        let store = Rc::new(Store::new());
+        let (_, bldg, _) = seed_company_with_sensor(&store).await;
+        let out = set_formula(
+            &store,
+            &bldg.to_string(),
+            "electricity",
+            "cooling",
+            json!("not-json"),
+        )
+        .await;
+        assert_eq!(status(&out), 400, "got {out:?}");
+    }
+
+    /// Deleting a formula reverts that pair to its default and rebuilds.
+    #[tokio::test]
+    async fn delete_node_formula_reverts_to_the_default() {
+        let store = Rc::new(Store::new());
+        let (_, bldg, sid) = seed_company_with_sensor(&store).await;
+        set_formula(
+            &store,
+            &bldg.to_string(),
+            "electricity",
+            "cooling",
+            json!([{ "ref": sid, "coefficient": 1 }]),
+        )
+        .await;
+        assert_eq!(store.list_node_formulas(&bldg).len(), 1);
+
+        let (df, rm) = (store.clone(), store.clone());
+        let out = handle_delete_node_formula(
+            bldg.to_string(),
+            "electricity".to_string(),
+            "cooling".to_string(),
+            make_get_node(store.clone()),
+            move |nid, et, p| {
+                df.delete_node_formula(&nid, et, p);
+                std::future::ready(Ok(()))
+            },
+            make_list_company_formulas(store.clone()),
+            make_list_company_sensors(store.clone()),
+            make_list_company_nodes(store.clone()),
+            move |cp: String, m| {
+                rm.replace_company_matrix(&cp, m);
+                std::future::ready(Ok(()))
+            },
+        )
+        .await;
+
+        assert_eq!(status(&out), 200, "got {out:?}");
+        assert!(store.list_node_formulas(&bldg).is_empty(), "formula gone");
+    }
 
     // -----------------------------------------------------------------------
     // Test: delete_sensor roundtrip — attach then delete, sensor is gone

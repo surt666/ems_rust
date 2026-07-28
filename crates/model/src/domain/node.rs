@@ -100,6 +100,26 @@ impl Node {
     }
 }
 
+/// True when `descendant` is at or below `ancestor` — segment-aware, so
+/// `HN2#9970` is not "under" `HN2#997`.
+pub fn is_at_or_under(descendant: &str, ancestor: &str) -> bool {
+    descendant == ancestor
+        || descendant.starts_with(&format!("{ancestor}{PATH_SEP}"))
+}
+
+/// The path prefix up to and including the HN2 (company) segment, **without** a
+/// trailing separator — so the company node's own path compares equal to it.
+pub fn company_prefix(path: &str) -> Option<String> {
+    let mut acc: Vec<&str> = Vec::new();
+    for seg in path.split(PATH_SEP).filter(|s| !s.is_empty()) {
+        acc.push(seg);
+        if NodeId::parse(seg).is_ok_and(|id| id.level() == Level::Hn2) {
+            return Some(acc.join(PATH_SEP));
+        }
+    }
+    None
+}
+
 /// Extract the path segment whose level matches `lvl`.
 ///
 /// Splits `path` on `|` and returns the first segment starting with `HN<depth>#`.

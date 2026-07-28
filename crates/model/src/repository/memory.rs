@@ -445,7 +445,7 @@ impl Store {
             inner
                 .nodes
                 .get(&id.to_string())
-                .is_some_and(|n| n.path.starts_with(company_path))
+                .is_some_and(|n| crate::domain::node::is_at_or_under(&n.path, company_path))
         };
         inner.formulas.iter().filter(|f| under(&f.node)).cloned().collect()
     }
@@ -456,7 +456,7 @@ impl Store {
             .borrow()
             .nodes
             .values()
-            .filter(|n| n.path.starts_with(company_path))
+            .filter(|n| crate::domain::node::is_at_or_under(&n.path, company_path))
             .cloned()
             .collect()
     }

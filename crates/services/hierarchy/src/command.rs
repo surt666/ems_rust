@@ -129,6 +129,34 @@ pub enum Command {
         user_id: String,
         node_id: String,
     },
+
+    /// `set_node_formula` — upsert a node's `(energy_type, purpose)` formula.
+    ///
+    /// `purpose = total` declares the node's own value; anything else is a
+    /// purpose claim. `terms` is a JSON array of `{ref, coefficient}`, or a
+    /// JSON-encoded string of the same — the HTML form builds it client-side to
+    /// avoid dynamic field names.
+    SetNodeFormula {
+        node_id: String,
+        energy_type: String,
+        purpose: String,
+        terms: Value,
+        #[serde(default)]
+        note: Option<String>,
+    },
+
+    /// `delete_node_formula` — remove one, reverting that pair to its default.
+    DeleteNodeFormula {
+        node_id: String,
+        energy_type: String,
+        purpose: String,
+    },
+
+    /// `rebuild_company_matrix` — recompute the materialised matrix from
+    /// scratch. The operator escape hatch when a recompute has been missed.
+    RebuildCompanyMatrix {
+        company: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -578,6 +606,71 @@ mod tests {
         let body = "action=delete_sensor&data.sensor_id=S%2310010";
         let cmd = parse_command(Some("application/x-www-form-urlencoded"), body).unwrap();
         assert!(matches!(&cmd, Command::DeleteSensor { sensor_id } if sensor_id == "S#10010"));
+    }
+
+    // ---- node formulas ------------------------------------------------------
+
+    #[test]
+    fn parse_set_node_formula_json() {
+        let json = json!({
+            "action": "set_node_formula",
+            "node_id": "HN5#5",
+            "energy_type": "electricity",
+            "purpose": "total",
+            "terms": [{"ref": "S#2", "coefficient": 0}],
+            "note": "faserne er allerede med i akkumulatoren"
+        });
+        let cmd: Command = serde_json::from_value(json).unwrap();
+        assert!(
+            matches!(&cmd, Command::SetNodeFormula { node_id, purpose, note: Some(_), .. }
+                     if node_id == "HN5#5" && purpose == "total")
+        );
+    }
+
+    /// The form path posts `terms` as a JSON-encoded string.
+    #[test]
+    fn parse_set_node_formula_form_with_encoded_terms() {
+        let body = "action=set_node_formula&data.node_id=HN4%231\
+                    &data.energy_type=electricity&data.purpose=total\
+                    &data.terms=%5B%7B%22ref%22%3A%22S%2311%22%2C%22coefficient%22%3A-1%7D%5D";
+        let cmd = parse_command(Some("application/x-www-form-urlencoded"), body).unwrap();
+        assert!(
+            matches!(&cmd, Command::SetNodeFormula { terms, .. }
+                     if terms.is_string() || terms.is_array())
+        );
+    }
+
+    /// `note` is optional — most formulas don't carry one.
+    #[test]
+    fn parse_set_node_formula_without_note() {
+        let json = json!({
+            "action": "set_node_formula",
+            "node_id": "HN4#1",
+            "energy_type": "electricity",
+            "purpose": "cooling",
+            "terms": [{"ref": "S#1", "coefficient": 1}]
+        });
+        let cmd: Command = serde_json::from_value(json).unwrap();
+        assert!(matches!(&cmd, Command::SetNodeFormula { note: None, .. }));
+    }
+
+    #[test]
+    fn parse_delete_node_formula() {
+        let body = "action=delete_node_formula&data.node_id=HN4%2330\
+                    &data.energy_type=district_heating&data.purpose=dhw";
+        let cmd = parse_command(Some("application/x-www-form-urlencoded"), body).unwrap();
+        assert!(
+            matches!(&cmd, Command::DeleteNodeFormula { purpose, .. } if purpose == "dhw")
+        );
+    }
+
+    #[test]
+    fn parse_rebuild_company_matrix() {
+        let body = "action=rebuild_company_matrix&data.company=HN2%23997";
+        let cmd = parse_command(Some("application/x-www-form-urlencoded"), body).unwrap();
+        assert!(
+            matches!(&cmd, Command::RebuildCompanyMatrix { company } if company == "HN2#997")
+        );
     }
 
     /// `update_user` with optional fields absent defaults to `None`.
