@@ -2,55 +2,51 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move consumption formulas off sensors and onto hierarchy nodes, splitting the single mis-named `purpose` axis into `energy_type` (what a sensor measures) and `purpose` (what the energy is spent on), and make the Glue roll-up evaluate those formulas.
+**Goal:** Reduce sensors to one kind that carries only what it measures, and move all combination logic onto hierarchy nodes as weighted linear formulas — while splitting the mis-named `purpose` axis into `energy_type` and `purpose`.
 
-**Architecture:** A sensor becomes a raw value carrying its `EnergyType` and, where they apply, two facts about the installation — which other sensor's reading already includes its own, and which way energy flows through it. Hierarchy nodes hold `NodeFormula` items declaring an `(energy_type, purpose)` output as weighted linear terms over their own descendants. `crates/model` owns the flattening into a weight matrix; the hierarchy service **materialises** that matrix into `hierarchy_new`, and the Glue job reads the flat rows cross-account and joins them to `logical_data`. Glue holds no formula semantics at all. Purely linear terms mean evaluation commutes with hour/day bucketing, so the roll-up keeps its single explode + groupBy shape.
+**Architecture:** A node's value is Σ of its **children's values** plus its own sensors, unless the node declares a formula overriding some of those weights. Evaluation is recursive, so a node that corrects itself is right at every ancestor automatically. Because every term is linear, `crates/model` flattens the whole recursion into a per-`(node, energy_type, purpose, sensor)` coefficient matrix, which the hierarchy service materialises into `hierarchy_new`. The Glue job reads that matrix cross-account and becomes one join plus one grouped sum, with no formula semantics in PySpark at all.
 
-**Tech Stack:** Rust (workspace: `model`, `api`, `services/hierarchy`, `services/aggregations`), maud + HTMX server-rendered HTML, DynamoDB (`hierarchy_new`, `measurements_aggregate`), Scala/Flink on MSF, Iceberg S3 Tables, PySpark on Glue, Go CDK, Astro frontend.
+**Tech Stack:** Rust (`model`, `api`, `services/hierarchy`, `services/aggregations`), maud + HTMX server-rendered HTML, DynamoDB (`hierarchy_new`, `measurements_aggregate`), Scala/Flink on MSF, Iceberg S3 Tables, PySpark on Glue, Go CDK, Astro frontend.
 
-**Spec:** `docs/superpowers/specs/2026-07-28-node-formula-rollup-design.md` — read it before starting. `docs/hierarchy-presentation.html` is a runnable model of the arithmetic; its numbers are the acceptance values used throughout this plan.
+**Spec:** `docs/superpowers/specs/2026-07-28-node-formula-rollup-design.md` — read it first. `docs/hierarchy-presentation.html` is a runnable model of the arithmetic; **its numbers are the acceptance values** used throughout this plan, and it is worth opening before starting Task 3.
 
 ## Global Constraints
 
-- Work directly on `main`. Do **not** create feature branches. Do **not** `git push` — commit locally only.
-- This is a **dev system**: rename outright, no read-fallbacks, no dual-writes, no back-compat shims. Data loss is acceptable when chosen deliberately.
-- Two AWS accounts, both `eu-central-1`: hierarchy/frontend `339712745226` (profile `stel-sb`), DAQ/pipeline `891377204778` (profile `daq_dev`).
+- Work directly on `main`. No feature branches. Do **not** `git push` — commit locally only.
+- **Dev system**: rename outright, no read-fallbacks, no dual-writes, no back-compat shims. Data loss is acceptable when chosen deliberately.
+- Accounts, both `eu-central-1`: hierarchy/frontend `339712745226` (profile `stel-sb`), DAQ/pipeline `891377204778` (profile `daq_dev`).
 - `unset GOROOT` before **every** `cdk` command. Always `cdk diff` before `cdk deploy`.
-- Never lead a chained shell command with `pkill`/`pgrep` or anything whose non-zero exit is normal — it aborts the rest of the chain under `set -e` semantics.
-- Rust: `cargo test` from the repo root must pass; `cargo clippy` must be warning-free.
-- Wire tokens are lower-case `snake_case` and are keyed verbatim into DynamoDB sort keys. `Display` is the storage contract.
-- UI is HTML-over-the-wire (HTMX). Never introduce client-side JSON rendering.
-- CSS uses **grid**, never flexbox.
-- Naming: the type is `EnergyType`, the wire token and field name is `energy_type`, the Danish UI label is *Energitype*.
-- Vocabulary: the system's inputs are **sensors** (one per device channel/register). A *meter* is a physical device, and exists in the hierarchy only as a **node type**. State every rule over sensors — an accumulating channel and its phase channels are usually registers on one device, so `contained_in` means "this sensor's reading is already included in that one's", never "this meter sits inside that meter". Three existing names are corrected in the same pass: `logical_meter_data` → **`logical_data`**, `meter-identity` → **`sensor-identity`**, `MeterType` → **`ReadingKind`**. The `/meterdata/` route prefix is deliberately left alone — it is a public URL and a bounded-context label, and belongs in its own change.
-- Roll-up sort key after this change: `<node_path>#<energy_type>#<purpose>#<gran>#<bucket>`. GSI: `gsi1pk = HN2#<id>#<dimension>#<purpose>`, `gsi1sk = <node_path>#<gran>#<bucket>`.
+- Never lead a chained shell command with `pkill`/`pgrep` or anything whose non-zero exit is normal — it aborts the rest of the chain.
+- Rust: `cargo test` from the repo root must pass; `cargo clippy` warning-free.
+- Wire tokens are lower-case `snake_case`, keyed verbatim into DynamoDB sort keys. `Display` is the storage contract.
+- UI is HTML-over-the-wire (HTMX); never client-side JSON rendering. CSS uses **grid**, never flexbox.
+- **Vocabulary:** the inputs are **sensors** (one per device channel/register). A *meter* is a physical device and exists in the hierarchy only as a **node type**. State every rule over sensors.
+- Renames in this change: `Resource` → `EnergyType`, `MeterType` → `ReadingKind`, `logical_meter_data` → `logical_data`, `meter-identity` → `sensor-identity`, `MeterMapping` → `SensorMapping`. The `/meterdata/` route prefix is deliberately **not** renamed.
+- Roll-up sort key: `<node_path>#<energy_type>#<purpose>#<gran>#<bucket>`; GSI `gsi1pk = HN2#<id>#<dimension>#<purpose>`, `gsi1sk = <node_path>#<gran>#<bucket>`.
 
 ---
 
 # Phase 1 — Domain + hierarchy service
 
-Ships independently: formulas can be authored, validated, listed, rendered, and flattened into the materialised matrix. Nothing downstream reads them yet.
+Ships independently: formulas can be authored, validated, flattened and materialised. Nothing downstream reads them yet.
 
 ---
 
-### Task 1: `EnergyType` rename and the `Purpose` value type
+### Task 1: `EnergyType`, `ReadingKind`, `Purpose`
 
 **Files:**
-- Modify: `crates/model/src/domain/values.rs` (the `Resource` block at ~lines 226-298, the `MeterType` block at ~lines 211-222, plus its `mod tests` section)
-- Modify: every `Resource` reference the compiler flags across `crates/`
+- Modify: `crates/model/src/domain/values.rs` (`Resource` block ~226-298, `MeterType` block ~211-222, and `mod tests`)
+- Modify: every `Resource` / `MeterType` reference the compiler flags
 
 **Interfaces:**
-- Produces: `EnergyType` (renamed from `Resource`, same six variants and wire tokens, same `dimension()`); `ReadingKind` (renamed from `MeterType`, same `counter`/`gauge` tokens; the field becomes `Sensor.reading_kind`); `Purpose` with `as_str() -> &'static str`, `all() -> impl Iterator<Item = Purpose>`, `declarable() -> bool`, `is_outflow() -> bool`
+- Produces: `EnergyType` (was `Resource`; same six variants, tokens and `dimension()`), `ReadingKind` (was `MeterType`; same `counter`/`gauge` tokens), and `Purpose` with `as_str()`, `all()`, `declarable()`, `is_outflow()`
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to the `mod tests` block in `crates/model/src/domain/values.rs`:
+Add to `mod tests` in `crates/model/src/domain/values.rs`:
 
 ```rust
-    // ---- Purpose ------------------------------------------------------------
-
-    /// `Display` emits the exact lower-case wire token for every variant — the
-    /// `measurements_aggregate` sort-key contract — and round-trips via parse.
+    /// Wire tokens are the `measurements_aggregate` sort-key contract.
     #[test]
     fn purpose_wire_tokens_round_trip() {
         for p in Purpose::iter() {
@@ -58,46 +54,36 @@ Add to the `mod tests` block in `crates/model/src/domain/values.rs`:
         }
         assert_eq!(Purpose::SpaceHeating.to_string(), "space_heating");
         assert_eq!(Purpose::Dhw.to_string(), "dhw");
-        assert_eq!(Purpose::PlugLoads.to_string(), "plug_loads");
-        assert_eq!(Purpose::Unallocated.to_string(), "unallocated");
+        assert_eq!(Purpose::Total.to_string(), "total");
     }
 
-    /// `total` and `unallocated` are emitted by the roll-up job. Neither may be
-    /// declared on a formula — nesting is a fact on the sensor, not an override.
+    /// `Total` IS the node's own formula, so it must be declarable. Only
+    /// `Unallocated` is job-derived.
     #[test]
-    fn reserved_purposes_are_not_declarable() {
-        assert!(!Purpose::Total.declarable());
+    fn total_is_declarable_unallocated_is_not() {
+        assert!(Purpose::Total.declarable());
         assert!(!Purpose::Unallocated.declarable());
-        assert!(Purpose::Dhw.declarable());
         assert!(Purpose::Generation.declarable());
     }
 
-    /// Generation is an outflow — its claims are removed from `total`, not added.
+    /// Generation reports exported energy; it never reduces Unallocated.
     #[test]
     fn purpose_outflow() {
         assert!(Purpose::Generation.is_outflow());
         assert!(!Purpose::Cooling.is_outflow());
+        assert!(!Purpose::Total.is_outflow());
     }
 
-    /// `Counter`/`Gauge` is not a kind of *thing* — it is how a sensor's readings
-    /// accumulate. `SensorType` would repeat the `Resource` mistake, so the type
-    /// is named for what it describes.
+    /// Both renames keep their wire contracts exactly.
     #[test]
-    fn reading_kind_keeps_the_meter_type_wire_contract() {
-        assert_eq!(ReadingKind::Counter.to_string(), "counter");
-        assert_eq!(ReadingKind::Gauge.to_string(), "gauge");
-        assert_eq!("counter".parse::<ReadingKind>().unwrap(), ReadingKind::Counter);
-    }
-
-    /// The rename is a rename: same tokens, same dimensions, new type name.
-    #[test]
-    fn energy_type_keeps_the_resource_wire_contract() {
+    fn renames_keep_their_wire_contracts() {
         for e in EnergyType::iter() {
             assert_eq!(e.to_string().parse::<EnergyType>().unwrap(), e);
         }
         assert_eq!(EnergyType::DistrictHeating.to_string(), "district_heating");
-        assert_eq!(EnergyType::Electricity.dimension(), Dimension::Energy);
         assert_eq!(EnergyType::Water.dimension(), Dimension::Volume);
+        assert_eq!(ReadingKind::Counter.to_string(), "counter");
+        assert_eq!("gauge".parse::<ReadingKind>().unwrap(), ReadingKind::Gauge);
     }
 ```
 
@@ -106,91 +92,52 @@ Add to the `mod tests` block in `crates/model/src/domain/values.rs`:
 Run: `cargo test -p model purpose_ 2>&1 | tail -20`
 Expected: FAIL — `cannot find type Purpose in this scope`.
 
-- [ ] **Step 3: Rename `Resource` → `EnergyType` and `MeterType` → `ReadingKind`**
+- [ ] **Step 3: Rename both types**
 
-Rename both types and every use of them. `Sensor.meter_type` becomes `Sensor.reading_kind` and its DynamoDB attribute follows; the `counter`/`gauge` tokens are unchanged, so no stored value moves. **Do not blind-`sed`** — `resource` appears in unrelated contexts (`RepositoryError`, CDK `Resources:`, `boto3.resource`). Rename in `crates/model/src/domain/values.rs` first, then let `cargo build` point at each call site:
-
-```bash
-cargo build 2>&1 | grep -E '^error' | head -40
-```
-
-Rename the DynamoDB attribute, the JSON field and the query parameter from `purpose` to `energy_type` wherever they carry the energy type (sensor codec, `json.rs`, `html/forms.rs`, `command.rs`, `query.rs`, `dispatch.rs`).
+Rename `Resource` → `EnergyType` and `MeterType` → `ReadingKind` in `values.rs`, then let `cargo build` point at every call site. `Sensor.meter_type` becomes `Sensor.reading_kind`; the DynamoDB attribute follows. **Do not blind-`sed`** — `resource` appears in `RepositoryError`, CDK `Resources:` and `boto3.resource`.
 
 - [ ] **Step 4: Implement `Purpose`**
 
-Insert into `crates/model/src/domain/values.rs` immediately after the `impl EnergyType { … }` block:
+Insert after the `impl EnergyType` block:
 
 ```rust
-// ---------------------------------------------------------------------------
-// Purpose
-// ---------------------------------------------------------------------------
-
-/// The **formål** — what the energy is spent on. Independent of [`EnergyType`]
-/// (the energitype a sensor physically measures): electricity serves lighting,
-/// cooling and ventilation alike, and space heating can arrive as district
-/// heating, gas or a heat pump. The taxonomy follows Energihåndbogen 2019's
-/// chapters.
-///
-/// The string form (`strum` serialize, always lower-case) is the wire/storage
-/// contract: it is the `<purpose>` segment of the `measurements_aggregate` sort
-/// key and of the `formula#<energy_type>#<purpose>` key in `hierarchy_new`.
+/// The **formål** — what the energy is spent on. Independent of [`EnergyType`]:
+/// electricity serves lighting, cooling and ventilation alike, and space heating
+/// can arrive as district heating, gas or a heat pump. Taxonomy follows
+/// Energihåndbogen 2019's chapters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq,
          strum::Display, strum::EnumString, EnumIter, strum::IntoStaticStr)]
 #[strum(ascii_case_insensitive)]
 pub enum Purpose {
-    #[strum(serialize = "space_heating")]
-    SpaceHeating,
-    #[strum(serialize = "dhw")]
-    Dhw,
-    #[strum(serialize = "ventilation")]
-    Ventilation,
-    #[strum(serialize = "cooling")]
-    Cooling,
-    #[strum(serialize = "lighting")]
-    Lighting,
-    #[strum(serialize = "plug_loads")]
-    PlugLoads,
-    #[strum(serialize = "ev_charging")]
-    EvCharging,
-    #[strum(serialize = "process")]
-    Process,
-    #[strum(serialize = "common")]
-    Common,
-    /// Egenproduktion (PV export). An **outflow**: removed from `Total` at every
-    /// level, so tariffs and emission factors never bill exported energy.
-    #[strum(serialize = "generation")]
-    Generation,
-    /// The default Σ series, emitted by the roll-up job. Not declarable —
-    /// overlapping readings and flow direction are recorded on the sensor
-    /// (`contained_in`, `flow`), not as per-node overrides.
-    #[strum(serialize = "total")]
-    Total,
-    /// `total − Σ(claimed)`. Emitted by the roll-up job; never declarable.
-    #[strum(serialize = "unallocated")]
-    Unallocated,
+    #[strum(serialize = "space_heating")] SpaceHeating,
+    #[strum(serialize = "dhw")] Dhw,
+    #[strum(serialize = "ventilation")] Ventilation,
+    #[strum(serialize = "cooling")] Cooling,
+    #[strum(serialize = "lighting")] Lighting,
+    #[strum(serialize = "plug_loads")] PlugLoads,
+    #[strum(serialize = "ev_charging")] EvCharging,
+    #[strum(serialize = "process")] Process,
+    #[strum(serialize = "common")] Common,
+    /// Egenproduktion (PV export). Reported, but never reduces `Unallocated` —
+    /// exported energy is not a slice of consumption.
+    #[strum(serialize = "generation")] Generation,
+    /// The node's own value. Declarable: a formula with this head **is** the
+    /// node's formula. Defaults to Σ children + own sensors.
+    #[strum(serialize = "total")] Total,
+    /// `Total − Σ(allocating purposes)`. Derived by the roll-up; never declarable.
+    #[strum(serialize = "unallocated")] Unallocated,
 }
 
 impl Purpose {
-    /// The canonical lower-case wire token (zero-alloc).
-    pub fn as_str(self) -> &'static str {
-        self.into()
-    }
-
-    /// Every purpose, in declaration order.
-    pub fn all() -> impl Iterator<Item = Purpose> {
-        Purpose::iter()
-    }
+    pub fn as_str(self) -> &'static str { self.into() }
+    pub fn all() -> impl Iterator<Item = Purpose> { Purpose::iter() }
 
     /// Whether a node formula may declare this purpose as its output.
-    pub const fn declarable(self) -> bool {
-        !matches!(self, Purpose::Total | Purpose::Unallocated)
-    }
+    pub const fn declarable(self) -> bool { !matches!(self, Purpose::Unallocated) }
 
     /// Whether claims of this purpose leave the site rather than being consumed
-    /// on it — such sensors contribute 0 to `Total` everywhere.
-    pub const fn is_outflow(self) -> bool {
-        matches!(self, Purpose::Generation)
-    }
+    /// on it — such claims never reduce `Unallocated`.
+    pub const fn is_outflow(self) -> bool { matches!(self, Purpose::Generation) }
 }
 ```
 
@@ -208,31 +155,25 @@ git commit -m "feat(model)!: Resource -> EnergyType, MeterType -> ReadingKind; a
 
 ---
 
-### Task 2: Node-formula types, sensor containment, delete sensor formulas
+### Task 2: Node-formula types; the sensor becomes bare
 
 **Files:**
 - Create: `crates/model/src/domain/node_formula.rs`
 - Delete: `crates/model/src/domain/formula.rs`
-- Modify: `crates/model/src/domain/mod.rs`, `crates/model/src/domain/sensor.rs:28-29`
-- Modify: `crates/model/src/repository/dynamodb/codec.rs` (sensor item: drop `formula`, add `contained_in`)
-- Modify: `crates/model/src/logic/sensors.rs` (delete `walk_refs_sync`, `has_cycle`, `set_formula`, `evaluate`; drop `formula` from `attach`, add `contained_in`)
-- Test: `crates/model/src/domain/node_formula.rs` (inline `mod tests`)
+- Modify: `crates/model/src/domain/mod.rs`, `crates/model/src/domain/sensor.rs`
+- Modify: `crates/model/src/repository/dynamodb/codec.rs`, `crates/model/src/logic/sensors.rs`
 
 **Interfaces:**
-- Consumes: `Purpose`, `EnergyType` (Task 1), `NodeId`, `SensorId`
 - Produces:
-  - `Reference` — `enum { Sensor(SensorId), Node(NodeId) }`, with `Reference::parse(&str) -> Result<Reference, String>` and `Display`
+  - `Reference { Sensor(SensorId), Node(NodeId) }` with `parse(&str)` and `Display`
   - `Term { reference: Reference, coefficient: f64 }`
-  - `NodeFormula { node: NodeId, energy_type: EnergyType, purpose: Purpose, terms: Vec<Term>, note: Option<String> }`
-  - `NodeFormula::sk(&self) -> String` → `"formula#<energy_type>#<purpose>"`
-  - `Flow` — `enum { In, Out }`, `Default = In`, wire tokens `"in"` / `"out"` — the direction energy flows through a **sensor** (one register), not through a device
-  - `Sensor.contained_in: Option<SensorId>`, `Sensor.flow: Flow`; `Sensor.formula` no longer exists
-  - `sensor::parent_path(&Sensor) -> &str` — the sensor's path minus its trailing `|S#<id>` segment
-  - `sensors::attach` loses `formula: Formula`, gains `contained_in: Option<SensorId>` and `flow: Flow`
+  - `NodeFormula { node, energy_type, purpose, terms, note }` with `sk() -> "formula#<energy_type>#<purpose>"`
+  - `sensor::parent_path(&Sensor) -> &str`
+  - `Sensor` with **no** `formula` — only `id, created, daq_id, path, energy_type, reading_kind, unit, resample_minutes`
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `crates/model/src/domain/node_formula.rs` containing only the test module:
+Create `crates/model/src/domain/node_formula.rs` with only its test module:
 
 ```rust
 #[cfg(test)]
@@ -242,14 +183,10 @@ mod tests {
 
     #[test]
     fn reference_parses_sensors_and_nodes() {
-        assert_eq!(
-            Reference::parse("S#20001").unwrap(),
-            Reference::Sensor(SensorId::make(20001))
-        );
-        assert_eq!(
-            Reference::parse("HN5#10042").unwrap(),
-            Reference::Node(NodeId::make(Level::Hn5, 10042))
-        );
+        assert_eq!(Reference::parse("S#20001").unwrap(),
+                   Reference::Sensor(SensorId::make(20001)));
+        assert_eq!(Reference::parse("HN5#10042").unwrap(),
+                   Reference::Node(NodeId::make(Level::Hn5, 10042)));
         assert!(Reference::parse("nonsense").is_err());
     }
 
@@ -260,7 +197,6 @@ mod tests {
         }
     }
 
-    /// The sort key is the storage contract for a formula item.
     #[test]
     fn formula_sk_is_energy_type_then_purpose() {
         let f = NodeFormula {
@@ -273,21 +209,21 @@ mod tests {
         assert_eq!(f.sk(), "formula#district_heating#space_heating");
     }
 
-    /// The bimåler case from Energihåndbogen: DHW metered, space heating = main − DHW.
+    /// A node's own formula is a `Total` formula — the same shape, not a special case.
     #[test]
-    fn terms_carry_signed_coefficients() {
+    fn a_total_formula_is_an_ordinary_formula() {
         let f = NodeFormula {
-            node: NodeId::make(Level::Hn4, 30),
-            energy_type: EnergyType::DistrictHeating,
-            purpose: Purpose::SpaceHeating,
-            terms: vec![
-                Term { reference: Reference::Sensor(SensorId::make(1)), coefficient: 1.0 },
-                Term { reference: Reference::Sensor(SensorId::make(2)), coefficient: -1.0 },
-            ],
-            note: Some("bimåler, jf. bygningsreglementet".to_string()),
+            node: NodeId::make(Level::Hn5, 5),
+            energy_type: EnergyType::Electricity,
+            purpose: Purpose::Total,
+            terms: vec![Term {
+                reference: Reference::Sensor(SensorId::make(2)),
+                coefficient: 0.0,
+            }],
+            note: Some("faserne er allerede med i akkumulatoren".to_string()),
         };
-        assert_eq!(f.terms.len(), 2);
-        assert_eq!(f.terms[1].coefficient, -1.0);
+        assert_eq!(f.sk(), "formula#electricity#total");
+        assert_eq!(f.terms[0].coefficient, 0.0);
     }
 }
 ```
@@ -295,55 +231,36 @@ mod tests {
 Add to `mod tests` in `crates/model/src/domain/sensor.rs`:
 
 ```rust
-    /// The node a sensor hangs off — its path minus the trailing sensor segment.
-    /// Containment and claim propagation both key off this.
+    /// The node a sensor hangs off — its path minus the trailing `|S#<id>`.
     #[test]
     fn parent_path_strips_the_sensor_segment() {
-        let s = make_sample();
-        assert_eq!(parent_path(&s), "HN0#root|HN5#10042");
-    }
-
-    /// Both installation facts default to the common case: not covered, flowing in.
-    #[test]
-    fn installation_facts_default_to_the_common_case() {
-        let s = make_sample();
-        assert_eq!(s.contained_in, None);
-        assert_eq!(s.flow, Flow::In);
-    }
-
-    /// `flow` is stored as a wire token like every other enum here.
-    #[test]
-    fn flow_wire_tokens_round_trip() {
-        assert_eq!(Flow::In.to_string(), "in");
-        assert_eq!(Flow::Out.to_string(), "out");
-        assert_eq!("out".parse::<Flow>().unwrap(), Flow::Out);
+        assert_eq!(parent_path(&make_sample()), "HN0#root|HN5#10042");
     }
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test -p model node_formula 2>&1 | tail -20`
-Expected: FAIL — the module is not declared in `domain/mod.rs`, then `cannot find type Reference`.
+Expected: FAIL — module not declared, then `cannot find type Reference`.
 
 - [ ] **Step 3: Implement the types**
 
-Prepend to `crates/model/src/domain/node_formula.rs` (above the test module):
+Prepend to `crates/model/src/domain/node_formula.rs`:
 
 ```rust
-//! Node formulas — the replacement for the deleted per-sensor `Formula`.
+//! Node formulas. There is one kind of sensor, carrying only what it measures;
+//! everything about how readings combine lives here, on the node.
 //!
-//! A node declares an `(energy_type, purpose)` output as a weighted linear
-//! combination of **its own descendants**. Terms store only what differs from
-//! the default weight of 1, so attaching a sensor always moves the numbers and
-//! nothing is silently dropped.
+//! A node's value is Σ everything below it, unless the node says otherwise. A
+//! formula lists only the terms whose weight differs from the default 1.
 
 use std::fmt;
 
 use crate::domain::ids::{NodeId, SensorId};
 use crate::domain::values::{EnergyType, Purpose};
 
-/// What a term points at: a sensor, or a child node's result for the same
-/// energy type.
+/// What a term points at. Sensors may be anywhere in the company; nodes must be
+/// direct children of the declaring node (see `logic::formulas`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reference {
     Sensor(SensorId),
@@ -351,7 +268,6 @@ pub enum Reference {
 }
 
 impl Reference {
-    /// Parse `"S#<n>"` as a sensor, anything else as a node id.
     pub fn parse(s: &str) -> Result<Reference, String> {
         if s.starts_with("S#") {
             SensorId::parse(s).map(Reference::Sensor)
@@ -370,16 +286,17 @@ impl fmt::Display for Reference {
     }
 }
 
-/// One weighted term. `coefficient` covers every case the model supports:
-/// include = 1, subtract = −1, apportion = 0.28, COP = 3.2,
-/// brændværdi × virkningsgrad = 10.45.
+/// One weighted term. The coefficient covers every case the model supports:
+/// exclude 0, include 1, subtract −1, apportion 0.28, COP 3.2,
+/// brændværdi × virkningsgrad 10.45.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Term {
     pub reference: Reference,
     pub coefficient: f64,
 }
 
-/// A node's declared output series.
+/// A node's declared output for one `(energy_type, purpose)`. `purpose = Total`
+/// is the node's own value; anything else is a purpose claim.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeFormula {
     pub node: NodeId,
@@ -397,55 +314,15 @@ impl NodeFormula {
 }
 ```
 
-In `crates/model/src/domain/mod.rs`, replace `pub mod formula;` with `pub mod node_formula;`.
+Replace `pub mod formula;` with `pub mod node_formula;` in `domain/mod.rs`.
 
-- [ ] **Step 4: Add the two installation facts to `Sensor`**
+- [ ] **Step 4: Strip the sensor**
 
-Neither is inferable from the channel — a survey of the live `raw_data` corpus found channel names to be opaque (`a04` spans 42 330 devices; `volume` carries `kWh` while `energy` carries `J`; nothing in the corpus encodes direction). Both are entered at onboarding.
-
-In `crates/model/src/domain/values.rs`, add:
-
-```rust
-/// Which way energy flows through a sensor. Import, production and submeter
-/// channels are `In`; grid export and PV feed-in are `Out` and contribute
-/// negatively to `total`, which is therefore the net energy across a node's
-/// boundary. A bidirectional device exposes both as separate sensors (OBIS
-/// 1.8.0 and 2.8.0), so this is a per-channel fact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default,
-         strum::Display, strum::EnumString, EnumIter)]
-#[strum(ascii_case_insensitive)]
-pub enum Flow {
-    #[default]
-    #[strum(serialize = "in")]
-    In,
-    #[strum(serialize = "out")]
-    Out,
-}
-```
-
-In `crates/model/src/domain/sensor.rs`, delete the `use crate::domain::formula::Formula;` import and the two `formula` struct lines, then add:
-
-```rust
-    /// The sensor whose reading already includes this one's, if any — an
-    /// accumulating channel over its phase channels (usually the same device),
-    /// or a main heat sensor over a DHW submeter (a different one). A covered
-    /// sensor contributes 0 to `total` at any node where its container is also
-    /// present, and its own weight where it is not — see `logic::formulas`.
-    #[builder(default)]
-    pub contained_in: Option<SensorId>,
-
-    /// Direction of flow. `Out` sensors (grid export, PV feed-in) contribute −1.
-    /// Import and export are always separate sensors, so the sign has to live
-    /// somewhere; on the sensor it is said once and is correct at every level.
-    #[builder(default)]
-    pub flow: Flow,
-```
-
-and, next to `parent_id`:
+In `crates/model/src/domain/sensor.rs`, delete the `Formula` import and the two `formula` struct lines, then add next to `parent_id`:
 
 ```rust
 /// The path of the node a sensor hangs off — its own path minus the trailing
-/// `|S#<id>` segment. Containment and claim propagation are both keyed by this.
+/// `|S#<id>` segment.
 pub fn parent_path(s: &Sensor) -> &str {
     match s.path.rfind(PATH_SEP) {
         Some(i) => &s.path[..i],
@@ -454,58 +331,44 @@ pub fn parent_path(s: &Sensor) -> &str {
 }
 ```
 
-- [ ] **Step 5: Delete the sensor-formula machinery**
+Then: `rm crates/model/src/domain/formula.rs`; delete `walk_refs_sync`, `has_cycle`, `set_formula` and `evaluate` from `logic/sensors.rs` along with `attach`'s formula parameter and its post-allocation cycle check and rollback; drop the `formula` attribute from the sensor codec; and fix the fallout in `crates/services/hierarchy` (Task 7 rewrites the UI properly — here just delete the plumbing).
 
-1. `rm crates/model/src/domain/formula.rs`
-2. In `crates/model/src/logic/sensors.rs`: delete `walk_refs_sync`, `has_cycle`, `set_formula` and `evaluate` (and their tests); remove the `formula: Formula` parameter from `attach` and the post-allocation cycle check plus its rollback; add a `contained_in: Option<SensorId>` parameter.
-3. In `crates/model/src/repository/dynamodb/codec.rs`: drop the `formula` attribute from `sensor_to_item`/`sensor_of_item`, and add the optional `contained_in` attribute (stored as `S`, e.g. `"S#12"`).
-4. Fix the fallout the compiler points at in `crates/services/hierarchy` — Task 7 rewrites the UI properly; here just delete the formula plumbing so the workspace builds.
-
-Run: `cargo build 2>&1 | tail -30`
-Expected: clean build.
-
-- [ ] **Step 6: Run the full test suite**
+- [ ] **Step 5: Verify**
 
 Run: `cargo test 2>&1 | tail -30`
-Expected: PASS. Any test still referencing `Formula` should be deleted, not adapted — sensor formulas are gone.
+Expected: PASS. Delete any test still referencing `Formula` rather than adapting it.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add -A crates/
-git commit -m "feat(model)!: node-formula types + Sensor.contained_in; delete sensor formulas"
+git commit -m "feat(model)!: node-formula types; the sensor carries only what it measures"
 ```
 
 ---
 
-### Task 3: Flattening — `logic/formulas.rs`
+### Task 3: Recursive evaluation and flattening
 
 **Files:**
 - Create: `crates/model/src/logic/formulas.rs`
-- Modify: `crates/model/src/logic/mod.rs` (add `pub mod formulas;`)
-- Test: `crates/model/src/logic/formulas.rs` (inline `mod tests`)
+- Modify: `crates/model/src/logic/mod.rs`
 
 **Interfaces:**
-- Consumes: `NodeFormula`, `Term`, `Reference`, `parent_path` (Task 2), `Purpose`, `EnergyType` (Task 1)
 - Produces:
-  - `CompanyGraph { nodes: Vec<Node>, sensors: Vec<Sensor>, formulas: Vec<NodeFormula> }`
-  - `Claim { declaring_node: String, energy_type: EnergyType, purpose: Purpose, sensor: SensorId, coefficient: f64, derived: bool }`
-  - `TotalOverride { node_path: String, energy_type: EnergyType, sensor: SensorId, coefficient: f64 }`
-  - `Matrix { claims: Vec<Claim>, total_overrides: Vec<TotalOverride> }`
-  - `flatten(&CompanyGraph) -> Matrix`
-  - `total_weight_at(&CompanyGraph, &Sensor, node_path: &str) -> f64`
+  - `CompanyGraph { nodes, sensors, formulas }` with `children`, `own_sensors`, `node_path`, `sensor`
+  - `MatrixRow { node_path, energy_type, purpose, sensor, coefficient, allocates }`
+  - `coeffs(&CompanyGraph, &NodeId, EnergyType, Purpose) -> BTreeMap<SensorId, f64>`
   - `is_derived(&CompanyGraph, &NodeFormula) -> bool`
+  - `flatten(&CompanyGraph) -> Vec<MatrixRow>`
 
-**Semantics being implemented (spec §3.4–§3.8):**
-- A term referencing a **sensor** emits one claim.
-- A term referencing a **node** expands to every sensor under that node whose `energy_type` equals the formula's, each at `coefficient × total_weight_at(sensor, that node's path)`.
-- `total_weight_at(s, N)` = 0 if `s.contained_in` is a sensor present under `N`; else −1 if `s.flow == Flow::Out`; else 1. So `total` is the **net energy across the node's boundary**.
-- `total_overrides` is an **exception list**: only `(node, sensor)` pairs whose weight is not 1. Overlap contributes a **0** row per ancestor-or-self path of the *container's* node; `Flow::Out` contributes a **−1** row per ancestor-or-self path of the *sensor's own* node.
-- `is_derived(f)` = any referenced **sensor**'s energy type differs from the formula's output. Node references never make a formula derived.
+**The two defaults (spec §3.5) — get these exactly right:**
+- `Total`: every **child node** and every **own sensor of that energy type** default to weight 1.
+- A named **purpose**: every **child node** defaults to 1; **sensors count only if named**.
+- `Unallocated` = `Total − Σ(allocating purposes)`, where a purpose allocates when it is neither derived nor an outflow.
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `crates/model/src/logic/formulas.rs` with only the test module:
+Create `crates/model/src/logic/formulas.rs` with only its test module. The fixtures come from `docs/hierarchy-presentation.html`, so the expected numbers are the demo's verified ones:
 
 ```rust
 #[cfg(test)]
@@ -513,277 +376,221 @@ mod tests {
     use super::*;
     use crate::domain::ids::Level;
     use crate::domain::node::Node;
+    use crate::domain::node_formula::Term;
     use crate::domain::sensor::Sensor;
     use crate::domain::values::ReadingKind;
 
     const CO: &str = "HN0#root|HN2#997";
 
-    fn node(level: Level, id: u32, path: &str) -> Node {
+    fn node(level: Level, id: u32, parent: Option<(Level, u32)>, path: &str) -> Node {
         Node::builder()
             .id(NodeId::make(level, id))
             .name(format!("n{id}"))
+            .parent(parent.map(|(l, i)| NodeId::make(l, i)))
             .path(path.to_string())
             .build()
     }
 
-    fn sensor(id: u32, node_path: &str, et: EnergyType, inside: Option<u32>) -> Sensor {
+    fn sensor(id: u32, node_path: &str, et: EnergyType) -> Sensor {
         Sensor::builder()
             .id(SensorId::make(id))
             .daq_id(format!("daq{id}"))
             .path(format!("{node_path}|S#{id}"))
             .energy_type(et)
             .reading_kind(ReadingKind::Counter)
-            .contained_in(inside.map(SensorId::make))
             .build()
     }
 
-    /// A sensor energy flows OUT through — grid export, PV feed-in.
-    fn out_sensor(id: u32, node_path: &str, et: EnergyType) -> Sensor {
-        Sensor { flow: Flow::Out, ..sensor(id, node_path, et, None) }
-    }
-
-    fn term(r: Reference, c: f64) -> Term {
-        Term { reference: r, coefficient: c }
-    }
-
-    /// The chiller from the presentation: one device exposing an accumulating
-    /// channel (S#1) and two per-phase channels, all on ONE node. The hierarchy
-    /// has no meters inside meters — a node's type comes from the company schema
-    /// (property → building → area → meter here), and channels of one device
-    /// never span nodes.
-    fn chiller_graph() -> CompanyGraph {
-        let chill = format!("{CO}|HN5#5");
-        CompanyGraph {
-            nodes: vec![node(Level::Hn2, 997, CO), node(Level::Hn5, 5, &chill)],
-            sensors: vec![
-                sensor(1, &chill, EnergyType::Electricity, None),
-                sensor(2, &chill, EnergyType::Electricity, Some(1)),
-                sensor(3, &chill, EnergyType::Electricity, Some(1)),
-            ],
-            formulas: vec![NodeFormula {
-                node: NodeId::make(Level::Hn5, 5),
-                energy_type: EnergyType::Electricity,
-                purpose: Purpose::Cooling,
-                terms: vec![term(Reference::Sensor(SensorId::make(1)), 1.0)],
-                note: None,
-            }],
+    fn f(node: (Level, u32), et: EnergyType, pur: Purpose,
+         terms: &[(&str, f64)]) -> NodeFormula {
+        NodeFormula {
+            node: NodeId::make(node.0, node.1),
+            energy_type: et,
+            purpose: pur,
+            terms: terms.iter()
+                .map(|(r, c)| Term {
+                    reference: Reference::parse(r).unwrap(), coefficient: *c })
+                .collect(),
+            note: None,
         }
     }
 
-    fn sens(g: &CompanyGraph, id: u32) -> Sensor {
-        g.sensors.iter().find(|s| s.id == SensorId::make(id)).unwrap().clone()
+    /// Evaluate the flattened coefficients against a reading set.
+    fn value(g: &CompanyGraph, n: (Level, u32), et: EnergyType, pur: Purpose,
+             readings: &[(u32, f64)]) -> f64 {
+        coeffs(g, &NodeId::make(n.0, n.1), et, pur).iter()
+            .map(|(s, c)| c * readings.iter()
+                .find(|(id, _)| *id == s.id()).map_or(0.0, |(_, v)| *v))
+            .sum()
     }
 
-    #[test]
-    fn uncontained_sensors_weigh_one() {
-        let g = chiller_graph();
-        assert_eq!(total_weight_at(&g, &sens(&g, 1), &format!("{CO}|HN5#5")), 1.0);
-    }
-
-    /// Channels of one device sit on one node, so the covering channel is always
-    /// present: the phases weigh 0 at the chiller and everywhere above.
-    #[test]
-    fn covered_channels_on_the_same_node_weigh_zero() {
-        let g = chiller_graph();
+    /// The chiller: one device, an accumulating channel (S#1) and three phase
+    /// channels, all on one node. The formula zeroes the phases.
+    fn chiller() -> (CompanyGraph, Vec<(u32, f64)>) {
         let chill = format!("{CO}|HN5#5");
-        for id in [2u32, 3] {
-            for path in [chill.as_str(), CO] {
-                assert_eq!(total_weight_at(&g, &sens(&g, id), path), 0.0,
-                           "phase {id} is already covered by the accumulator at {path}");
-            }
-        }
-    }
-
-    /// Overlap is RELATIONAL, and the natural case is tenant submetering: a
-    /// building's main electricity sensor covers a shop's submeter one level
-    /// down. The shop's own area legitimately reports what the shop used; the
-    /// building counts that energy once, via the main. Both answers are correct.
-    #[test]
-    fn covered_sensor_counts_below_its_container_and_not_at_or_above() {
-        let bld = format!("{CO}|HN4#4");
-        let shop = format!("{bld}|HN5#41");
         let g = CompanyGraph {
             nodes: vec![
-                node(Level::Hn2, 997, CO),
-                node(Level::Hn4, 4, &bld),
-                node(Level::Hn5, 41, &shop),
+                node(Level::Hn2, 997, None, CO),
+                node(Level::Hn5, 5, Some((Level::Hn2, 997)), &chill),
             ],
-            sensors: vec![
-                sensor(40, &bld, EnergyType::Electricity, None),       // building main
-                sensor(41, &shop, EnergyType::Electricity, Some(40)),  // tenant submeter
+            sensors: (1..=4).map(|i| sensor(i, &chill, EnergyType::Electricity)).collect(),
+            formulas: vec![
+                f((Level::Hn5, 5), EnergyType::Electricity, Purpose::Total,
+                  &[("S#2", 0.0), ("S#3", 0.0), ("S#4", 0.0)]),
+                f((Level::Hn5, 5), EnergyType::Electricity, Purpose::Cooling, &[("S#1", 1.0)]),
             ],
-            formulas: vec![],
         };
-        assert_eq!(total_weight_at(&g, &sens(&g, 41), &shop), 1.0,
-                   "the shop's own area reports the shop's use");
-        for path in [bld.as_str(), CO] {
-            assert_eq!(total_weight_at(&g, &sens(&g, 41), path), 0.0,
-                       "counted once via the main at {path}");
-            assert_eq!(total_weight_at(&g, &sens(&g, 40), path), 1.0, "the main itself");
-        }
-    }
-
-    /// A PV site: import, production and export are three separate sensors.
-    /// Direction is ABSOLUTE — an `Out` sensor is negative at every level.
-    fn pv_graph(with_production: bool) -> CompanyGraph {
-        let area = format!("{CO}|HN5#7");
-        let mut sensors = vec![
-            sensor(10, &area, EnergyType::Electricity, None), // import  50
-            out_sensor(12, &area, EnergyType::Electricity),   // export  30
-        ];
-        if with_production {
-            sensors.push(sensor(11, &area, EnergyType::Electricity, None)); // production 100
-        }
-        CompanyGraph {
-            nodes: vec![node(Level::Hn2, 997, CO), node(Level::Hn5, 7, &area)],
-            sensors,
-            formulas: vec![],
-        }
+        (g, vec![(1, 40.0), (2, 13.0), (3, 14.0), (4, 13.0)])
     }
 
     #[test]
-    fn flow_out_is_negative_at_every_level() {
-        let g = pv_graph(true);
-        for path in [format!("{CO}|HN5#7").as_str(), CO] {
-            assert_eq!(total_weight_at(&g, &sens(&g, 10), path), 1.0, "import");
-            assert_eq!(total_weight_at(&g, &sens(&g, 11), path), 1.0, "production");
-            assert_eq!(total_weight_at(&g, &sens(&g, 12), path), -1.0, "export");
-        }
-    }
-
-    /// Signed Σ gives the right answer for BOTH metering setups: true consumption
-    /// when production is metered (50 + 100 − 30), the net grid position when it
-    /// is not (50 − 30). Zeroing the export sensor would give 150 and 50.
-    #[test]
-    fn signed_total_handles_both_pv_setups() {
-        let readings = |g: &CompanyGraph, path: &str| -> f64 {
-            let vals = [(10u32, 50.0), (11, 100.0), (12, 30.0)];
-            g.sensors
-                .iter()
-                .map(|s| {
-                    let v = vals.iter().find(|(id, _)| *id == s.id.id()).unwrap().1;
-                    v * total_weight_at(g, s, path)
-                })
-                .sum()
-        };
-        assert_eq!(readings(&pv_graph(true), CO), 120.0, "fully metered");
-        assert_eq!(readings(&pv_graph(false), CO), 20.0, "no production sensor");
-    }
-
-    /// The exception list carries −1 for outflow, one row per ancestor of the
-    /// sensor's own node.
-    #[test]
-    fn outflow_rows_are_minus_one_at_every_ancestor() {
-        let m = flatten(&pv_graph(true));
-        let area = format!("{CO}|HN5#7");
-        for p in [area.as_str(), CO] {
-            let row = m.total_overrides.iter()
-                .find(|o| o.node_path == p && o.sensor == SensorId::make(12));
-            assert_eq!(row.map(|o| o.coefficient), Some(-1.0), "export at {p}");
-        }
-        assert!(m.total_overrides.iter().all(|o| o.sensor == SensorId::make(12)),
-                "import and production are the default weight 1, so no rows");
-    }
-
-    /// The exception list carries only what differs from 1, one row per node
-    /// where the covering sensor is present.
-    #[test]
-    fn total_overrides_are_an_exception_list() {
-        let m = flatten(&chiller_graph());
-        let chill = format!("{CO}|HN5#5");
-        let at = |p: &str, s: u32| {
-            m.total_overrides.iter().any(|o| o.node_path == p && o.sensor == SensorId::make(s))
-        };
-        assert!(at(&chill, 2) && at(&chill, 3), "zeroed at the chiller");
-        assert!(at(CO, 2) && at(CO, 3), "zeroed at the company");
-        assert!(m.total_overrides.iter().all(|o| o.coefficient == 0.0));
-        assert!(m.total_overrides.iter().all(|o| o.sensor != SensorId::make(1)),
-                "the covering channel itself is never an exception");
+    fn total_defaults_to_the_sum_of_own_sensors() {
+        let (mut g, r) = chiller();
+        g.formulas.clear();
+        assert_eq!(value(&g, (Level::Hn5, 5), EnergyType::Electricity, Purpose::Total, &r),
+                   80.0, "no formula: everything counts");
     }
 
     #[test]
-    fn flatten_emits_one_claim_per_sensor_term() {
-        let m = flatten(&chiller_graph());
-        assert_eq!(m.claims.len(), 1);
-        let c = &m.claims[0];
-        assert_eq!(c.sensor, SensorId::make(1));
-        assert_eq!(c.coefficient, 1.0);
-        assert_eq!(c.purpose, Purpose::Cooling);
-        assert_eq!(c.declaring_node, format!("{CO}|HN5#5"));
-        assert!(!c.derived);
-        assert!(c.allocates, "a physical claim reduces unallocated");
+    fn a_total_formula_overrides_the_default() {
+        let (g, r) = chiller();
+        assert_eq!(value(&g, (Level::Hn5, 5), EnergyType::Electricity, Purpose::Total, &r),
+                   40.0, "phases zeroed, accumulator only");
     }
 
-    /// The roll-up job filters `unallocated` on this boolean, so the rule for
-    /// what counts as an allocation lives here and only here.
+    /// Recursion: a parent sums its CHILDREN'S VALUES, so a node that corrects
+    /// itself is right at every ancestor with nothing to restate upward.
     #[test]
-    fn derived_and_outflow_claims_do_not_allocate() {
-        let mut g = chiller_graph();
-        g.formulas.push(NodeFormula {
-            energy_type: EnergyType::DistrictCooling, // differs from the sensor's
-            purpose: Purpose::Cooling,
-            terms: vec![term(Reference::Sensor(SensorId::make(1)), 3.2)],
-            ..g.formulas[0].clone()
-        });
-        g.formulas.push(NodeFormula {
-            purpose: Purpose::Generation,
-            terms: vec![term(Reference::Sensor(SensorId::make(1)), 1.0)],
-            ..g.formulas[0].clone()
-        });
-        let m = flatten(&g);
-        let by = |p: Purpose, e: EnergyType| {
-            m.claims.iter().find(|c| c.purpose == p && c.energy_type == e).unwrap()
-        };
-        assert!(by(Purpose::Cooling, EnergyType::Electricity).allocates);
-        assert!(!by(Purpose::Cooling, EnergyType::DistrictCooling).allocates, "derived");
-        assert!(!by(Purpose::Generation, EnergyType::Electricity).allocates, "outflow");
-    }
-
-    /// A node reference expands to that node's sensors of the same energy type,
-    /// scaled by the term coefficient AND each sensor's weight at that node.
-    #[test]
-    fn node_reference_expands_to_weighted_descendants() {
-        let mut g = chiller_graph();
-        g.formulas.push(NodeFormula {
-            node: NodeId::make(Level::Hn2, 997),
-            energy_type: EnergyType::Electricity,
-            purpose: Purpose::Process,
-            terms: vec![term(Reference::Node(NodeId::make(Level::Hn5, 5)), 0.5)],
-            note: None,
-        });
-        let m = flatten(&g);
-        let process: Vec<_> = m.claims.iter().filter(|c| c.purpose == Purpose::Process).collect();
-        // Only the accumulator survives: the phases weigh 0 at the chiller node.
-        assert_eq!(process.len(), 1);
-        assert_eq!(process[0].sensor, SensorId::make(1));
-        assert_eq!(process[0].coefficient, 0.5);
-    }
-
-    /// Output energy type differing from the referenced sensors' marks the claim
-    /// derived — gas m³ × brændværdi × virkningsgrad is delivered heat, not
-    /// metered consumption, so it must never fold into a total.
-    #[test]
-    fn cross_type_formula_is_derived() {
-        let b = format!("{CO}|HN4#8");
+    fn ancestors_inherit_a_childs_correction() {
+        let (_, r) = chiller();
+        let bld = format!("{CO}|HN4#4");
+        let chill = format!("{bld}|HN5#5");
         let g = CompanyGraph {
-            nodes: vec![node(Level::Hn2, 997, CO), node(Level::Hn4, 8, &b)],
-            sensors: vec![sensor(20, &b, EnergyType::Gas, None)],
-            formulas: vec![NodeFormula {
-                node: NodeId::make(Level::Hn4, 8),
-                energy_type: EnergyType::Heat,
-                purpose: Purpose::SpaceHeating,
-                terms: vec![term(Reference::Sensor(SensorId::make(20)), 10.45)],
-                note: Some("brændværdi 11,0 kWh/m³ × virkningsgrad 0,95".to_string()),
-            }],
+            nodes: vec![
+                node(Level::Hn2, 997, None, CO),
+                node(Level::Hn4, 4, Some((Level::Hn2, 997)), &bld),
+                node(Level::Hn5, 5, Some((Level::Hn4, 4)), &chill),
+            ],
+            sensors: (1..=4).map(|i| sensor(i, &chill, EnergyType::Electricity)).collect(),
+            formulas: vec![f((Level::Hn5, 5), EnergyType::Electricity, Purpose::Total,
+                             &[("S#2", 0.0), ("S#3", 0.0), ("S#4", 0.0)])],
         };
-        assert!(is_derived(&g, &g.formulas[0]));
-        assert!(flatten(&g).claims.iter().all(|c| c.derived));
+        let el = EnergyType::Electricity;
+        assert_eq!(value(&g, (Level::Hn4, 4), el, Purpose::Total, &r), 40.0,
+                   "the building sees 40, not 80");
+        assert_eq!(value(&g, (Level::Hn2, 997), el, Purpose::Total, &r), 40.0,
+                   "and so does the company");
+    }
+
+    /// A sensor belongs to `Total` automatically but to a purpose only if named —
+    /// otherwise attaching a meter would silently claim it as lighting.
+    #[test]
+    fn a_purpose_takes_no_sensor_unless_named() {
+        let (g, r) = chiller();
+        let n = (Level::Hn5, 5);
+        let el = EnergyType::Electricity;
+        assert_eq!(value(&g, n, el, Purpose::Cooling, &r), 40.0, "named");
+        assert_eq!(value(&g, n, el, Purpose::Lighting, &r), 0.0, "not named");
+    }
+
+    /// Sideways sensor reference: main in C1, sub in C2 (spec §3.6).
+    fn split_metering() -> (CompanyGraph, Vec<(u32, f64)>) {
+        let pc = format!("{CO}|HN3#3");
+        let c1 = format!("{pc}|HN4#1");
+        let c2 = format!("{pc}|HN4#2");
+        let g = CompanyGraph {
+            nodes: vec![
+                node(Level::Hn2, 997, None, CO),
+                node(Level::Hn3, 3, Some((Level::Hn2, 997)), &pc),
+                node(Level::Hn4, 1, Some((Level::Hn3, 3)), &c1),
+                node(Level::Hn4, 2, Some((Level::Hn3, 3)), &c2),
+            ],
+            sensors: vec![sensor(10, &c1, EnergyType::Electricity),
+                          sensor(11, &c2, EnergyType::Electricity)],
+            formulas: vec![f((Level::Hn4, 1), EnergyType::Electricity, Purpose::Total,
+                             &[("S#11", -1.0)])],
+        };
+        (g, vec![(10, 100.0), (11, 30.0)])
     }
 
     #[test]
-    fn same_type_formula_is_not_derived() {
-        let g = chiller_graph();
-        assert!(!is_derived(&g, &g.formulas[0]));
+    fn main_and_sub_in_different_buildings() {
+        let (g, r) = split_metering();
+        let el = EnergyType::Electricity;
+        assert_eq!(value(&g, (Level::Hn4, 1), el, Purpose::Total, &r), 70.0, "C1 = main − sub");
+        assert_eq!(value(&g, (Level::Hn4, 2), el, Purpose::Total, &r), 30.0, "C2 = sub");
+        assert_eq!(value(&g, (Level::Hn3, 3), el, Purpose::Total, &r), 100.0,
+                   "the property is the main, counted exactly once");
+    }
+
+    /// Shared plant apportioned across siblings — impossible under a
+    /// descendants-only rule, natural with company-wide sensor references.
+    #[test]
+    fn shared_plant_splits_across_siblings() {
+        let (mut g, mut r) = split_metering();
+        r.push((12, 50.0));
+        g.sensors.push(sensor(12, &format!("{CO}|HN3#3"), EnergyType::Electricity));
+        g.formulas.push(f((Level::Hn4, 1), EnergyType::Electricity, Purpose::Cooling,
+                          &[("S#12", 0.6)]));
+        g.formulas.push(f((Level::Hn4, 2), EnergyType::Electricity, Purpose::Cooling,
+                          &[("S#12", 0.4)]));
+        assert_eq!(value(&g, (Level::Hn3, 3), EnergyType::Electricity, Purpose::Cooling, &r),
+                   50.0, "0.6 + 0.4 = one chiller");
+    }
+
+    /// Cross-type output marks a claim derived; derived and outflow claims never
+    /// reduce Unallocated.
+    #[test]
+    fn derived_and_outflow_do_not_allocate() {
+        let (mut g, _) = chiller();
+        g.formulas.push(f((Level::Hn5, 5), EnergyType::DistrictCooling, Purpose::Cooling,
+                          &[("S#1", 3.2)]));
+        g.formulas.push(f((Level::Hn5, 5), EnergyType::Electricity, Purpose::Generation,
+                          &[("S#1", 1.0)]));
+        let rows = flatten(&g);
+        let allocates = |et: EnergyType, p: Purpose| rows.iter()
+            .find(|r| r.energy_type == et && r.purpose == p).unwrap().allocates;
+        assert!(allocates(EnergyType::Electricity, Purpose::Cooling));
+        assert!(!allocates(EnergyType::DistrictCooling, Purpose::Cooling), "derived");
+        assert!(!allocates(EnergyType::Electricity, Purpose::Generation), "outflow");
+    }
+
+    /// Unallocated arrives as ordinary matrix rows, so the roll-up job subtracts
+    /// nothing itself.
+    #[test]
+    fn unallocated_is_total_minus_allocating() {
+        let (g, r) = chiller();
+        let el = EnergyType::Electricity;
+        assert_eq!(value(&g, (Level::Hn5, 5), el, Purpose::Unallocated, &r), 0.0,
+                   "40 total − 40 cooling");
+        assert!(flatten(&g).iter().any(|w| w.purpose == Purpose::Unallocated),
+                "and it is materialised, not computed downstream");
+    }
+
+    /// A partly-claimed node reports the gap rather than hiding it.
+    #[test]
+    fn unallocated_reports_the_gap() {
+        let (mut g, r) = chiller();
+        g.formulas.retain(|x| x.purpose != Purpose::Cooling);
+        assert_eq!(value(&g, (Level::Hn5, 5), EnergyType::Electricity,
+                         Purpose::Unallocated, &r), 40.0);
+    }
+
+    /// flatten() must agree with the recursion it flattens.
+    #[test]
+    fn flatten_agrees_with_the_recursion() {
+        let (g, r) = chiller();
+        for purpose in [Purpose::Total, Purpose::Cooling, Purpose::Unallocated] {
+            let direct = value(&g, (Level::Hn5, 5), EnergyType::Electricity, purpose, &r);
+            let flat: f64 = flatten(&g).iter()
+                .filter(|w| w.node_path == format!("{CO}|HN5#5")
+                            && w.energy_type == EnergyType::Electricity
+                            && w.purpose == purpose)
+                .map(|w| w.coefficient * r.iter()
+                    .find(|(id, _)| *id == w.sensor.id()).map_or(0.0, |(_, v)| *v))
+                .sum();
+            assert_eq!(direct, flat, "{purpose}");
+        }
     }
 }
 ```
@@ -793,21 +600,24 @@ mod tests {
 Run: `cargo test -p model formulas:: 2>&1 | tail -20`
 Expected: FAIL — `cannot find type CompanyGraph`.
 
-- [ ] **Step 3: Implement the flattener**
+- [ ] **Step 3: Implement**
 
 Prepend to `crates/model/src/logic/formulas.rs`:
 
 ```rust
-//! Flattening node formulas into a weight matrix.
+//! Recursive evaluation of node formulas, and its flattening into a coefficient
+//! matrix.
 //!
-//! Pure functions over an in-memory company graph — no effects, no repository
-//! access. The hierarchy service materialises the output into `hierarchy_new`
-//! (see `repository::dynamodb::weight`), and the Glue roll-up reads those flat
-//! rows, so these rules exist in exactly one place.
+//! A node's value is Σ of its CHILDREN'S VALUES plus its own sensors, unless the
+//! node's formula overrides some of those weights. Because every term is linear,
+//! the whole recursion collapses to `value = Σ_sensor coefficient × reading`,
+//! which is what the roll-up job consumes — so these rules live here and only here.
+
+use std::collections::BTreeMap;
 
 use crate::domain::ids::{NodeId, SensorId};
-use crate::domain::node::{Node, PATH_SEP};
-use crate::domain::node_formula::{NodeFormula, Reference, Term};
+use crate::domain::node::Node;
+use crate::domain::node_formula::{NodeFormula, Reference};
 use crate::domain::sensor::{parent_path, Sensor};
 use crate::domain::values::{EnergyType, Purpose};
 
@@ -819,82 +629,104 @@ pub struct CompanyGraph {
     pub formulas: Vec<NodeFormula>,
 }
 
-/// One declared `(node, energy_type, purpose, sensor)` weight. The roll-up job
-/// multiplies each sensor reading by `coefficient` and groups by the declaring
-/// node's ancestor paths.
+/// One `(node, energy_type, purpose, sensor)` coefficient.
+/// `value(node, et, purpose) = Σ_sensor coefficient × reading(sensor)`.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Claim {
-    pub declaring_node: String,
+pub struct MatrixRow {
+    pub node_path: String,
     pub energy_type: EnergyType,
     pub purpose: Purpose,
     pub sensor: SensorId,
     pub coefficient: f64,
-    /// Output energy type differs from the referenced sensors' (§3.7).
-    pub derived: bool,
-    /// Whether this claim reduces `unallocated` — false for derived rows
-    /// (delivered energy, not metered consumption) and for outflow purposes
-    /// (exported energy is not a slice of consumption). Computed here so the
-    /// roll-up job filters on a boolean instead of re-deriving the rule.
+    /// Whether this purpose reduces `Unallocated` — false for derived rows
+    /// (delivered energy, not metered consumption) and for outflow purposes.
     pub allocates: bool,
 }
 
-/// A `(node, sensor)` pair whose weight in `total` is not the default 1.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TotalOverride {
-    pub node_path: String,
-    pub energy_type: EnergyType,
-    pub sensor: SensorId,
-    pub coefficient: f64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Matrix {
-    pub claims: Vec<Claim>,
-    pub total_overrides: Vec<TotalOverride>,
-}
+pub type Coeffs = BTreeMap<SensorId, f64>;
 
 impl CompanyGraph {
-    fn node_path(&self, id: &NodeId) -> Option<&str> {
+    pub fn node_path(&self, id: &NodeId) -> Option<&str> {
         self.nodes.iter().find(|n| &n.id == id).map(|n| n.path.as_str())
     }
-
-    fn sensor(&self, id: SensorId) -> Option<&Sensor> {
+    pub fn children(&self, id: &NodeId) -> impl Iterator<Item = &Node> {
+        self.nodes.iter().filter(move |n| n.parent.as_ref() == Some(id))
+    }
+    pub fn own_sensors(&self, id: &NodeId) -> Vec<&Sensor> {
+        let Some(path) = self.node_path(id) else { return vec![] };
+        self.sensors.iter().filter(|s| parent_path(s) == path).collect()
+    }
+    pub fn sensor(&self, id: SensorId) -> Option<&Sensor> {
         self.sensors.iter().find(|s| s.id == id)
     }
-}
-
-/// True when `descendant` is at or below `ancestor`.
-fn is_at_or_under(descendant: &str, ancestor: &str) -> bool {
-    descendant == ancestor || descendant.starts_with(&format!("{ancestor}{PATH_SEP}"))
-}
-
-/// `"A|B|C"` → `["A", "A|B", "A|B|C"]`.
-fn ancestors_inclusive(path: &str) -> Vec<String> {
-    let segs: Vec<&str> = path.split(PATH_SEP).collect();
-    (1..=segs.len()).map(|i| segs[..i].join(PATH_SEP)).collect()
-}
-
-/// A sensor's weight in the `total` series **evaluated at `node_path`**
-/// (spec §3.8): 0 where the sensor that already covers it is also present
-/// (relational), −1 where energy flows out (absolute), else 1. `total` is
-/// therefore the net energy across the node's boundary.
-pub fn total_weight_at(g: &CompanyGraph, s: &Sensor, node_path: &str) -> f64 {
-    let contained = s
-        .contained_in
-        .and_then(|c| g.sensor(c))
-        .is_some_and(|container| is_at_or_under(parent_path(container), node_path));
-    if contained {
-        return 0.0;
-    }
-    match s.flow {
-        Flow::Out => -1.0,
-        Flow::In => 1.0,
+    fn formula(&self, node: &NodeId, et: EnergyType, p: Purpose) -> Option<&NodeFormula> {
+        self.formulas.iter()
+            .find(|f| &f.node == node && f.energy_type == et && f.purpose == p)
     }
 }
 
-/// A formula is derived when its declared output energy type differs from the
-/// energy type of any sensor it references directly. Node references resolve to
-/// the formula's own energy type, so they never make it derived.
+fn add(into: &mut Coeffs, sensor: SensorId, c: f64) {
+    if c == 0.0 { return; }
+    let e = into.entry(sensor).or_insert(0.0);
+    *e += c;
+    if *e == 0.0 { into.remove(&sensor); }
+}
+
+/// The coefficient vector of `value(node, et, purpose)` over sensors (spec §3.5).
+pub fn coeffs(g: &CompanyGraph, node: &NodeId, et: EnergyType, purpose: Purpose) -> Coeffs {
+    if purpose == Purpose::Unallocated {
+        let mut out = coeffs(g, node, et, Purpose::Total);
+        for p in allocating_purposes(g, et) {
+            for (s, c) in coeffs(g, node, et, p) {
+                add(&mut out, s, -c);
+            }
+        }
+        return out;
+    }
+
+    let f = g.formula(node, et, purpose);
+    let weight_of = |r: &Reference| f.and_then(|f| {
+        f.terms.iter().find(|t| &t.reference == r).map(|t| t.coefficient)
+    });
+
+    let mut out = Coeffs::new();
+
+    // Children default to 1, for Total and for a named purpose alike.
+    for child in g.children(node) {
+        let w = weight_of(&Reference::Node(child.id.clone())).unwrap_or(1.0);
+        if w == 0.0 { continue; }
+        for (s, c) in coeffs(g, &child.id, et, purpose) {
+            add(&mut out, s, w * c);
+        }
+    }
+
+    // Own sensors default to 1 for Total ONLY. A sensor does not belong to a
+    // purpose unless the formula names it.
+    if purpose == Purpose::Total {
+        for s in g.own_sensors(node).into_iter().filter(|s| s.energy_type == et) {
+            add(&mut out, s.id, weight_of(&Reference::Sensor(s.id)).unwrap_or(1.0));
+        }
+    }
+
+    // Named sensors. For Total the node's own ones were just handled with their
+    // override applied; what remains are sensors elsewhere in the company
+    // (spec §3.6). For a purpose, every named sensor counts.
+    if let Some(f) = f {
+        let own: Vec<SensorId> = g.own_sensors(node).iter().map(|s| s.id).collect();
+        for t in &f.terms {
+            if let Reference::Sensor(id) = t.reference {
+                if purpose == Purpose::Total && own.contains(&id) { continue; }
+                add(&mut out, id, t.coefficient);
+            }
+        }
+    }
+
+    out
+}
+
+/// A formula is derived when its output energy type differs from that of a
+/// sensor it names directly. Node references resolve to the formula's own
+/// energy type and never make it derived.
 pub fn is_derived(g: &CompanyGraph, f: &NodeFormula) -> bool {
     f.terms.iter().any(|t| match &t.reference {
         Reference::Sensor(id) => g.sensor(*id).is_some_and(|s| s.energy_type != f.energy_type),
@@ -902,89 +734,53 @@ pub fn is_derived(g: &CompanyGraph, f: &NodeFormula) -> bool {
     })
 }
 
-/// Expand one term into `(sensor, coefficient)` pairs.
-fn expand(g: &CompanyGraph, f: &NodeFormula, t: &Term) -> Vec<(SensorId, f64)> {
-    match &t.reference {
-        Reference::Sensor(id) => vec![(*id, t.coefficient)],
-        Reference::Node(id) => match g.node_path(id) {
-            None => vec![],
-            Some(path) => g
-                .sensors
-                .iter()
-                .filter(|s| s.energy_type == f.energy_type)
-                .filter(|s| is_at_or_under(&s.path, path))
-                .map(|s| (s.id, t.coefficient * total_weight_at(g, s, path)))
-                .filter(|(_, c)| *c != 0.0)
-                .collect(),
-        },
-    }
+/// Purposes declared for `et` that reduce `Unallocated`: neither derived nor outflow.
+fn allocating_purposes(g: &CompanyGraph, et: EnergyType) -> Vec<Purpose> {
+    let mut ps: Vec<Purpose> = g.formulas.iter()
+        .filter(|f| f.energy_type == et
+                 && f.purpose != Purpose::Total
+                 && !f.purpose.is_outflow()
+                 && !is_derived(g, f))
+        .map(|f| f.purpose)
+        .collect();
+    ps.sort_by_key(|p| p.as_str());
+    ps.dedup();
+    ps
 }
 
-/// The exception list of non-default `total` weights.
-///
-/// Overlap yields a **0** row per ancestor-or-self path of the **container's**
-/// node — exactly the nodes where both sensors are present, and below which the
-/// covered sensor still counts normally. `Flow::Out` yields a **−1** row per
-/// ancestor-or-self path of the **sensor's own** node, since exported energy
-/// leaves the site at every level.
-fn total_overrides(g: &CompanyGraph) -> Vec<TotalOverride> {
+/// Every series the roll-up needs — `Total`, each declared purpose, and
+/// `Unallocated` — for every node and energy type in the company.
+pub fn flatten(g: &CompanyGraph) -> Vec<MatrixRow> {
     let mut out = Vec::new();
-    for s in &g.sensors {
-        let mut push = |node_path: String, coefficient: f64| {
-            out.push(TotalOverride {
-                node_path,
-                energy_type: s.energy_type,
-                sensor: s.id,
-                coefficient,
-            })
-        };
-        if let Some(container) = s.contained_in.and_then(|c| g.sensor(c)) {
-            for p in ancestors_inclusive(parent_path(container)) {
-                push(p, 0.0);
-            }
-        }
-        if s.flow == Flow::Out {
-            // Nodes at/above the container already carry a 0 row, which wins —
-            // a covered sensor is not double counted, whichever way it flows.
-            let zeroed: Vec<String> = s
-                .contained_in
-                .and_then(|c| g.sensor(c))
-                .map(|c| ancestors_inclusive(parent_path(c)))
-                .unwrap_or_default();
-            for p in ancestors_inclusive(parent_path(s)) {
-                if !zeroed.contains(&p) {
-                    push(p, -1.0);
+    for n in &g.nodes {
+        for et in EnergyType::all() {
+            let mut purposes = vec![Purpose::Total, Purpose::Unallocated];
+            purposes.extend(g.formulas.iter()
+                .filter(|f| f.energy_type == et && f.purpose != Purpose::Total)
+                .map(|f| f.purpose));
+            purposes.sort_by_key(|p| p.as_str());
+            purposes.dedup();
+
+            for purpose in purposes {
+                let allocates = purpose != Purpose::Unallocated
+                    && !purpose.is_outflow()
+                    && !g.formulas.iter().any(|f| f.energy_type == et
+                                                && f.purpose == purpose
+                                                && is_derived(g, f));
+                for (sensor, coefficient) in coeffs(g, &n.id, et, purpose) {
+                    out.push(MatrixRow {
+                        node_path: n.path.clone(),
+                        energy_type: et,
+                        purpose,
+                        sensor,
+                        coefficient,
+                        allocates,
+                    });
                 }
             }
         }
     }
     out
-}
-
-/// Flatten a company into the weight matrix the roll-up job consumes.
-pub fn flatten(g: &CompanyGraph) -> Matrix {
-    let mut claims = Vec::new();
-    for f in &g.formulas {
-        let Some(declaring_node) = g.node_path(&f.node) else {
-            continue;
-        };
-        let derived = is_derived(g, f);
-        let allocates = !derived && !f.purpose.is_outflow();
-        for t in &f.terms {
-            for (sensor, coefficient) in expand(g, f, t) {
-                claims.push(Claim {
-                    declaring_node: declaring_node.to_string(),
-                    energy_type: f.energy_type,
-                    purpose: f.purpose,
-                    sensor,
-                    coefficient,
-                    derived,
-                    allocates,
-                });
-            }
-        }
-    }
-    Matrix { claims, total_overrides: total_overrides(g) }
 }
 ```
 
@@ -993,283 +789,159 @@ Add `pub mod formulas;` to `crates/model/src/logic/mod.rs`.
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p model formulas:: 2>&1 | tail -20`
-Expected: PASS (8 tests).
+Expected: PASS (10 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/model/src/logic/formulas.rs crates/model/src/logic/mod.rs
-git commit -m "feat(model): flatten node formulas into a weight matrix"
+git add crates/model/src/logic/
+git commit -m "feat(model): recursive node-formula evaluation flattened to a coefficient matrix"
 ```
 
 ---
 
-### Task 4: Formula and containment validation
+### Task 4: Validation
 
 **Files:**
-- Modify: `crates/model/src/logic/formulas.rs` (append `validate` + `validate_containment` and tests)
+- Modify: `crates/model/src/logic/formulas.rs` (append `validate` + tests)
 
 **Interfaces:**
-- Consumes: `CompanyGraph`, `NodeFormula` (Task 3)
-- Produces:
-  - `validate(&CompanyGraph, &NodeFormula) -> Result<(), String>`
-  - `validate_containment(&CompanyGraph, &Sensor) -> Result<(), String>`
+- Produces: `validate(&CompanyGraph, &NodeFormula) -> Result<(), String>`
 
 - [ ] **Step 1: Write the failing tests**
 
-Append inside the existing `mod tests` in `crates/model/src/logic/formulas.rs`:
+Append inside `mod tests`:
 
 ```rust
-    fn ok_formula() -> NodeFormula {
-        NodeFormula {
-            node: NodeId::make(Level::Hn5, 5),
-            energy_type: EnergyType::Electricity,
-            purpose: Purpose::Cooling,
-            terms: vec![term(Reference::Sensor(SensorId::make(1)), 1.0)],
-            note: None,
-        }
+    fn ok() -> NodeFormula {
+        f((Level::Hn5, 5), EnergyType::Electricity, Purpose::Cooling, &[("S#1", 1.0)])
     }
 
     #[test]
     fn validate_accepts_a_well_formed_formula() {
-        assert!(validate(&chiller_graph(), &ok_formula()).is_ok());
+        assert!(validate(&chiller().0, &ok()).is_ok());
+    }
+
+    /// `Total` is the node's own formula and must be declarable; only
+    /// `Unallocated` is job-derived.
+    #[test]
+    fn validate_accepts_total_and_rejects_unallocated() {
+        let (g, _) = chiller();
+        assert!(validate(&g, &NodeFormula { purpose: Purpose::Total, ..ok() }).is_ok());
+        let e = validate(&g, &NodeFormula { purpose: Purpose::Unallocated, ..ok() }).unwrap_err();
+        assert!(e.contains("roll-up job"), "got: {e}");
+    }
+
+    /// Zero is legal — it is how a node excludes a reading.
+    #[test]
+    fn validate_accepts_zero_and_rejects_non_finite() {
+        let (g, _) = chiller();
+        assert!(validate(&g, &NodeFormula {
+            purpose: Purpose::Total,
+            terms: vec![Term { reference: Reference::parse("S#2").unwrap(), coefficient: 0.0 }],
+            ..ok()
+        }).is_ok());
+        let e = validate(&g, &NodeFormula {
+            terms: vec![Term { reference: Reference::parse("S#1").unwrap(),
+                               coefficient: f64::NAN }],
+            ..ok()
+        }).unwrap_err();
+        assert!(e.contains("finite"));
+    }
+
+    /// Node references must be DIRECT CHILDREN — a deeper node already arrives
+    /// through the chain, so referencing it would double count.
+    #[test]
+    fn validate_rejects_a_node_reference_that_is_not_a_direct_child() {
+        let (g, _) = split_metering();
+        let bad = f((Level::Hn2, 997), EnergyType::Electricity, Purpose::Total,
+                    &[("HN4#1", 0.5)]);
+        assert!(validate(&g, &bad).unwrap_err().contains("direct child"));
     }
 
     #[test]
-    fn validate_rejects_reserved_purposes() {
-        for p in [Purpose::Total, Purpose::Unallocated] {
-            let f = NodeFormula { purpose: p, ..ok_formula() };
-            let e = validate(&chiller_graph(), &f).unwrap_err();
-            assert!(e.contains("roll-up job"), "got: {e}");
-        }
+    fn validate_accepts_a_direct_child_reference() {
+        let (g, _) = split_metering();
+        let good = f((Level::Hn3, 3), EnergyType::Electricity, Purpose::Total,
+                     &[("HN4#1", 0.5)]);
+        assert!(validate(&g, &good).is_ok());
+    }
+
+    /// Sideways SENSOR references are the point of D7 — accept them.
+    #[test]
+    fn validate_accepts_a_sensor_from_another_branch() {
+        let (g, _) = split_metering();
+        assert!(validate(&g, &g.formulas[0].clone()).is_ok());
+    }
+
+    /// But for `Total`, a sensor deeper in this node's own subtree already
+    /// arrives via the child chain.
+    #[test]
+    fn validate_rejects_a_total_term_naming_a_deeper_descendant_sensor() {
+        let (g, _) = split_metering();
+        let bad = f((Level::Hn3, 3), EnergyType::Electricity, Purpose::Total,
+                    &[("S#10", 0.0)]);   // S#10 hangs off HN4#1, a child
+        assert!(validate(&g, &bad).unwrap_err().contains("already counted"));
     }
 
     #[test]
-    fn validate_rejects_zero_and_non_finite_coefficients() {
-        for (c, want) in [(0.0, "non-zero"), (f64::NAN, "finite")] {
-            let f = NodeFormula {
-                terms: vec![term(Reference::Sensor(SensorId::make(1)), c)],
-                ..ok_formula()
-            };
-            assert!(validate(&chiller_graph(), &f).unwrap_err().contains(want));
-        }
+    fn validate_rejects_a_sensor_outside_the_company() {
+        let (g, _) = chiller();
+        let bad = f((Level::Hn5, 5), EnergyType::Electricity, Purpose::Cooling,
+                    &[("S#999", 1.0)]);
+        assert!(validate(&g, &bad).unwrap_err().contains("not found"));
     }
 
-    /// The subtree rule: a formula may only reference its own descendants. This
-    /// is what makes the reference graph acyclic and reparenting safe.
+    /// The ≤ 1 rule allows every legitimate split and catches over-allocation.
     #[test]
-    fn validate_rejects_reference_outside_the_subtree() {
-        let mut g = chiller_graph();
-        let other = format!("{CO}|HN5#99");
-        g.nodes.push(node(Level::Hn5, 99, &other));
-        g.sensors.push(sensor(77, &other, EnergyType::Electricity, None));
-        let f = NodeFormula {
-            terms: vec![term(Reference::Sensor(SensorId::make(77)), 1.0)],
-            ..ok_formula()
-        };
-        assert!(validate(&g, &f).unwrap_err().contains("descendant"));
+    fn validate_allows_a_heat_pump_split_summing_to_one() {
+        let (mut g, _) = chiller();
+        g.formulas.retain(|x| x.purpose != Purpose::Cooling);
+        g.formulas.push(f((Level::Hn5, 5), EnergyType::Electricity, Purpose::SpaceHeating,
+                          &[("S#1", 0.7)]));
+        let dhw = f((Level::Hn5, 5), EnergyType::Electricity, Purpose::Dhw, &[("S#1", 0.3)]);
+        assert!(validate(&g, &dhw).is_ok(), "0.7 + 0.3 = 1.0");
     }
 
-    /// One sensor may feed MANY purposes — a heat pump's electricity channel
-    /// splitting between space heating and DHW, with delivered heat alongside.
-    /// All declared on the same node.
     #[test]
-    fn validate_accepts_one_sensor_across_several_purposes() {
-        let mut g = chiller_graph();
-        g.formulas.push(NodeFormula {
-            purpose: Purpose::SpaceHeating,
-            terms: vec![term(Reference::Sensor(SensorId::make(1)), 0.7)],
-            ..ok_formula()
-        });
-        let dhw = NodeFormula {
-            purpose: Purpose::Dhw,
-            terms: vec![term(Reference::Sensor(SensorId::make(1)), 0.3)],
-            ..ok_formula()
-        };
-        assert!(validate(&g, &dhw).is_ok(), "0.7 + 0.3 = 1.0 on one node");
+    fn validate_rejects_over_allocation() {
+        let (mut g, _) = chiller();
+        g.formulas.retain(|x| x.purpose != Purpose::Cooling);
+        g.formulas.push(f((Level::Hn5, 5), EnergyType::Electricity, Purpose::SpaceHeating,
+                          &[("S#1", 0.8)]));
+        let dhw = f((Level::Hn5, 5), EnergyType::Electricity, Purpose::Dhw, &[("S#1", 0.5)]);
+        assert!(validate(&g, &dhw).unwrap_err().contains("sum"));
     }
 
-    /// A derived claim is a different energy type, so it sits outside the sum.
-    #[test]
-    fn validate_ignores_derived_claims_in_the_coefficient_sum() {
-        let g = chiller_graph();
-        let scop = NodeFormula {
-            energy_type: EnergyType::Heat,
-            purpose: Purpose::SpaceHeating,
-            terms: vec![term(Reference::Sensor(SensorId::make(1)), 3.5)],
-            ..ok_formula()
-        };
-        assert!(validate(&g, &scop).is_ok());
-    }
-
-    /// Claims naming one sensor must all live on ONE node. Split across a node and
-    /// its ancestor the arithmetic is consistent, but the descendant reports the
-    /// ancestor's share as `unallocated` — claims only travel up.
-    #[test]
-    fn validate_rejects_claims_split_across_nodes() {
-        let g = chiller_graph(); // HN5#5 already claims S#1 for cooling
-        let elsewhere = NodeFormula {
-            node: NodeId::make(Level::Hn2, 997),
-            purpose: Purpose::Lighting,
-            terms: vec![term(Reference::Sensor(SensorId::make(1)), 0.2)],
-            ..ok_formula()
-        };
-        let e = validate(&g, &elsewhere).unwrap_err();
-        assert!(e.contains("already claimed"), "got: {e}");
-    }
-
-    /// You cannot allocate more of a sensor than it measured.
-    #[test]
-    fn validate_rejects_coefficients_summing_past_one() {
-        let mut g = chiller_graph();
-        g.formulas.push(NodeFormula {
-            purpose: Purpose::SpaceHeating,
-            terms: vec![term(Reference::Sensor(SensorId::make(1)), 0.8)],
-            ..ok_formula()
-        });
-        let too_much = NodeFormula {
-            purpose: Purpose::Dhw,
-            terms: vec![term(Reference::Sensor(SensorId::make(1)), 0.5)],
-            ..ok_formula()
-        };
-        let e = validate(&g, &too_much).unwrap_err();
-        assert!(e.contains("sum"), "got: {e}");
-    }
-
-    /// The bimåler pattern nets to 0 for the submeter's sensor and 1 for the
-    /// main, so it must pass: −1 in space heating, +1 in DHW.
+    /// The bimåler pattern nets to 0 for the submeter and 1 for the main.
     #[test]
     fn validate_accepts_the_bimaaler_pattern() {
         let b = format!("{CO}|HN4#9");
         let mut g = CompanyGraph {
-            nodes: vec![node(Level::Hn2, 997, CO), node(Level::Hn4, 9, &b)],
-            sensors: vec![
-                sensor(30, &b, EnergyType::DistrictHeating, None),     // main
-                sensor(31, &b, EnergyType::DistrictHeating, Some(30)), // submeter
-            ],
+            nodes: vec![node(Level::Hn2, 997, None, CO),
+                        node(Level::Hn4, 9, Some((Level::Hn2, 997)), &b)],
+            sensors: vec![sensor(30, &b, EnergyType::DistrictHeating),
+                          sensor(31, &b, EnergyType::DistrictHeating)],
             formulas: vec![],
         };
-        let base = NodeFormula {
-            node: NodeId::make(Level::Hn4, 9),
-            energy_type: EnergyType::DistrictHeating,
-            purpose: Purpose::Dhw,
-            terms: vec![term(Reference::Sensor(SensorId::make(31)), 1.0)],
-            note: None,
-        };
-        assert!(validate(&g, &base).is_ok());
-        g.formulas.push(base);
-        let space = NodeFormula {
-            purpose: Purpose::SpaceHeating,
-            terms: vec![
-                term(Reference::Sensor(SensorId::make(30)), 1.0),
-                term(Reference::Sensor(SensorId::make(31)), -1.0),
-            ],
-            ..g.formulas[0].clone()
-        };
-        assert!(validate(&g, &space).is_ok(), "S#31 nets to 0, S#30 to 1");
+        let dh = EnergyType::DistrictHeating;
+        let dhw = f((Level::Hn4, 9), dh, Purpose::Dhw, &[("S#31", 1.0)]);
+        assert!(validate(&g, &dhw).is_ok());
+        g.formulas.push(dhw);
+        let sh = f((Level::Hn4, 9), dh, Purpose::SpaceHeating,
+                   &[("S#30", 1.0), ("S#31", -1.0)]);
+        assert!(validate(&g, &sh).is_ok(), "S#31 nets to 0, S#30 to 1");
     }
 
-    /// Re-declaring the SAME (node, energy_type, purpose) is an upsert.
+    /// A series mixing derived and metered contributions would make Unallocated
+    /// ambiguous.
     #[test]
-    fn validate_allows_upserting_the_same_formula() {
-        let g = chiller_graph();
-        assert!(validate(&g, &g.formulas[0].clone()).is_ok());
-    }
-
-    // ---- containment --------------------------------------------------------
-
-    #[test]
-    fn containment_accepts_a_container_on_an_ancestor_node() {
-        let g = chiller_graph();
-        assert!(validate_containment(&g, &sens(&g, 2)).is_ok());
-    }
-
-    #[test]
-    fn containment_rejects_a_container_below_the_sensor() {
-        let bld = format!("{CO}|HN4#4");
-        let shop = format!("{bld}|HN5#41");
-        let mut g = CompanyGraph {
-            nodes: vec![
-                node(Level::Hn2, 997, CO),
-                node(Level::Hn4, 4, &bld),
-                node(Level::Hn5, 41, &shop),
-            ],
-            sensors: vec![
-                sensor(40, &bld, EnergyType::Electricity, None),
-                sensor(41, &shop, EnergyType::Electricity, None),
-            ],
-            formulas: vec![],
-        };
-        // Upside down: the building main claims to be covered by the tenant
-        // submeter one level DOWN. The covering sensor must be at or above.
-        let mut main = g.sensors[0].clone();
-        main.contained_in = Some(SensorId::make(41));
-        g.sensors[0] = main.clone();
-        assert!(validate_containment(&g, &main).unwrap_err().contains("ancestor"));
-    }
-
-    /// The physical device can sit anywhere; the SENSOR belongs on the node it
-    /// measures. A property main installed in B1's basement must be attached to
-    /// the property, not to B1 — otherwise it cannot cover a submeter in B2, and
-    /// B1's own total would claim the whole property's consumption.
-    #[test]
-    fn containment_rejects_a_container_on_a_sibling_branch() {
-        let b1 = format!("{CO}|HN4#1");
-        let b2 = format!("{CO}|HN4#2");
-        let g = CompanyGraph {
-            nodes: vec![
-                node(Level::Hn2, 997, CO),
-                node(Level::Hn4, 1, &b1),
-                node(Level::Hn4, 2, &b2),
-            ],
-            sensors: vec![
-                sensor(50, &b1, EnergyType::Electricity, None),      // main, mis-attached
-                sensor(51, &b2, EnergyType::Electricity, Some(50)),  // submeter in B2
-            ],
-            formulas: vec![],
-        };
-        let e = validate_containment(&g, &sens(&g, 51)).unwrap_err();
-        assert!(e.contains("does not contain"), "got: {e}");
-        assert!(e.contains("move it up"), "the message must name the fix; got: {e}");
-    }
-
-    /// …and once the main is attached by coverage, it works across branches.
-    #[test]
-    fn containment_accepts_a_property_wide_main_over_a_submeter_in_another_building() {
-        let b2 = format!("{CO}|HN4#2");
-        let g = CompanyGraph {
-            nodes: vec![node(Level::Hn2, 997, CO), node(Level::Hn4, 2, &b2)],
-            sensors: vec![
-                sensor(50, CO, EnergyType::Electricity, None),       // main on the property
-                sensor(51, &b2, EnergyType::Electricity, Some(50)),  // submeter in B2
-            ],
-            formulas: vec![],
-        };
-        assert!(validate_containment(&g, &sens(&g, 51)).is_ok());
-        assert_eq!(total_weight_at(&g, &sens(&g, 51), &b2), 1.0, "B2 reports its own use");
-        assert_eq!(total_weight_at(&g, &sens(&g, 51), CO), 0.0, "counted once via the main");
-    }
-
-    #[test]
-    fn containment_rejects_a_different_energy_type() {
-        let mut g = chiller_graph();
-        let chill = format!("{CO}|HN5#5");
-        g.sensors.push(sensor(40, &chill, EnergyType::Water, None));
-        let mut s = sens(&g, 2);
-        s.contained_in = Some(SensorId::make(40));
-        assert!(validate_containment(&g, &s).unwrap_err().contains("energy type"));
-    }
-
-    #[test]
-    fn containment_rejects_cycles() {
-        let mut g = chiller_graph();
-        let chill = format!("{CO}|HN5#5");
-        let mut a = sensor(50, &chill, EnergyType::Electricity, Some(51));
-        let b = sensor(51, &chill, EnergyType::Electricity, Some(50));
-        g.sensors.push(a.clone());
-        g.sensors.push(b);
-        a.contained_in = Some(SensorId::make(51));
-        assert!(validate_containment(&g, &a).unwrap_err().contains("cycle"));
+    fn validate_rejects_mixed_derived_ness_for_one_series() {
+        let (mut g, _) = chiller();
+        g.sensors.push(sensor(9, &format!("{CO}|HN5#5"), EnergyType::Gas));
+        let mixed = f((Level::Hn2, 997), EnergyType::Electricity, Purpose::Cooling,
+                      &[("S#9", 3.0)]);   // gas sensor, electricity output → derived
+        assert!(validate(&g, &mixed).unwrap_err().contains("derived"));
     }
 ```
 
@@ -1278,145 +950,93 @@ Append inside the existing `mod tests` in `crates/model/src/logic/formulas.rs`:
 Run: `cargo test -p model validate_ 2>&1 | tail -20`
 Expected: FAIL — `cannot find function validate`.
 
-- [ ] **Step 3: Implement validation**
+- [ ] **Step 3: Implement**
 
-Append to the non-test part of `crates/model/src/logic/formulas.rs`:
+Append to the non-test part of `formulas.rs`:
 
 ```rust
-/// Validate a formula against its company graph. Returns a human-readable
-/// message suitable for a 400/409 body.
+/// Validate a formula against its company graph (spec §5.3). Returns a
+/// human-readable message suitable for a 400 body.
 pub fn validate(g: &CompanyGraph, f: &NodeFormula) -> Result<(), String> {
     if !f.purpose.declarable() {
         return Err(format!(
-            "purpose {} is emitted by the roll-up job and cannot be declared",
-            f.purpose
-        ));
+            "purpose {} is derived by the roll-up job and cannot be declared", f.purpose));
     }
-
     let Some(node_path) = g.node_path(&f.node) else {
         return Err(format!("node {} not found in this company", f.node));
     };
+    let own: Vec<SensorId> = g.own_sensors(&f.node).iter().map(|s| s.id).collect();
+    let children: Vec<NodeId> = g.children(&f.node).map(|n| n.id.clone()).collect();
+    let sep = crate::domain::node::PATH_SEP;
 
     for t in &f.terms {
         if !t.coefficient.is_finite() {
             return Err(format!("coefficient for {} must be finite", t.reference));
         }
-        if t.coefficient == 0.0 {
-            return Err(format!(
-                "coefficient for {} must be non-zero — to exclude a covered sensor, \
-                 record it as contained_in its container instead",
-                t.reference
-            ));
-        }
-        let ref_path = match &t.reference {
-            Reference::Sensor(id) => g.sensor(*id).map(|s| s.path.clone()),
-            Reference::Node(id) => g.node_path(id).map(str::to_string),
-        };
-        match ref_path {
-            None => return Err(format!("{} not found in this company", t.reference)),
-            Some(p) if !is_at_or_under(&p, node_path) || p == node_path => {
-                return Err(format!(
-                    "{} is not a descendant of {} — a formula may only reference its own subtree",
-                    t.reference, f.node
-                ))
+        match &t.reference {
+            Reference::Node(id) => {
+                if !children.contains(id) {
+                    return Err(format!(
+                        "{id} is not a direct child of {} — a deeper node is already counted \
+                         through the child chain; override the child instead", f.node));
+                }
             }
-            Some(_) => {}
+            Reference::Sensor(id) => {
+                let Some(s) = g.sensor(*id) else {
+                    return Err(format!("sensor {id} not found in this company"));
+                };
+                let deeper = !own.contains(id)
+                    && s.path.starts_with(&format!("{node_path}{sep}"));
+                if f.purpose == Purpose::Total && deeper {
+                    return Err(format!(
+                        "sensor {id} is already counted through {}'s children — override the \
+                         child node instead", f.node));
+                }
+            }
         }
     }
 
-    // Every claim naming a sensor must be declared on ONE node. Splitting them
-    // across a node and its ancestor is arithmetically consistent but reports
-    // the ancestor's share as `unallocated` at the descendant, since claims only
-    // travel up. Re-declaring the same (node, energy_type, purpose) is an upsert.
-    for t in &f.terms {
-        let Reference::Sensor(id) = &t.reference else {
-            continue;
-        };
+    // Derived-ness must be uniform per (energy_type, purpose) in the company.
+    if f.purpose != Purpose::Total {
+        let mine = is_derived(g, f);
         if let Some(other) = g.formulas.iter().find(|o| {
-            o.node != f.node && o.terms.iter().any(|ot| ot.reference == t.reference)
+            o.energy_type == f.energy_type && o.purpose == f.purpose
+                && o.node != f.node
+                && is_derived(g, o) != mine
         }) {
             return Err(format!(
-                "sensor {} is already claimed by node {} — all of a sensor's claims must \
-                 be declared on one node",
-                id, other.node
-            ));
+                "{}/{} is already {} on node {} — a series cannot mix derived and metered \
+                 contributions", f.energy_type, f.purpose,
+                if mine { "metered" } else { "derived" }, other.node));
         }
     }
 
-    // A sensor's physical coefficients for one energy type sum to at most 1 —
-    // you cannot allocate more of a sensor than it measured. Derived claims are a
-    // different energy type and sit outside the sum.
-    for t in &f.terms {
-        let Reference::Sensor(id) = &t.reference else {
-            continue;
-        };
-        let others: f64 = g
-            .formulas
-            .iter()
-            .filter(|o| {
-                o.energy_type == f.energy_type
-                    && !(o.node == f.node && o.purpose == f.purpose) // this is an upsert
-            })
-            .flat_map(|o| &o.terms)
-            .filter(|ot| ot.reference == t.reference)
-            .map(|ot| ot.coefficient)
-            .sum();
-        let total = others + t.coefficient;
-        if total > 1.0 + f64::EPSILON {
-            return Err(format!(
-                "sensor {} would be allocated {:.2}× its {} reading — coefficients for \
-                 one energy type must sum to at most 1",
-                id, total, f.energy_type
-            ));
+    // A sensor cannot be allocated more than it measured: the signed sum of its
+    // coefficients across all ALLOCATING claims for one energy type is ≤ 1. This
+    // permits a heat-pump split (0.7 + 0.3), the bimåler pattern (+1, −1) and
+    // shared plant across siblings (0.6 + 0.4).
+    if f.purpose != Purpose::Total && !f.purpose.is_outflow() && !is_derived(g, f) {
+        for t in &f.terms {
+            let Reference::Sensor(id) = &t.reference else { continue };
+            let others: f64 = g.formulas.iter()
+                .filter(|o| o.energy_type == f.energy_type
+                         && o.purpose != Purpose::Total
+                         && !o.purpose.is_outflow()
+                         && !is_derived(g, o)
+                         && !(o.node == f.node && o.purpose == f.purpose))
+                .flat_map(|o| &o.terms)
+                .filter(|ot| ot.reference == t.reference)
+                .map(|ot| ot.coefficient)
+                .sum();
+            let total = others + t.coefficient;
+            if total > 1.0 + f64::EPSILON {
+                return Err(format!(
+                    "sensor {id} would be allocated {total:.2}× its {} reading — coefficients \
+                     across all purposes must sum to at most 1", f.energy_type));
+            }
         }
     }
 
-    Ok(())
-}
-
-/// Validate a sensor's `contained_in`: the covering sensor must measure the same
-/// energy type, hang off the sensor's own node or an ancestor of it, and the
-/// chain must not cycle. `flow` needs no validation — either direction is legal
-/// on any sensor.
-pub fn validate_containment(g: &CompanyGraph, s: &Sensor) -> Result<(), String> {
-    let Some(container_id) = s.contained_in else {
-        return Ok(());
-    };
-    if container_id == s.id {
-        return Err("a sensor cannot cover itself".to_string());
-    }
-    let Some(container) = g.sensor(container_id) else {
-        return Err(format!("sensor {container_id} not found in this company"));
-    };
-    if container.energy_type != s.energy_type {
-        return Err(format!(
-            "sensor {container_id} measures {} — a sensor can only be covered by one of \
-             the same energy type ({})",
-            container.energy_type, s.energy_type
-        ));
-    }
-    if !is_at_or_under(parent_path(s), parent_path(container)) {
-        // A sensor attaches to the node whose consumption it MEASURES, not where
-        // the device is installed. A main covering the whole property belongs on
-        // the property node even if the box sits in one building's basement.
-        return Err(format!(
-            "sensor {container_id} is attached to {}, which does not contain {}'s node. \
-             If {container_id} measures a wider scope than that node, move it up to the \
-             node it actually covers",
-            parent_path(container),
-            s.id
-        ));
-    }
-    // Walk the chain; a revisit is a cycle.
-    let mut seen = vec![s.id];
-    let mut cur = Some(container_id);
-    while let Some(id) = cur {
-        if seen.contains(&id) {
-            return Err(format!("containment cycle through sensor {id}"));
-        }
-        seen.push(id);
-        cur = g.sensor(id).and_then(|c| c.contained_in);
-    }
     Ok(())
 }
 ```
@@ -1430,46 +1050,34 @@ Expected: PASS.
 
 ```bash
 git add crates/model/src/logic/formulas.rs
-git commit -m "feat(model): validate formulas (subtree, one-claim) and containment"
+git commit -m "feat(model): validate node formulas (direct children, <=1 allocation, uniform derivedness)"
 ```
 
 ---
 
-### Task 5: Persist formulas and the materialised matrix
+### Task 5: Persist formulas and the coefficient matrix
 
 **Files:**
-- Create: `crates/model/src/repository/dynamodb/node_formula.rs`, `crates/model/src/repository/dynamodb/weight.rs`
-- Modify: `crates/model/src/repository/dynamodb/mod.rs`, `.../codec.rs`, `crates/model/src/repository/memory.rs`
-- Test: `crates/model/src/repository/dynamodb/codec.rs` (inline `mod tests`)
+- Create: `crates/model/src/repository/dynamodb/node_formula.rs`, `.../weight.rs`
+- Modify: `.../dynamodb/mod.rs`, `.../dynamodb/codec.rs`, `crates/model/src/repository/memory.rs`
 
 **Interfaces:**
-- Consumes: `NodeFormula` (Task 2), `Matrix`/`Claim`/`TotalOverride` (Task 3)
 - Produces:
-  - `codec::node_formula_to_item(&NodeFormula, node_path, company_path) -> Item` / `node_formula_of_item(&Item) -> Result<NodeFormula, CodecError>`
-  - `codec::claim_to_item(&Claim, company_path) -> Item` / `codec::total_override_to_item(&TotalOverride, company_path) -> Item`
-  - `codec::formula_gsi1pk(company_path) -> String` → `"F#HN2#<id>"`; `codec::weight_gsi1pk(company_path) -> String` → `"W#HN2#<id>"`
+  - `codec::{node_formula_to_item, node_formula_of_item, matrix_row_to_item, formula_gsi1pk, weight_gsi1pk}`
   - `node_formula::{put_node_formula, delete_node_formula, list_node_formulas, list_company_formulas}`
-  - `weight::replace_company_matrix(client, table, company_path, &Matrix) -> Result<(), RepositoryError>`
+  - `weight::replace_company_matrix(client, table, company_path, &[MatrixRow])`
 
-**Item shapes (spec §4):**
-
-| | Formula | Claim | Total override |
-|---|---|---|---|
-| `pk` | `<NodeId>` | `HN2#<id>` | `HN2#<id>` |
-| `sk` | `formula#<energy_type>#<purpose>` | `weight#claim#<declaring_node>#<energy_type>#<purpose>#<sensor>` | `weight#total#<node_path>#<energy_type>#<sensor>` |
-| `gsi1pk` | `F#HN2#<id>` | `W#HN2#<id>` | `W#HN2#<id>` |
-| `gsi1sk` | `<node_path>#<energy_type>#<purpose>` | — | — |
+Item shapes are spec §4.1 / §4.2. Matrix sort key:
+`weight#<node_path>#<energy_type>#<purpose>#<sensor>`, `gsi1pk = W#HN2#<id>`, attributes
+`node_path`, `energy_type`, `purpose`, `sensor_id`, `coefficient`, `allocates`.
 
 - [ ] **Step 1: Write the failing codec tests**
-
-Add to `mod tests` in `crates/model/src/repository/dynamodb/codec.rs`:
 
 ```rust
     #[test]
     fn node_formula_item_round_trips() {
         use crate::domain::node_formula::{NodeFormula, Reference, Term};
         use crate::domain::values::Purpose;
-
         let f = NodeFormula {
             node: NodeId::make(Level::Hn4, 30),
             energy_type: EnergyType::DistrictHeating,
@@ -1480,517 +1088,212 @@ Add to `mod tests` in `crates/model/src/repository/dynamodb/codec.rs`:
             ],
             note: Some("bimåler".to_string()),
         };
-        let node_path = "HN0#root|HN1#1|HN2#997|HN3#3|HN4#30";
-        let item = node_formula_to_item(&f, node_path, "HN0#root|HN1#1|HN2#997");
-
+        let item = node_formula_to_item(&f, "HN0#root|HN2#997|HN4#30", "HN0#root|HN2#997");
         let s = |k: &str| item.get(k).and_then(|v| v.as_s().ok()).map(String::as_str);
         assert_eq!(s("sk"), Some("formula#district_heating#space_heating"));
         assert_eq!(s("gsi1pk"), Some("F#HN2#997"));
-        assert_eq!(
-            s("gsi1sk"),
-            Some("HN0#root|HN1#1|HN2#997|HN3#3|HN4#30#district_heating#space_heating")
-        );
+        assert_eq!(node_formula_of_item(&item).unwrap(), f);
+    }
+
+    /// A Total formula persists like any other — it is not a special case.
+    #[test]
+    fn total_formula_item_round_trips() {
+        use crate::domain::node_formula::{NodeFormula, Reference, Term};
+        use crate::domain::values::Purpose;
+        let f = NodeFormula {
+            node: NodeId::make(Level::Hn5, 5),
+            energy_type: EnergyType::Electricity,
+            purpose: Purpose::Total,
+            terms: vec![Term { reference: Reference::Sensor(SensorId::make(2)),
+                               coefficient: 0.0 }],
+            note: None,
+        };
+        let item = node_formula_to_item(&f, "HN0#root|HN2#997|HN5#5", "HN0#root|HN2#997");
+        assert_eq!(item.get("sk").and_then(|v| v.as_s().ok()).map(String::as_str),
+                   Some("formula#electricity#total"));
         assert_eq!(node_formula_of_item(&item).unwrap(), f);
     }
 
     #[test]
-    fn weight_items_key_by_company_and_kind() {
+    fn matrix_row_keys_by_company_node_and_sensor() {
         use crate::domain::values::Purpose;
-        use crate::logic::formulas::{Claim, TotalOverride};
-
-        let company = "HN0#root|HN1#1|HN2#997";
-        let claim = Claim {
-            declaring_node: "HN0#root|HN1#1|HN2#997|HN4#30".to_string(),
+        use crate::logic::formulas::MatrixRow;
+        let r = MatrixRow {
+            node_path: "HN0#root|HN2#997|HN4#30".to_string(),
             energy_type: EnergyType::DistrictHeating,
             purpose: Purpose::Dhw,
             sensor: SensorId::make(21),
             coefficient: 1.0,
-            derived: false,
             allocates: true,
         };
-        let ci = claim_to_item(&claim, company);
-        let s = |i: &Item, k: &str| i.get(k).and_then(|v| v.as_s().ok()).map(String::as_str);
-        assert_eq!(s(&ci, "pk"), Some("HN2#997"));
-        assert_eq!(s(&ci, "gsi1pk"), Some("W#HN2#997"));
-        assert_eq!(s(&ci, "kind"), Some("claim"));
-        assert_eq!(
-            s(&ci, "sk"),
-            Some("weight#claim#HN0#root|HN1#1|HN2#997|HN4#30#district_heating#dhw#S#21")
-        );
-
-        let ov = TotalOverride {
-            node_path: "HN0#root|HN1#1|HN2#997|HN4#30".to_string(),
-            energy_type: EnergyType::DistrictHeating,
-            sensor: SensorId::make(21),
-            coefficient: 0.0,
-        };
-        let oi = total_override_to_item(&ov, company);
-        assert_eq!(s(&oi, "kind"), Some("total"));
-        assert_eq!(
-            s(&oi, "sk"),
-            Some("weight#total#HN0#root|HN1#1|HN2#997|HN4#30#district_heating#S#21")
-        );
+        let item = matrix_row_to_item(&r, "HN0#root|HN2#997");
+        let s = |k: &str| item.get(k).and_then(|v| v.as_s().ok()).map(String::as_str);
+        assert_eq!(s("pk"), Some("HN2#997"));
+        assert_eq!(s("gsi1pk"), Some("W#HN2#997"));
+        assert_eq!(s("sk"),
+                   Some("weight#HN0#root|HN2#997|HN4#30#district_heating#dhw#S#21"));
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `cargo test -p model node_formula_item 2>&1 | tail -20`
-Expected: FAIL — `cannot find function node_formula_to_item`.
-
-- [ ] **Step 3: Implement the codec**
-
-Append to `crates/model/src/repository/dynamodb/codec.rs`:
-
-```rust
-// ---------------------------------------------------------------------------
-// Node formulas + materialised weight matrix
-// ---------------------------------------------------------------------------
-
-use crate::domain::node_formula::{NodeFormula, Reference, Term};
-use crate::domain::values::Purpose;
-use crate::logic::formulas::{Claim, TotalOverride};
-
-fn company_segment(company_path: &str) -> &str {
-    company_path
-        .split(crate::domain::node::PATH_SEP)
-        .find(|s| s.starts_with("HN2#"))
-        .unwrap_or("HN2#0")
-}
-
-/// `gsi1pk = "F#HN2#<id>"` — one partition per company's formulas.
-pub(crate) fn formula_gsi1pk(company_path: &str) -> String {
-    format!("F#{}", company_segment(company_path))
-}
-
-/// `gsi1pk = "W#HN2#<id>"` — one partition per company's weight matrix, so the
-/// roll-up job loads it in a single query.
-pub(crate) fn weight_gsi1pk(company_path: &str) -> String {
-    format!("W#{}", company_segment(company_path))
-}
-
-pub fn node_formula_to_item(f: &NodeFormula, node_path: &str, company_path: &str) -> Item {
-    let terms: Vec<AttributeValue> = f
-        .terms
-        .iter()
-        .map(|t| {
-            let mut m = std::collections::HashMap::new();
-            m.insert("ref".to_string(), s(t.reference.to_string()));
-            m.insert("coefficient".to_string(), AttributeValue::N(t.coefficient.to_string()));
-            AttributeValue::M(m)
-        })
-        .collect();
-
-    let mut item: Item = std::collections::HashMap::new();
-    item.insert("pk".to_string(), s(f.node.to_string()));
-    item.insert("sk".to_string(), s(f.sk()));
-    item.insert("gsi1pk".to_string(), s(formula_gsi1pk(company_path)));
-    item.insert("gsi1sk".to_string(), s(format!("{node_path}#{}#{}", f.energy_type, f.purpose)));
-    item.insert("energy_type".to_string(), s(f.energy_type.to_string()));
-    item.insert("purpose".to_string(), s(f.purpose.to_string()));
-    item.insert("terms".to_string(), AttributeValue::L(terms));
-    if let Some(n) = &f.note {
-        item.insert("note".to_string(), s(n.clone()));
-    }
-    item.insert("updated".to_string(), s(chrono::Utc::now().to_rfc3339()));
-    item
-}
-
-pub fn node_formula_of_item(item: &Item) -> Result<NodeFormula, CodecError> {
-    let get = |k: &str| {
-        item.get(k)
-            .and_then(|v| v.as_s().ok())
-            .cloned()
-            .ok_or_else(|| CodecError::from(format!("formula item missing {k}")))
-    };
-    let node = NodeId::parse(&get("pk")?).map_err(CodecError::from)?;
-    let energy_type: EnergyType = get("energy_type")?
-        .parse()
-        .map_err(|_| CodecError::from("bad energy_type on formula item"))?;
-    let purpose: Purpose = get("purpose")?
-        .parse()
-        .map_err(|_| CodecError::from("bad purpose on formula item"))?;
-
-    let terms = item
-        .get("terms")
-        .and_then(|v| v.as_l().ok())
-        .map(|l| {
-            l.iter()
-                .filter_map(|v| v.as_m().ok())
-                .map(|m| {
-                    let r = m.get("ref").and_then(|v| v.as_s().ok()).cloned().unwrap_or_default();
-                    let c = m
-                        .get("coefficient")
-                        .and_then(|v| v.as_n().ok())
-                        .and_then(|n| n.parse::<f64>().ok())
-                        .unwrap_or(0.0);
-                    Reference::parse(&r).map(|reference| Term { reference, coefficient: c })
-                })
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .transpose()
-        .map_err(CodecError::from)?
-        .unwrap_or_default();
-
-    Ok(NodeFormula {
-        node,
-        energy_type,
-        purpose,
-        terms,
-        note: item.get("note").and_then(|v| v.as_s().ok()).cloned(),
-    })
-}
-
-fn weight_base(company_path: &str, sensor: SensorId, coefficient: f64) -> Item {
-    let mut item: Item = std::collections::HashMap::new();
-    item.insert("pk".to_string(), s(company_segment(company_path).to_string()));
-    item.insert("gsi1pk".to_string(), s(weight_gsi1pk(company_path)));
-    item.insert("sensor_id".to_string(), AttributeValue::N(sensor.id().to_string()));
-    item.insert("coefficient".to_string(), AttributeValue::N(coefficient.to_string()));
-    item
-}
-
-pub fn claim_to_item(c: &Claim, company_path: &str) -> Item {
-    let mut item = weight_base(company_path, c.sensor, c.coefficient);
-    item.insert("kind".to_string(), s("claim".to_string()));
-    item.insert(
-        "sk".to_string(),
-        s(format!(
-            "weight#claim#{}#{}#{}#{}",
-            c.declaring_node, c.energy_type, c.purpose, c.sensor
-        )),
-    );
-    item.insert("declaring_node".to_string(), s(c.declaring_node.clone()));
-    item.insert("energy_type".to_string(), s(c.energy_type.to_string()));
-    item.insert("purpose".to_string(), s(c.purpose.to_string()));
-    item.insert("derived".to_string(), AttributeValue::Bool(c.derived));
-    item.insert("allocates".to_string(), AttributeValue::Bool(c.allocates));
-    item
-}
-
-pub fn total_override_to_item(o: &TotalOverride, company_path: &str) -> Item {
-    let mut item = weight_base(company_path, o.sensor, o.coefficient);
-    item.insert("kind".to_string(), s("total".to_string()));
-    item.insert(
-        "sk".to_string(),
-        s(format!("weight#total#{}#{}#{}", o.node_path, o.energy_type, o.sensor)),
-    );
-    item.insert("node_path".to_string(), s(o.node_path.clone()));
-    item.insert("energy_type".to_string(), s(o.energy_type.to_string()));
-    item
-}
-```
-
-Reuse the file's existing `s(..)`, `Item` and `CodecError` helpers rather than redeclaring them.
-
-- [ ] **Step 4: Run codec tests to verify they pass**
+- [ ] **Step 2: Run to verify they fail**
 
 Run: `cargo test -p model _item 2>&1 | tail -20`
-Expected: PASS.
+Expected: FAIL — `cannot find function node_formula_to_item`.
 
-- [ ] **Step 5: Implement the adapters**
+- [ ] **Step 3: Implement the codec and adapters**
 
-Create `crates/model/src/repository/dynamodb/node_formula.rs` with `put_node_formula`, `delete_node_formula`, `list_node_formulas` (query `pk = <NodeId>` + `begins_with(sk, "formula#")`) and `list_company_formulas` (query `gsi1` on `gsi1pk = codec::formula_gsi1pk(..)`), following the query/paginator style already used in `sensor.rs`.
+Follow the existing helpers in `codec.rs` (`s(..)`, `Item`, `CodecError`).
+`node_formula_to_item` serialises `terms` as `L` of `M{ ref: S, coefficient: N }`;
+`matrix_row_to_item` writes the attributes above with `allocates` as `Bool`.
 
-Create `crates/model/src/repository/dynamodb/weight.rs`:
+`node_formula.rs`: `put_node_formula` (PutItem), `delete_node_formula` (DeleteItem on
+`pk = <NodeId>`, `sk = formula#<et>#<purpose>`), `list_node_formulas` (`pk = <NodeId>` +
+`begins_with(sk, "formula#")`), `list_company_formulas` (`gsi1` on `F#HN2#<id>`) — in the
+paginator style already used in `sensor.rs`.
 
-```rust
-//! The materialised weight matrix (spec §4.2). Replaced wholesale per company —
-//! it is derived data, so a delete-then-write is simpler and safer than a diff.
+`weight.rs`: `replace_company_matrix` queries `gsi1` on `W#HN2#<id>` for existing keys, then
+`batch_write_item` in chunks of 25 — deletes first, then puts. The matrix is derived data, so
+wholesale replacement is simpler and safer than diffing.
 
-use aws_sdk_dynamodb::types::{AttributeValue, WriteRequest, DeleteRequest, PutRequest};
-use aws_sdk_dynamodb::Client;
+Mirror all of it in `repository/memory.rs`.
 
-use crate::errors::RepositoryError;
-use crate::logic::formulas::Matrix;
-use crate::repository::dynamodb::codec;
+- [ ] **Step 4: Verify and commit**
 
-const WEIGHT_SK_PREFIX: &str = "weight#";
-
-/// Delete every weight row for the company, then write the new matrix.
-pub async fn replace_company_matrix(
-    client: &Client,
-    table: &str,
-    company_path: &str,
-    m: &Matrix,
-) -> Result<(), RepositoryError> {
-    let existing = list_weight_keys(client, table, company_path).await?;
-    let deletes = existing.into_iter().map(|(pk, sk)| {
-        WriteRequest::builder()
-            .delete_request(
-                DeleteRequest::builder()
-                    .key("pk", AttributeValue::S(pk))
-                    .key("sk", AttributeValue::S(sk))
-                    .build()
-                    .expect("delete key"),
-            )
-            .build()
-    });
-    let puts = m
-        .claims
-        .iter()
-        .map(|c| codec::claim_to_item(c, company_path))
-        .chain(m.total_overrides.iter().map(|o| codec::total_override_to_item(o, company_path)))
-        .map(|item| {
-            WriteRequest::builder()
-                .put_request(PutRequest::builder().set_item(Some(item)).build().expect("put item"))
-                .build()
-        });
-
-    for chunk in deletes.chain(puts).collect::<Vec<_>>().chunks(25) {
-        client
-            .batch_write_item()
-            .request_items(table, chunk.to_vec())
-            .send()
-            .await
-            .map_err(|e| RepositoryError::Aws(format!("replace_company_matrix: {e:?}")))?;
-    }
-    Ok(())
-}
-
-async fn list_weight_keys(
-    client: &Client,
-    table: &str,
-    company_path: &str,
-) -> Result<Vec<(String, String)>, RepositoryError> {
-    let rows = client
-        .query()
-        .table_name(table)
-        .index_name("gsi1")
-        .key_condition_expression("#pk = :pk")
-        .expression_attribute_names("#pk", "gsi1pk")
-        .expression_attribute_values(":pk", AttributeValue::S(codec::weight_gsi1pk(company_path)))
-        .into_paginator()
-        .items()
-        .send()
-        .collect::<Result<Vec<_>, _>>()
-        .await
-        .map_err(|e| RepositoryError::Aws(format!("list_weight_keys: {e:?}")))?;
-
-    Ok(rows
-        .iter()
-        .filter_map(|i| {
-            let pk = i.get("pk")?.as_s().ok()?.clone();
-            let sk = i.get("sk")?.as_s().ok()?.clone();
-            sk.starts_with(WEIGHT_SK_PREFIX).then_some((pk, sk))
-        })
-        .collect())
-}
-```
-
-Add both modules to `crates/model/src/repository/dynamodb/mod.rs` and mirror the functions in `crates/model/src/repository/memory.rs`.
-
-- [ ] **Step 6: Verify the workspace builds and tests pass**
-
-Run: `cargo test -p model 2>&1 | tail -20`
-Expected: PASS.
-
-- [ ] **Step 7: Commit**
+Run: `cargo test -p model 2>&1 | tail -20` → PASS.
 
 ```bash
 git add crates/model/src/repository/
-git commit -m "feat(model): persist node formulas and the materialised weight matrix"
+git commit -m "feat(model): persist node formulas and the materialised coefficient matrix"
 ```
 
 ---
 
-### Task 6: Formula commands and matrix recompute
+### Task 6: Commands and matrix recompute
 
 **Files:**
-- Modify: `crates/services/hierarchy/src/command.rs:135` (add three variants), `crates/services/hierarchy/src/dispatch.rs` (arms + handlers + recompute), `crates/services/hierarchy/src/repo_fns.rs` (closure factories), `crates/services/hierarchy/src/json.rs` (`formula_to_json`)
-- Test: `crates/services/hierarchy/src/command.rs` (`mod tests`), `crates/services/hierarchy/src/dispatch.rs` (`mod tests`)
+- Modify: `crates/services/hierarchy/src/command.rs`, `dispatch.rs`, `repo_fns.rs`, `json.rs`
 
 **Interfaces:**
-- Consumes: `validate`, `flatten` (Tasks 3-4), `put_node_formula` / `delete_node_formula` / `list_company_formulas` / `replace_company_matrix` (Task 5)
-- Produces:
-  - `Command::SetNodeFormula { node_id, energy_type, purpose, terms: Value, note: Option<String> }`
-  - `Command::DeleteNodeFormula { node_id, energy_type, purpose }`
-  - `Command::RebuildCompanyMatrix { company }`
-  - `dispatch::handle_set_node_formula`, `handle_delete_node_formula`, `handle_rebuild_company_matrix`
-  - `dispatch::recompute_matrix(company_path, …) -> Result<(), RepositoryError>` — the shared helper every triggering command calls
+- Produces: `Command::{SetNodeFormula, DeleteNodeFormula, RebuildCompanyMatrix}`;
+  `dispatch::{handle_set_node_formula, handle_delete_node_formula, handle_rebuild_company_matrix, recompute_matrix}`
 
-**Wire format** — `terms` is accepted as a JSON array or a JSON-encoded string (the HTML form builds it client-side to avoid dynamic field names):
+Wire format — `terms` accepted as a JSON array or a JSON-encoded string (the HTML form builds it client-side to avoid dynamic field names):
 
 ```
 action=set_node_formula
-node_id=HN4#30
-energy_type=district_heating
-purpose=space_heating
-terms=[{"ref":"S#1","coefficient":1},{"ref":"S#2","coefficient":-1}]
-note=bimåler, jf. bygningsreglementet
+node_id=HN5#5
+energy_type=electricity
+purpose=total
+terms=[{"ref":"S#2","coefficient":0},{"ref":"S#3","coefficient":0}]
+note=faserne er allerede med i akkumulatoren
 ```
 
 - [ ] **Step 1: Write the failing parse tests**
-
-Add to `mod tests` in `crates/services/hierarchy/src/command.rs`:
 
 ```rust
     #[test]
     fn parse_set_node_formula_json() {
         let body = serde_json::json!({
-            "action": "set_node_formula",
-            "node_id": "HN4#30",
-            "energy_type": "district_heating",
-            "purpose": "space_heating",
-            "terms": [{"ref": "S#1", "coefficient": 1}, {"ref": "S#2", "coefficient": -1}],
-            "note": "bimåler"
-        })
-        .to_string();
+            "action": "set_node_formula", "node_id": "HN5#5",
+            "energy_type": "electricity", "purpose": "total",
+            "terms": [{"ref": "S#2", "coefficient": 0}],
+            "note": "faserne er allerede med i akkumulatoren"
+        }).to_string();
         let cmd = parse_command(&body, Some("application/json")).unwrap();
-        assert!(matches!(&cmd, Command::SetNodeFormula { node_id, purpose, .. }
-                         if node_id == "HN4#30" && purpose == "space_heating"));
+        assert!(matches!(&cmd, Command::SetNodeFormula { purpose, .. } if purpose == "total"));
     }
 
-    /// The form path posts `terms` as a JSON-encoded string.
     #[test]
-    fn parse_set_node_formula_form() {
-        let form = "action=set_node_formula\
-                    &node_id=HN5%235\
-                    &energy_type=electricity\
-                    &purpose=cooling\
-                    &terms=%5B%7B%22ref%22%3A%22S%231%22%2C%22coefficient%22%3A1%7D%5D";
+    fn parse_set_node_formula_form_with_encoded_terms() {
+        let form = "action=set_node_formula&node_id=HN4%231&energy_type=electricity\
+                    &purpose=total\
+                    &terms=%5B%7B%22ref%22%3A%22S%2311%22%2C%22coefficient%22%3A-1%7D%5D";
         let cmd = parse_command(form, Some("application/x-www-form-urlencoded")).unwrap();
         assert!(matches!(&cmd, Command::SetNodeFormula { terms, .. }
                          if terms.is_string() || terms.is_array()));
     }
 
     #[test]
-    fn parse_delete_node_formula() {
-        let form = "action=delete_node_formula&node_id=HN4%2330\
-                    &energy_type=district_heating&purpose=dhw";
-        let cmd = parse_command(form, Some("application/x-www-form-urlencoded")).unwrap();
-        assert!(matches!(&cmd, Command::DeleteNodeFormula { purpose, .. } if purpose == "dhw"));
-    }
-
-    #[test]
-    fn parse_rebuild_company_matrix() {
-        let form = "action=rebuild_company_matrix&company=HN2%23997";
-        let cmd = parse_command(form, Some("application/x-www-form-urlencoded")).unwrap();
-        assert!(matches!(&cmd, Command::RebuildCompanyMatrix { company } if company == "HN2#997"));
+    fn parse_delete_and_rebuild() {
+        let d = parse_command("action=delete_node_formula&node_id=HN4%2330\
+                               &energy_type=district_heating&purpose=dhw",
+                              Some("application/x-www-form-urlencoded")).unwrap();
+        assert!(matches!(&d, Command::DeleteNodeFormula { purpose, .. } if purpose == "dhw"));
+        let r = parse_command("action=rebuild_company_matrix&company=HN2%23997",
+                              Some("application/x-www-form-urlencoded")).unwrap();
+        assert!(matches!(&r, Command::RebuildCompanyMatrix { company } if company == "HN2#997"));
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 2: Run to verify they fail, then add the variants**
 
-Run: `cargo test -p hierarchy node_formula 2>&1 | tail -20`
-Expected: FAIL — `no variant named SetNodeFormula`.
-
-- [ ] **Step 3: Add the command variants**
-
-Insert into `enum Command` in `crates/services/hierarchy/src/command.rs`, before the closing brace:
+Run: `cargo test -p hierarchy node_formula 2>&1 | tail -20` → FAIL.
 
 ```rust
     /// `set_node_formula` — upsert a node's `(energy_type, purpose)` formula.
-    /// `terms` is a JSON array of `{ref, coefficient}`, or a JSON-encoded string
-    /// of the same (the HTML form builds it client-side).
+    /// `purpose = total` declares the node's own value; anything else is a claim.
     SetNodeFormula {
         node_id: String,
         energy_type: String,
         purpose: String,
         terms: Value,
-        #[serde(default)]
-        note: Option<String>,
+        #[serde(default)] note: Option<String>,
     },
-
-    /// `delete_node_formula` — remove a node's `(energy_type, purpose)` formula.
-    DeleteNodeFormula {
-        node_id: String,
-        energy_type: String,
-        purpose: String,
-    },
-
-    /// `rebuild_company_matrix` — recompute a company's materialised weight
-    /// matrix from scratch. Operator escape hatch for a skipped recompute.
-    RebuildCompanyMatrix {
-        company: String,
-    },
+    /// `delete_node_formula` — remove one, reverting that pair to the default.
+    DeleteNodeFormula { node_id: String, energy_type: String, purpose: String },
+    /// `rebuild_company_matrix` — recompute the materialised matrix from scratch.
+    RebuildCompanyMatrix { company: String },
 ```
 
-- [ ] **Step 4: Run parse tests to verify they pass**
+Run again: PASS.
 
-Run: `cargo test -p hierarchy node_formula 2>&1 | tail -20`
-Expected: PASS (4 tests).
-
-- [ ] **Step 5: Write the failing handler tests**
-
-Add to `mod tests` in `crates/services/hierarchy/src/dispatch.rs`, following the in-memory-repo style already used there. Add `memory_store_with_company()` alongside the existing helpers if it doesn't exist — it must build a company containing `HN5#5` with `S#1` under it and `S#77` under a sibling node:
+- [ ] **Step 3: Write the failing handler tests**
 
 ```rust
     #[tokio::test]
-    async fn set_node_formula_stores_the_formula() {
-        let store = memory_store_with_company();
-        let out = set_formula(&store, "electricity", "cooling",
-                              serde_json::json!([{"ref": "S#1", "coefficient": 1}])).await;
-        assert_eq!(out["ok"], serde_json::json!(true));
-        assert_eq!(out["formula"]["purpose"], serde_json::json!("cooling"));
-    }
-
-    /// Writing a formula rebuilds the company's materialised matrix — that is
-    /// what the Glue roll-up reads, so it must never lag the formulas.
-    #[tokio::test]
-    async fn set_node_formula_rebuilds_the_matrix() {
+    async fn set_node_formula_stores_and_rebuilds_the_matrix() {
         let store = memory_store_with_company();
         assert!(store.weight_rows().is_empty());
-        set_formula(&store, "electricity", "cooling",
-                    serde_json::json!([{"ref": "S#1", "coefficient": 1}])).await;
-        let rows = store.weight_rows();
-        assert!(rows.iter().any(|r| r.contains("weight#claim") && r.contains("cooling")),
-                "claim row written, got: {rows:?}");
+        let out = set_formula(&store, "HN5#5", "electricity", "total",
+                              serde_json::json!([{"ref": "S#2", "coefficient": 0}])).await;
+        assert_eq!(out["ok"], serde_json::json!(true));
+        assert!(!store.weight_rows().is_empty(), "the matrix is what Glue reads");
     }
 
-    /// The subtree rule is enforced at the command boundary, not just in the UI.
+    /// Attaching a sensor changes the matrix, so it must recompute too —
+    /// recompute-on-formula-write alone leaves it stale.
     #[tokio::test]
-    async fn set_node_formula_rejects_out_of_subtree_reference() {
+    async fn attach_sensor_rebuilds_the_matrix() {
         let store = memory_store_with_company();
-        let out = set_formula(&store, "electricity", "cooling",
-                              serde_json::json!([{"ref": "S#77", "coefficient": 1}])).await;
-        assert_eq!(out["error"]["code"], serde_json::json!("Validation"));
+        let before = store.weight_rows().len();
+        attach_sensor_at(&store, "HN5#5", "S#77", "electricity").await;
+        assert!(store.weight_rows().len() > before);
     }
 
     #[tokio::test]
-    async fn set_node_formula_rejects_reserved_purpose() {
+    async fn set_node_formula_rejects_a_non_child_node_reference() {
         let store = memory_store_with_company();
-        let out = set_formula(&store, "electricity", "total",
-                              serde_json::json!([{"ref": "S#1", "coefficient": 1}])).await;
+        let out = set_formula(&store, "HN2#997", "electricity", "total",
+                              serde_json::json!([{"ref": "HN5#5", "coefficient": 0.5}])).await;
         assert_eq!(out["error"]["code"], serde_json::json!("Validation"));
     }
 
     #[tokio::test]
     async fn set_node_formula_rejects_malformed_terms() {
         let store = memory_store_with_company();
-        let out = set_formula(&store, "electricity", "cooling",
+        let out = set_formula(&store, "HN5#5", "electricity", "total",
                               serde_json::json!("not-json")).await;
         assert_eq!(out["error"]["code"], serde_json::json!("Bad_request"));
     }
-
-    /// Attaching a sensor changes the matrix (a new descendant at weight 1) and
-    /// must therefore trigger a rebuild too.
-    #[tokio::test]
-    async fn attach_sensor_rebuilds_the_matrix() {
-        let store = memory_store_with_company();
-        set_formula(&store, "electricity", "cooling",
-                    serde_json::json!([{"ref": "S#1", "coefficient": 1}])).await;
-        let before = store.weight_rows().len();
-        attach_contained_sensor(&store, 2, Some("S#1")).await; // S#2 inside S#1
-        let after = store.weight_rows();
-        assert!(after.len() > before, "containment added total-override rows");
-        assert!(after.iter().any(|r| r.contains("weight#total")));
-    }
 ```
 
-Add the `set_formula` and `attach_contained_sensor` test helpers that call the handlers with the store's closures.
+Add `memory_store_with_company`, `set_formula` and `attach_sensor_at` alongside the existing
+in-memory helpers; the fixture needs `HN2#997` → `HN4#4` → `HN5#5` with a sensor on `HN5#5`.
 
-- [ ] **Step 6: Run handler tests to verify they fail**
-
-Run: `cargo test -p hierarchy set_node_formula_ 2>&1 | tail -20`
-Expected: FAIL — `cannot find function handle_set_node_formula`.
-
-- [ ] **Step 7: Implement the handlers and recompute**
-
-Add to `crates/services/hierarchy/src/dispatch.rs`:
+- [ ] **Step 4: Implement the handlers**
 
 ```rust
-/// Parse the `terms` payload: a JSON array, or a JSON-encoded string of one.
+/// Parse `terms`: a JSON array, or a JSON-encoded string of one.
 fn parse_terms(v: &Value) -> Result<Vec<Term>, String> {
     let arr = match v {
         Value::Array(a) => a.clone(),
@@ -1998,97 +1301,49 @@ fn parse_terms(v: &Value) -> Result<Vec<Term>, String> {
             .map_err(|e| format!("terms is not a JSON array: {e}"))?,
         _ => return Err("terms must be a JSON array".to_string()),
     };
-    arr.iter()
-        .map(|t| {
-            let r = t.get("ref").and_then(Value::as_str).ok_or("term missing \"ref\"")?;
-            let c = t
-                .get("coefficient")
-                .and_then(Value::as_f64)
-                .ok_or("term missing numeric \"coefficient\"")?;
-            Ok(Term { reference: Reference::parse(r)?, coefficient: c })
-        })
-        .collect()
+    arr.iter().map(|t| {
+        let r = t.get("ref").and_then(Value::as_str).ok_or("term missing \"ref\"")?;
+        let c = t.get("coefficient").and_then(Value::as_f64)
+            .ok_or("term missing numeric \"coefficient\"")?;
+        Ok(Term { reference: Reference::parse(r)?, coefficient: c })
+    }).collect()
 }
 
-/// Load a company's graph, flatten it, and replace its materialised matrix.
-/// Called by every command that can change the matrix: set/delete formula,
-/// attach/replace/delete sensor, add/delete node.
-pub async fn recompute_matrix<FLF, FLFFut, FLS, FLSFut, FLN, FLNFut, FRM, FRMFut>(
+/// Load the company graph, flatten it, replace its materialised matrix. Called
+/// by every command that can change it.
+pub async fn recompute_matrix</* closure generics as in repo_fns */>(
     company_path: String,
     list_company_formulas: FLF,
     list_company_sensors: FLS,
     list_company_nodes: FLN,
     replace_matrix: FRM,
-) -> Result<(), RepositoryError>
-where
-    FLF: FnOnce(String) -> FLFFut,
-    FLFFut: Future<Output = Result<Vec<NodeFormula>, RepositoryError>>,
-    FLS: FnOnce(String) -> FLSFut,
-    FLSFut: Future<Output = Result<Vec<Sensor>, RepositoryError>>,
-    FLN: FnOnce(String) -> FLNFut,
-    FLNFut: Future<Output = Result<Vec<Node>, RepositoryError>>,
-    FRM: FnOnce(String, Matrix) -> FRMFut,
-    FRMFut: Future<Output = Result<(), RepositoryError>>,
-{
+) -> Result<(), RepositoryError> {
     let (formulas, sensors, nodes) = futures::try_join!(
         list_company_formulas(company_path.clone()),
         list_company_sensors(company_path.clone()),
-        list_company_nodes(company_path.clone()),
-    )?;
+        list_company_nodes(company_path.clone()))?;
     let matrix = formulas_logic::flatten(&CompanyGraph { nodes, sensors, formulas });
     replace_matrix(company_path, matrix).await
 }
 ```
 
-`handle_set_node_formula` parses and validates `(node_id, energy_type, purpose, terms)`, resolves the company path from the node, loads the company graph, calls `formulas_logic::validate`, writes the formula item, then calls `recompute_matrix`. `handle_delete_node_formula` deletes the item then recomputes. `handle_rebuild_company_matrix` resolves the company node's path and calls `recompute_matrix` alone.
+`handle_set_node_formula` parses and validates `(node_id, energy_type, purpose, terms)`,
+resolves the company path from the node, loads the graph, calls `formulas_logic::validate`,
+writes the formula item, then calls `recompute_matrix`. `handle_delete_node_formula` deletes
+then recomputes. `handle_rebuild_company_matrix` recomputes alone.
 
-Add `formula_to_json` to `crates/services/hierarchy/src/json.rs` emitting `{node, energy_type, purpose, terms:[{ref, coefficient}], note}`.
+Add the three `run` arms, gate all three behind the same `writes` edge as `AttachSensor`, and
+call `recompute_matrix` at the end of the existing `AttachSensor`, `ReplaceSensorDevice`,
+`DeleteSensor`, `AddNode` and `DeleteNode` arms. `UpdateNode` must **not** recompute.
 
-Add the three `run` arms, and call `recompute_matrix` at the end of the existing `AttachSensor`, `ReplaceSensorDevice`, `DeleteSensor`, `AddNode` and `DeleteNode` arms (resolving the company path from the affected node). `UpdateNode` touches only metadata and must **not** recompute.
+Add closure factories to `repo_fns.rs` following the existing pattern: `put_node_formula_fn`,
+`delete_node_formula_fn`, `list_node_formulas_fn`, `list_company_formulas_fn`,
+`list_company_sensors_fn`, `list_company_nodes_fn`, `replace_matrix_fn`. Add
+`formula_to_json` to `json.rs`.
 
-Add the closure factories to `crates/services/hierarchy/src/repo_fns.rs`, following the existing pattern exactly:
+- [ ] **Step 5: Verify and commit**
 
-```rust
-pub fn put_node_formula_fn(
-    ddb: &'static DynamoClient,
-    table: String,
-) -> impl Fn(NodeFormula, String, String) -> RepoFut<()> + Clone {
-    move |f, node_path, company_path| {
-        let t = table.clone();
-        Box::pin(async move {
-            ddb_formula::put_node_formula(ddb, &t, &f, &node_path, &company_path).await
-        })
-    }
-}
-
-pub fn replace_matrix_fn(
-    ddb: &'static DynamoClient,
-    table: String,
-) -> impl Fn(String, Matrix) -> RepoFut<()> + Clone {
-    move |company_path, m| {
-        let t = table.clone();
-        Box::pin(async move {
-            ddb_weight::replace_company_matrix(ddb, &t, &company_path, &m).await
-        })
-    }
-}
-```
-
-plus `delete_node_formula_fn`, `list_company_formulas_fn`, `list_node_formulas_fn`, `list_company_sensors_fn` (wrapping `ddb_sensor::list_sensors_under_path`) and `list_company_nodes_fn` (wrapping `ddb_node::list_by_gsi1_prefix` fanned out over `HN2`..`HN9`).
-
-- [ ] **Step 8: Run tests to verify they pass**
-
-Run: `cargo test -p hierarchy 2>&1 | tail -20`
-Expected: PASS.
-
-- [ ] **Step 9: Confirm the write gate**
-
-Formula edits must sit behind the `writes` edge, the same gate as `attach_sensor`. Check how `run` gates `Command::AttachSensor` (`crates/services/hierarchy/src/dispatch.rs:821` onward) and apply the identical guard to all three new arms.
-
-Run: `cargo test -p hierarchy 2>&1 | tail -5`
-Expected: PASS.
-
-- [ ] **Step 10: Commit**
+Run: `cargo test -p hierarchy 2>&1 | tail -20` → PASS.
 
 ```bash
 git add crates/services/hierarchy/src/
@@ -2097,142 +1352,96 @@ git commit -m "feat(hierarchy): formula commands + materialised matrix recompute
 
 ---
 
-### Task 7: Formler tab, containment picker, remove the sensor-formula UI
+### Task 7: Formler tab; remove the sensor-formula UI
 
 **Files:**
-- Modify: `crates/services/hierarchy/src/query.rs` (add `node_formulas` next to `"sensors"` at ~line 930)
-- Modify: `crates/services/hierarchy/src/html/node.rs` (delete lines ~308-500, the formula dialog; add the Formler tab)
-- Modify: `crates/services/hierarchy/src/html/forms.rs` (drop the formula row; rename the `purpose` select to `energy_type`; add the `contained_in` select)
+- Modify: `crates/services/hierarchy/src/query.rs`, `html/node.rs`, `html/forms.rs`
 - Test: `crates/services/hierarchy/tests/node_forms_html.rs`
 
 **Interfaces:**
-- Consumes: `list_node_formulas_fn`, `list_company_sensors_fn`, `list_company_nodes_fn` (Task 6)
-- Produces: `GET /hierarchy/query/node_formulas?node=<NodeId>` → HTML fragment; `html::node::render_node_formulas(&Node, &[NodeFormula], &[Sensor], &[Node]) -> Markup`
+- Produces: `GET /hierarchy/query/node_formulas?node=<NodeId>`;
+  `html::node::render_node_formulas(&Node, &[NodeFormula], &[Sensor], &[Node]) -> Markup`
 
-- [ ] **Step 1: Write the failing HTML tests**
-
-Add to `crates/services/hierarchy/tests/node_forms_html.rs`:
+- [ ] **Step 1: Write the failing tests**
 
 ```rust
-/// The Formler tab renders one card per formula, headed by (energy_type, purpose).
+/// One card per formula, headed by (energy_type, purpose).
 #[test]
 fn node_formulas_render_one_card_per_formula() {
     let html = render_node_formulas_fixture();
-    assert!(html.contains("district_heating"), "energy type in the heading");
-    assert!(html.contains("space_heating"), "purpose in the heading");
-    assert!(html.contains("bimåler"), "the note is shown");
-    assert!(html.contains("-1"), "the subtraction coefficient is shown");
+    assert!(html.contains("district_heating") && html.contains("space_heating"));
+    assert!(html.contains("bimåler"));
+    assert!(html.contains("-1"));
 }
 
-/// The reference picker offers only descendants of the node — the subtree rule
-/// is enforced in the UI as well as in the command.
+/// A pair with no formula shows the default, read-only — "nothing declared" must
+/// look different from "declared as Σ".
 #[test]
-fn node_formulas_reference_picker_lists_only_descendants() {
+fn node_formulas_show_the_default_when_none_is_declared() {
     let html = render_node_formulas_fixture();
-    assert!(html.contains("S#1"), "descendant sensor is offered");
-    assert!(!html.contains("S#77"), "sensor outside the subtree must not be offered");
+    assert!(html.contains("Σ"));
 }
 
-/// Reserved purposes are never offered — nesting is recorded on the sensor.
+/// The picker offers EVERY sensor in the company (D7) and names the node each one
+/// hangs off, so a sideways reference is an informed choice.
 #[test]
-fn node_formulas_do_not_offer_reserved_purposes() {
+fn reference_picker_offers_company_wide_sensors_with_their_node() {
     let html = render_node_formulas_fixture();
-    assert!(!html.contains("value=\"total\""));
-    assert!(!html.contains("value=\"unallocated\""));
+    assert!(html.contains("S#1"), "own sensor");
+    assert!(html.contains("S#77"), "sensor in another branch is offered");
+    assert!(html.contains("Building C2"), "and says where it lives");
 }
 
-/// The add-sensor form asks for both installation facts. Neither is inferable
-/// from the device, and a forgotten one silently inflates every total above it,
-/// so both are on the main form rather than behind an advanced section.
+/// Node references are direct children only.
 #[test]
-fn add_sensor_form_asks_for_both_installation_facts() {
-    let html = render_add_sensor_form_fixture();
-    assert!(html.contains("name=\"contained_in\""));
-    assert!(html.contains("Indgår allerede i"));
-    assert!(html.contains("name=\"flow\""));
-    assert!(html.contains("Retning"));
-    assert!(html.contains("value=\"out\""));
+fn reference_picker_offers_only_direct_children_as_nodes() {
+    let html = render_node_formulas_fixture();
+    assert!(html.contains("HN5#5"), "direct child");
+    assert!(!html.contains("HN6#6"), "grandchild must not be offered");
 }
 
-/// The old per-sensor formula dialog is gone for good.
+/// The old per-sensor formula dialog is gone, and the sensor form asks for
+/// nothing but what the sensor measures.
 #[test]
-fn add_sensor_form_has_no_formula_controls() {
+fn add_sensor_form_has_no_classification_controls() {
     let html = render_add_sensor_form_fixture();
     assert!(!html.contains("formula-dialog"));
     assert!(!html.contains("data.formula.kind"));
-    assert!(html.contains("name=\"energy_type\""), "purpose select renamed");
+    assert!(html.contains("name=\"energy_type\""));
+    assert!(html.contains("name=\"reading_kind\""));
 }
 ```
 
-Add `render_node_formulas_fixture`, building two `NodeFormula`s on `HN4#30` (`district_heating/dhw`, and `district_heating/space_heating` with the −1 term and the note `"bimåler"`), a descendant sensor `S#1` and a non-descendant `S#77`.
+- [ ] **Step 2: Run to verify they fail**
 
-- [ ] **Step 2: Run tests to verify they fail**
+Run: `cargo test -p hierarchy --test node_forms_html 2>&1 | tail -20` → FAIL.
 
-Run: `cargo test -p hierarchy --test node_forms_html 2>&1 | tail -20`
-Expected: FAIL — `cannot find function render_node_formulas`.
+- [ ] **Step 3: Delete the old UI**
 
-- [ ] **Step 3: Delete the sensor-formula UI**
+Remove the `<dialog id="formula-dialog">` block from `html/node.rs` — kind select, expression
+input, alias→sensor rows, the three hidden `data.formula.*` inputs and their inline script —
+and the company-sensor `<option>` fragment endpoint. In `html/forms.rs`, drop the Formula row
+and rename the `purpose` select to `energy_type`, `meter_type` to `reading_kind`.
 
-In `crates/services/hierarchy/src/html/node.rs`, delete the whole formula block (the `<dialog id="formula-dialog">`, the kind select, the expression input, the alias→sensor ref rows, the three hidden `data.formula.*` inputs, the "Edit formula…" button, the summary span, and their inline `<script>`). In `crates/services/hierarchy/src/html/forms.rs`, remove the Formula row and rename the `purpose` select to `energy_type`.
+Run: `cargo test -p hierarchy add_sensor_form_has_no_classification_controls` → PASS.
 
-Run: `cargo test -p hierarchy add_sensor_form_has_no_formula_controls 2>&1 | tail -10`
-Expected: PASS.
-
-- [ ] **Step 4: Add the two installation-fact controls**
-
-In the add-sensor form in `crates/services/hierarchy/src/html/forms.rs`:
+- [ ] **Step 4: Implement the Formler tab**
 
 ```rust
-    label {
-        "Indgår allerede i"
-        select name="contained_in" {
-            option value="" { "— indgår ikke i en anden måling —" }
-            @for s in candidate_containers {
-                option value=(s.id) { (s.daq_id) " (" (s.energy_type) ")" }
-            }
-        }
-        span class="hint" {
-            "Vælg den måling der allerede dækker denne — fx en akkumuleret kanal \
-             over sine fasekanaler — så forbruget ikke tælles dobbelt. Målingen \
-             hører til den node den DÆKKER, ikke der hvor måleren fysisk sidder: \
-             en hovedmåler for hele ejendommen hører på ejendomsnoden, også selv \
-             om kassen sidder i én bygning."
-        }
-    }
-
-    label {
-        "Retning"
-        select name="flow" {
-            option value="in" selected { "Ind — forbrug, produktion, bimåler" }
-            option value="out" { "Ud — eksport til nettet, solcelle-feed-in" }
-        }
-        span class="hint" {
-            "Målinger med retning \"ud\" trækkes fra i totalen."
-        }
-    }
-```
-
-`candidate_containers` is the company's active sensors filtered to the same `energy_type` and attached to this node or an ancestor of it — the same constraint `validate_containment` enforces. Neither control may be hidden behind an advanced section: a survey of the live `raw_data` corpus found nothing in the stream that encodes either fact, so the form is the only place they can be captured.
-
-- [ ] **Step 5: Implement the Formler tab**
-
-Add to `crates/services/hierarchy/src/html/node.rs`:
-
-```rust
-/// The node panel's **Formler** tab: one card per declared formula, plus an
-/// empty card for adding one. `descendant_*` is what the reference picker
-/// offers — the subtree rule made visible.
+/// The node panel's **Formler** tab. One card per declared formula, an empty card
+/// for adding one, and — for every `(energy_type, purpose)` with no formula — a
+/// read-only line showing the default, so "nothing declared" is visibly different
+/// from "declared as Σ".
 pub fn render_node_formulas(
     node: &Node,
     formulas: &[NodeFormula],
-    descendant_sensors: &[Sensor],
-    descendant_nodes: &[Node],
+    company_sensors: &[Sensor],   // D7: every sensor in the company
+    child_nodes: &[Node],         // D7: direct children only
 ) -> Markup {
     html! {
         div class="formulas" {
             @for f in formulas {
-                section class="formula-card"
-                        data-energy-type=(f.energy_type) data-purpose=(f.purpose) {
+                section class="formula-card" {
                     header {
                         span class="et" { (f.energy_type) }
                         span class="pur" { (f.purpose) }
@@ -2246,8 +1455,9 @@ pub fn render_node_formulas(
                         input type="hidden" name="terms" value=(terms_json(&f.terms));
                         @for t in &f.terms {
                             div class="term-row" {
-                                (reference_select(&t.reference, descendant_sensors, descendant_nodes))
-                                input type="number" step="any" class="coef" value=(t.coefficient);
+                                (reference_select(&t.reference, company_sensors, child_nodes))
+                                input type="number" step="any" class="coef"
+                                      value=(t.coefficient);
                             }
                         }
                         button type="button" class="add-term" { "+ Term" }
@@ -2258,28 +1468,30 @@ pub fn render_node_formulas(
                         input type="hidden" name="node_id" value=(node.id);
                         input type="hidden" name="energy_type" value=(f.energy_type);
                         input type="hidden" name="purpose" value=(f.purpose);
-                        button type="submit" { "Slet" }
+                        button type="submit" { "Slet — brug standarden" }
                     }
                 }
             }
-            (new_formula_card(node, descendant_sensors, descendant_nodes))
+            (default_lines(node, formulas))
+            (new_formula_card(node, company_sensors, child_nodes))
         }
     }
 }
 
-/// `<select>` of every reference the node may legally use: its descendant nodes
-/// and descendant sensors, nothing else.
-fn reference_select(selected: &Reference, sensors: &[Sensor], nodes: &[Node]) -> Markup {
+/// Every reference the node may legally use: its direct children, and every
+/// sensor in the company labelled with the node it hangs off — so picking one
+/// from another branch is an informed choice, not an accident.
+fn reference_select(selected: &Reference, sensors: &[Sensor], children: &[Node]) -> Markup {
     html! {
         select class="ref" {
-            @for n in nodes {
+            @for n in children {
                 option value=(n.id) selected[*selected == Reference::Node(n.id.clone())] {
                     (n.name) " (" (n.id) ")"
                 }
             }
             @for s in sensors {
                 option value=(s.id) selected[*selected == Reference::Sensor(s.id)] {
-                    (s.daq_id) " (" (s.energy_type) ")"
+                    (s.daq_id) " (" (s.energy_type) ") — " (sensor_node_name(s))
                 }
             }
         }
@@ -2287,49 +1499,29 @@ fn reference_select(selected: &Reference, sensors: &[Sensor], nodes: &[Node]) ->
 }
 ```
 
-Add `terms_json` (serialising `&[Term]` to `[{"ref":…,"coefficient":…}]`) and `new_formula_card` — the same card with an empty term list plus selects populated from `EnergyType::all()` and `Purpose::all().filter(|p| p.declarable())`. Add a small inline script keeping the hidden `terms` input in sync with the rows on submit, the same technique the deleted dialog used.
+Add `terms_json`, `new_formula_card` (selects from `EnergyType::all()` and
+`Purpose::all().filter(|p| p.declarable())`), `default_lines`, `sensor_node_name`, and a small
+inline script keeping the hidden `terms` input in sync with the rows on submit.
 
-Wire the query action in `crates/services/hierarchy/src/query.rs` next to `"sensors"`:
+Wire the query action next to `"sensors"` in `query.rs`; `handle_node_formulas` loads the
+node, the company's sensors and the node's direct children, then renders.
 
-```rust
-        "node_formulas" => {
-            handle_node_formulas(
-                qs.get("node").cloned().unwrap_or_default(),
-                get_node_fn(ddb, table.clone()),
-                list_node_formulas_fn(ddb, table.clone()),
-                list_company_sensors_fn(ddb, table.clone()),
-                list_company_nodes_fn(ddb, table.clone()),
-            )
-            .await
-        }
-```
+- [ ] **Step 5: Add the tab, verify, commit**
 
-`handle_node_formulas` loads the node, filters the company's sensors and nodes to strict descendants of `node.path`, and renders.
-
-- [ ] **Step 6: Run tests to verify they pass**
-
-Run: `cargo test -p hierarchy 2>&1 | tail -20`
-Expected: PASS.
-
-- [ ] **Step 7: Add the tab to the node panel**
-
-In the node panel's tab strip in `crates/services/hierarchy/src/html/node.rs`, add a **Formler** tab whose content loads via `hx-get="/hierarchy/query/node_formulas?node=<id>"`, matching how the existing Data/sensor tabs load.
+Add a **Formler** tab to the node panel's tab strip loading via
+`hx-get="/hierarchy/query/node_formulas?node=<id>"`.
 
 Run: `cargo test -p hierarchy 2>&1 | tail -5 && cargo clippy --all-targets 2>&1 | grep -c warning`
-Expected: tests PASS, `0` warnings.
-
-- [ ] **Step 8: Commit**
+Expected: PASS, `0`.
 
 ```bash
 git add crates/services/hierarchy/
-git commit -m "feat(hierarchy): Formler tab + containment picker; drop the sensor formula dialog"
+git commit -m "feat(hierarchy): Formler tab; drop the per-sensor formula dialog"
 ```
 
 ---
 
 ### Task 8: Deploy Phase 1 and seed the matrices
-
-**Files:** none (deploy only)
 
 - [ ] **Step 1: Build and diff**
 
@@ -2342,50 +1534,33 @@ export CDK_DEFAULT_ACCOUNT=339712745226 CDK_DEFAULT_REGION=eu-central-1 && \
 cdk diff OcamlHierarchyStack
 ```
 
-Expected: only Lambda `Code` `[~]` updates. **Stop and report** if the DynamoDB table shows any change.
+Expected: only Lambda `Code` `[~]`. **Stop and report** if the DynamoDB table shows any change.
 
-- [ ] **Step 2: Deploy**
+- [ ] **Step 2: Deploy and verify**
 
 ```bash
-cd infra/hierarchy && unset GOROOT && \
-export AWS_PROFILE=stel-sb && \
-eval "$(aws configure export-credentials --profile stel-sb --format env)" && \
-export CDK_DEFAULT_ACCOUNT=339712745226 CDK_DEFAULT_REGION=eu-central-1 && \
 cdk deploy OcamlHierarchyStack --require-approval never
 aws lambda get-function-configuration --profile stel-sb \
   --function-name rust-lambda-hierarchy --query '{State:State,Last:LastUpdateStatus}'
 ```
 
-Expected: `State=Active`, `LastUpdateStatus=Successful`.
+Expected: `Active` / `Successful`.
 
 - [ ] **Step 3: Seed every company's matrix**
 
-Existing companies have no weight rows yet. For each HN2 node, fire the rebuild:
-
-```bash
-API=https://d24beiqs2cj89y.cloudfront.net
-for c in $(curl -s "$API/hierarchy/query/nodes?level=hn2" | grep -o 'HN2#[0-9]*' | sort -u); do
-  curl -s -X POST "$API/command" \
-    -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data-urlencode "action=rebuild_company_matrix" --data-urlencode "company=$c"
-  echo " <- $c"
-done
-```
-
-Expected: `{"ok":true}` per company. Adjust the node-listing query to whatever `query.rs` actually exposes.
-
-- [ ] **Step 4: Verify the rows landed**
+Existing companies have no weight rows, so nothing would roll up. For each HN2 node, POST
+`action=rebuild_company_matrix&company=<id>` to the CloudFront `/command` endpoint, then:
 
 ```bash
 aws dynamodb query --profile stel-sb --table-name hierarchy_new --index-name gsi1 \
   --key-condition-expression 'gsi1pk = :p' \
   --expression-attribute-values '{":p":{"S":"W#HN2#997"}}' \
-  --query 'Items[].{kind:kind.S,sk:sk.S,coef:coefficient.N}' --max-items 10
+  --query 'length(Items)'
 ```
 
-Expected: weight rows for the company (empty is correct if it has no formulas and no covered sensors yet).
+Expected: non-zero — a company with sensors has `total` rows even with no formulas declared.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git commit --allow-empty -m "chore(hierarchy): deploy node-formula authoring (phase 1)"
@@ -2395,147 +1570,111 @@ git commit --allow-empty -m "chore(hierarchy): deploy node-formula authoring (ph
 
 # Phase 2 — Pipeline
 
-Corrects the vocabulary end-to-end (`purpose` → `energy_type`, `meter_type` → `reading_kind`, `meter-identity` → `sensor-identity`, `logical_meter_data` → `logical_data`) and teaches the roll-up job to consume the matrix. **Tasks 9–11 must land together** — there is no fallback in the contract, and Task 9 leaves `sensor-identity` empty until it is repopulated.
+**Tasks 9–11 must land together** — the contract has no fallback, and Task 9 leaves `sensor-identity` empty until it is repopulated.
 
 ---
 
-### Task 9: `sensor-identity` table, bridge rename, cross-account reader role
+### Task 9: `sensor-identity`, bridge rename, cross-account reader role
 
 **Files:**
-- Modify: `infra/daq/data_pipeline/data_pipeline_stack.go:45` (the table definition and the Flink event-source mapping)
-- Modify: `infra/hierarchy/app.go` (lines 21-26 table constants, 189-270 the bridge construct + DLQ + alarm, 285-360 the inlined Python `_item` builder), plus a new `HierarchyReaderRole`
-- Modify: `infra/daq/data_pipeline/ocaml_bridge_stack.go`, `infra/daq/data_pipeline/scripts/backup_restore_ddb.py`, `infra/daq/data_pipeline/lambda/late_arrival_trigger/handler.py`
+- Modify: `infra/daq/data_pipeline/data_pipeline_stack.go:45`, `ocaml_bridge_stack.go`, `scripts/backup_restore_ddb.py`, `lambda/late_arrival_trigger/handler.py`
+- Modify: `infra/hierarchy/app.go` (table constants ~21-26, bridge + DLQ + alarm ~189-270, inlined Python ~285-360), plus a new `HierarchyReaderRole`
 
-**Interfaces:**
-- Produces: a new **`sensor-identity`** table (replacing `meter-identity`) whose items carry `energy_type` and `reading_kind` (instead of `purpose` and `meter_type`) and **no** `formula`; an IAM role `arn:aws:iam::339712745226:role/HierarchyReaderRole` consumed by Task 11.
+**DynamoDB tables cannot be renamed**, so this is a replacement: new table, new stream ARN, Flink's ESM repointed and the app re-bootstrapped. The bridge repopulates from `hierarchy_new` stream events, so re-saving each sensor is the whole migration — cheap now (7 rows), expensive later.
 
-**Why this is a replacement, not a rename:** DynamoDB tables cannot be renamed. The new table gets a new stream ARN, so Flink's event-source mapping is repointed and the app re-bootstraps from the new table. The data migration is trivial — the bridge populates the table from `hierarchy_new` stream events, so re-saving each sensor repopulates it (dev currently holds 7 rows). Doing it now is far cheaper than doing it once real rows exist.
+- [ ] **Step 1: Create the new table and repoint everything**
 
-- [ ] **Step 0: Create `sensor-identity` and repoint Flink**
+Change `TableName` to `sensor-identity`, keeping key schema and stream settings. Rename
+`emsMeterIdentityTable` → `emsSensorIdentityTable`, the function
+`ocaml-meter-identity-bridge` → `ocaml-sensor-identity-bridge`, its DLQ and its
+`…-dlq-not-empty` alarm. Update the two Python scripts (`TABLE_NAME`, `BACKUP_FILE`,
+`METER_IDENTITY_TABLE` → `SENSOR_IDENTITY_TABLE`, `--meter_identity_table`).
 
-In `infra/daq/data_pipeline/data_pipeline_stack.go:45`, change `TableName` from `meter-identity` to `sensor-identity`. Keep the key schema and stream settings identical. In the same stack, confirm the Flink `DdbBootstrapLoader` table name and the stream event-source mapping both follow the new table.
+- [ ] **Step 2: Edit the bridge item builder**
 
-Rename the bridge's own resources in `infra/hierarchy/app.go` so nothing keeps the old noun: `emsMeterIdentityTable` → `emsSensorIdentityTable`, function `ocaml-meter-identity-bridge` → `ocaml-sensor-identity-bridge`, queue `…-dlq`, and the `…-dlq-not-empty` alarm. Update `ocaml_bridge_stack.go`, `scripts/backup_restore_ddb.py` (`TABLE_NAME`, `BACKUP_FILE`) and `lambda/late_arrival_trigger/handler.py` (`METER_IDENTITY_TABLE` → `SENSOR_IDENTITY_TABLE`, and the `--meter_identity_table` Glue argument).
+Emit `energy_type` instead of `purpose` and `reading_kind` instead of `meter_type`, and
+**delete** the two lines copying `formula`.
 
-Run: `cd infra/daq/data_pipeline && unset GOROOT && npx cdk diff DaqPipelineStack -c TableBucketName=measurements`
-Expected: the DynamoDB table is **replaced** (create new + delete old) and the Flink ESM is replaced. This is the one deliberate table replacement in the plan — confirm it is `meter-identity` only, and that `hierarchy_new` and `measurements_aggregate` are untouched.
-
-- [ ] **Step 1: Edit the bridge item builder**
-
-In the inlined Python in `infra/hierarchy/app.go`, emit `"energy_type"` instead of `"purpose"` and `"reading_kind"` instead of `"meter_type"`, point the writer at the new `sensor-identity` table (Step 2a), and **delete** the two lines copying `formula`:
-
-```python
-        if "formula" in img:
-            out["formula"] = {"S": json.dumps(_d.deserialize(img["formula"]), default=str)}
-```
-
-- [ ] **Step 2: Add the reader role**
-
-Find the Glue job's role name first:
+- [ ] **Step 3: Add the reader role**
 
 ```bash
 grep -n 'NewRole\|RoleName' infra/daq/data_pipeline/measurements_aggregate_stack.go
 ```
 
-Then add to `infra/hierarchy/app.go`, using that exact role ARN:
-
 ```go
-	// The DAQ account's Glue roll-up job assumes this to read the materialised
-	// weight matrix (spec §4.2, §6). Read-only, scoped to hierarchy_new + gsi1.
+	// The DAQ account's Glue roll-up assumes this to read the materialised
+	// coefficient matrix (spec §4.2, §8). Read-only, hierarchy_new + gsi1.
 	readerRole := awsiam.NewRole(stack, jsii.String("HierarchyReaderRole"), &awsiam.RoleProps{
-		RoleName: jsii.String("HierarchyReaderRole"),
-		AssumedBy: awsiam.NewArnPrincipal(
-			jsii.String("arn:aws:iam::891377204778:role/<GlueRoleName>")),
+		RoleName:  jsii.String("HierarchyReaderRole"),
+		AssumedBy: awsiam.NewArnPrincipal(jsii.String("arn:aws:iam::891377204778:role/<GlueRoleName>")),
 	})
 	readerRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
-		Actions: jsii.Strings("dynamodb:Query"),
-		Resources: jsii.Strings(
-			*hierarchyTable.TableArn(),
-			*hierarchyTable.TableArn()+"/index/gsi1",
-		),
+		Actions:   jsii.Strings("dynamodb:Query"),
+		Resources: jsii.Strings(*hierarchyTable.TableArn(), *hierarchyTable.TableArn()+"/index/gsi1"),
 	}))
 ```
 
-- [ ] **Step 3: Diff and deploy**
+- [ ] **Step 4: Diff, deploy, repopulate**
 
-```bash
-cd infra/hierarchy && unset GOROOT && \
-export AWS_PROFILE=stel-sb && \
-eval "$(aws configure export-credentials --profile stel-sb --format env)" && \
-export CDK_DEFAULT_ACCOUNT=339712745226 CDK_DEFAULT_REGION=eu-central-1 && \
-cdk diff OcamlHierarchyStack
-```
-
-Expected: a new IAM role plus the bridge Lambda's inline code `[~]`. **Stop and report** if the DynamoDB table shows any change. Then `cdk deploy OcamlHierarchyStack --require-approval never`.
-
-- [ ] **Step 4: Repopulate `sensor-identity` and verify the new shape**
-
-The new table starts empty. Re-save every sensor through the UI (or re-run `replace_sensor_device` with the same daq id) so the `hierarchy_new` stream fires and the bridge writes each row, then:
+`cdk diff` both stacks. Expected: `meter-identity` **replaced** by `sensor-identity`, the
+Flink ESM replaced, a new IAM role, bridge inline code `[~]`. **Stop and report** if
+`hierarchy_new` or `measurements_aggregate` show any change. Deploy, then re-save every sensor
+through the UI and confirm:
 
 ```bash
 aws dynamodb scan --profile daq_dev --table-name sensor-identity \
-  --query 'Items[].{daq:sk.S,et:energy_type.S,rk:reading_kind.S,purpose:purpose.S,formula:formula.S}'
+  --query 'Items[].{daq:sk.S,et:energy_type.S,rk:reading_kind.S,formula:formula.S}'
 ```
 
-Expected: one row per active sensor, `energy_type` and `reading_kind` populated, `purpose` / `meter_type` / `formula` absent. Cross-check the count against `hierarchy_new`'s active sensors — a short count means a sensor was missed, and Flink will silently drop its readings.
+Expected: one row per active sensor; `energy_type` and `reading_kind` populated; `formula`
+absent. Cross-check the count against `hierarchy_new`'s active sensors — a short count means
+Flink will silently drop that sensor's readings.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add infra/hierarchy/app.go
-git commit -m "feat(bridge)!: sensor-identity table; energy_type/reading_kind; drop formula; add HierarchyReaderRole"
+git add infra/
+git commit -m "feat(bridge)!: sensor-identity table; energy_type/reading_kind; drop formula; reader role"
 ```
 
 ---
 
-### Task 10: Flink + Iceberg column rename
+### Task 10: Flink + Iceberg rename
 
 **Files:**
 - Rename: `.../enrichment/MeterMapping.scala` → `SensorMapping.scala`
-- Modify: `DdbBootstrapLoader.scala:27,39`, `DdbStreamDeserializer.scala:32,35,41,45`, `MeterEnrichmentFunction.scala:109`, `flink/Main.scala:304,336,345`
-- Modify: `infra/daq/data_pipeline/s3tables_stack.go:73`
-- Modify: the four Scala spec files under `src/test/scala/` referencing `purpose`
+- Modify: `DdbBootstrapLoader.scala`, `DdbStreamDeserializer.scala`, `MeterEnrichmentFunction.scala`, `flink/Main.scala`, `s3tables_stack.go:73`, and the four Scala specs
 
-- [ ] **Step 1: Rename in Scala and its tests**
+- [ ] **Step 1: Rename in Scala**
 
-Rename the class `MeterMapping` → `SensorMapping`, its `purpose` → `energyType` and `meterType` → `readingKind`, and follow through in both deserialisers, the enrichment function, and `Main.scala`'s table schema and column list (the Iceberg columns are `energy_type` and `reading_kind`). Point the sink at **`all.logical_data`**. Update the four spec files.
+`MeterMapping` → `SensorMapping`; `.purpose` → `.energyType`, `.meterType` → `.readingKind`;
+`Main.scala`'s table schema and column list; point the sink at **`all.logical_data`**.
 
-Run: `cd infra/daq/data_pipeline/flink_app_scala && sbt test 2>&1 | tail -20`
-Expected: all specs PASS.
+Run: `cd infra/daq/data_pipeline/flink_app_scala && sbt test 2>&1 | tail -20` → PASS.
 
-- [ ] **Step 2: Rename the Iceberg column**
+- [ ] **Step 2: Rename the Iceberg columns and table**
 
-In `infra/daq/data_pipeline/s3tables_stack.go:73`, change `field("purpose", "string", false)` to `field("energy_type", "string", false)` in **both** table definitions, rename `meter_type` → `reading_kind`, and rename the table `logical_data` → **`logical_data`**. The table rename is free here: the column change already forces the delete/recreate below.
+In `s3tables_stack.go`: `purpose` → `energy_type` and `meter_type` → `reading_kind` in both
+table definitions, and `logical_meter_data` → `logical_data`.
 
 - [ ] **Step 3: Two-step delete/recreate (destructive — confirm first)**
 
-`AWS::S3Tables::Table` cannot be replaced in place: create-before-delete fails with `409 "table with an identical name already exists"`. **This clears both tables' data.** Kinesis retention is 24 h, so ~1 day is replayable.
-
-Stop the Flink app first so it isn't writing to a table being dropped:
+`AWS::S3Tables::Table` cannot be replaced in place. **This clears both tables.** ~24 h is
+replayable from Kinesis. Stop Flink first:
 
 ```bash
 aws kinesisanalyticsv2 stop-application --profile daq_dev \
   --application-name flink-iceberg-processor --force
 ```
 
-Step (1) — comment out the two table resources in `s3tables_stack.go` and deploy so CFN deletes them:
+Then comment out both table resources and `cdk deploy S3TablesStack` (CFN deletes them);
+restore with the new columns and name, and deploy again.
 
-```bash
-cd infra/daq/data_pipeline && unset GOROOT && \
-export AWS_PROFILE=daq_dev && \
-eval "$(aws configure export-credentials --profile daq_dev --format env)" && \
-npx cdk diff S3TablesStack -c TableBucketName=measurements && \
-npx cdk deploy S3TablesStack --require-approval never -c TableBucketName=measurements
-```
-
-Step (2) — restore both resources with the `energy_type` column and deploy again. Confirm the diff creates exactly the two tables.
-
-- [ ] **Step 4: Redeploy Flink and restart**
+- [ ] **Step 4: Redeploy Flink, restart, verify**
 
 ```bash
 cd infra/daq/data_pipeline/flink_app_scala && sbt clean assembly
-cd .. && unset GOROOT && \
-export AWS_PROFILE=daq_dev && \
+cd .. && unset GOROOT && export AWS_PROFILE=daq_dev && \
 eval "$(aws configure export-credentials --profile daq_dev --format env)" && \
 npx cdk deploy DaqPipelineStack --require-approval never \
   -c SHA="$(git rev-parse --short HEAD)" -c RUN_NR="$(date +%s)" \
@@ -2545,18 +1684,10 @@ aws kinesisanalyticsv2 start-application --profile daq_dev \
   --run-configuration '{"ApplicationRestoreConfiguration":{"ApplicationRestoreType":"RESTORE_FROM_LATEST_SNAPSHOT"}}'
 ```
 
-The operator `uid` and keyed-state descriptors are unchanged, so the snapshot restores; only the sink schema moved.
+Operator `uid` and keyed-state descriptors are unchanged, so the snapshot restores. Verify
+with an Athena query grouping `all.logical_data` by `energy_type`.
 
-- [ ] **Step 5: Verify rows land with the new column**
-
-```bash
-aws athena start-query-execution --profile daq_dev --work-group daq-workgroup \
-  --query-string "SELECT energy_type, count(*) FROM all.raw_data GROUP BY energy_type LIMIT 10"
-```
-
-Expected: rows grouped by populated `energy_type` values.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add infra/daq/data_pipeline/
@@ -2565,87 +1696,58 @@ git commit -m "feat(pipeline)!: sensor vocabulary in Flink and Iceberg (energy_t
 
 ---
 
-### Task 11: Weighted roll-up
+### Task 11: Roll-up job — one join, one grouped sum
 
 **Files:**
 - Create: `infra/daq/data_pipeline/glue/hierarchy_matrix.py`
-- Modify: `infra/daq/data_pipeline/glue/measurements_aggregate.py` (`build_sk`, `build_gsi1pk`, `build_rollups`, `read_counters`, `main`)
-- Modify: `infra/daq/data_pipeline/glue/tests/test_rollups.py`
-- Modify: `infra/daq/data_pipeline/measurements_aggregate_stack.go` (extra-py-files, job arg, `sts:AssumeRole`)
+- Modify: `glue/measurements_aggregate.py`, `glue/tests/test_rollups.py`, `measurements_aggregate_stack.go`
 
-**Interfaces:**
-- Consumes: the materialised matrix (Task 5), `HierarchyReaderRole` (Task 9)
-- Produces:
-  - `hierarchy_matrix.reader_table(role_arn, region) -> boto3 Table`
-  - `hierarchy_matrix.load_matrix(table, company_id) -> {"claims": [...], "total_overrides": [...]}`
-  - `build_sk(node_path, energy_type, purpose, gran, bucket) -> str`
-  - `build_gsi1pk(hn2, dimension, purpose) -> str`
-  - `build_rollups(df, matrix, run_at_iso) -> DataFrame`
-
-**The matrix module holds no domain rules.** It is a GSI query plus a dict transform — the flattening lives in `crates/model` and is materialised by the hierarchy service.
+**`ancestor_keys` is deleted.** Ancestry is baked into the matrix. There is no recursion, no default handling, no derived detection and no `Unallocated` subtraction in PySpark — `Unallocated` arrives as ordinary matrix rows.
 
 - [ ] **Step 1: Write the failing tests**
 
-Rewrite `infra/daq/data_pipeline/glue/tests/test_rollups.py`'s `_input` so its column is `energy_type` with the lower-case token `"electricity"`, keep the idempotency test (updating its sort keys), and add:
+Rewrite `_input` so its column is `energy_type` with the token `"electricity"`, then:
 
 ```python
 def _matrix():
-    """10009 claimed as lighting; 10010 sits inside 10009, so it is zeroed at
-    HN2#2 and HN3#9 but still counts at its own leaf."""
-    return {
-        "claims": [
-            {"declaring_node": "HN2#2|HN3#9|HN4#456", "energy_type": "electricity",
-             "purpose": "lighting", "sensor_id": 10009, "coefficient": 1.0,
-             "derived": False, "allocates": True},
-        ],
-        "total_overrides": [
-            {"node_path": "HN2#2", "energy_type": "electricity",
-             "sensor_id": 10010, "coefficient": 0.0},
-            {"node_path": "HN2#2|HN3#9", "energy_type": "electricity",
-             "sensor_id": 10010, "coefficient": 0.0},
-        ],
-    }
+    """Two nodes. HN2#2 sums both sensors; HN3#9 has only 10009. Lighting claims
+    10009 and rolls up. Unallocated arrives pre-computed by crates/model."""
+    def row(node, pur, sid, c):
+        return {"node_path": node, "energy_type": "electricity", "purpose": pur,
+                "sensor_id": sid, "coefficient": c}
+    return [
+        row("HN2#2", "total", 10009, 1.0), row("HN2#2", "total", 10010, 1.0),
+        row("HN2#2|HN3#9", "total", 10009, 1.0),
+        row("HN2#2", "lighting", 10009, 1.0),
+        row("HN2#2|HN3#9", "lighting", 10009, 1.0),
+        row("HN2#2", "unallocated", 10010, 1.0),
+    ]
 
 
 def test_sort_key_carries_the_purpose_segment(spark):
     out = _by_sk(m.build_rollups(_input(spark), _matrix(), run_at_iso="2026-06-07T09:05:00Z"))
     assert "HN2#2#electricity#total#h#2026-06-07T08" in out
-    assert "HN2#2|HN3#9|HN4#456#electricity#lighting#h#2026-06-07T08" in out
+    assert "HN2#2|HN3#9#electricity#lighting#h#2026-06-07T08" in out
 
 
-def test_total_honours_the_override_exception_list(spark):
+def test_value_is_the_weighted_sum_of_the_matrix(spark):
     out = _by_sk(m.build_rollups(_input(spark), _matrix(), run_at_iso="2026-06-07T09:05:00Z"))
-    # 10009 contributes 4+6 = 10; 10010's 5 is zeroed at HN2#2 (covered sensor).
-    assert out["HN2#2#electricity#total#h#2026-06-07T08"]["sum"] == 10.0
+    # 10009 contributes 4+6 = 10, 10010 contributes 5.
+    assert out["HN2#2#electricity#total#h#2026-06-07T08"]["sum"] == 15.0
+    assert out["HN2#2|HN3#9#electricity#total#h#2026-06-07T08"]["sum"] == 10.0
 
 
-def test_unlisted_pairs_default_to_weight_one(spark):
-    """The override list is an EXCEPTION list — a left-join miss means weight 1."""
+def test_unallocated_needs_no_arithmetic_in_the_job(spark):
     out = _by_sk(m.build_rollups(_input(spark), _matrix(), run_at_iso="2026-06-07T09:05:00Z"))
-    leaf = out["HN2#2|HN3#9|L#10010#electricity#total#h#2026-06-07T08"]
-    assert leaf["sum"] == 5.0
+    assert out["HN2#2#electricity#unallocated#h#2026-06-07T08"]["sum"] == 5.0
 
 
-def test_claims_roll_up_to_every_ancestor(spark):
-    out = _by_sk(m.build_rollups(_input(spark), _matrix(), run_at_iso="2026-06-07T09:05:00Z"))
-    for path in ["HN2#2", "HN2#2|HN3#9", "HN2#2|HN3#9|HN4#456"]:
-        assert out["%s#electricity#lighting#h#2026-06-07T08" % path]["sum"] == 10.0
-
-
-def test_unallocated_is_total_minus_claims(spark):
-    out = _by_sk(m.build_rollups(_input(spark), _matrix(), run_at_iso="2026-06-07T09:05:00Z"))
-    assert out["HN2#2#electricity#unallocated#h#2026-06-07T08"]["sum"] == 0.0
-
-
-def test_derived_claims_are_excluded_from_unallocated(spark):
-    matrix = _matrix()
-    matrix["claims"].append({
-        "declaring_node": "HN2#2|HN3#9|HN4#456", "energy_type": "district_cooling",
-        "purpose": "cooling", "sensor_id": 10009, "coefficient": 3.2,
-        "derived": True, "allocates": False})
+def test_a_negative_coefficient_subtracts(spark):
+    matrix = [r for r in _matrix() if r["purpose"] == "total"]
+    matrix.append({"node_path": "HN2#2|HN3#9", "energy_type": "electricity",
+                   "purpose": "total", "sensor_id": 10010, "coefficient": -1.0})
     out = _by_sk(m.build_rollups(_input(spark), matrix, run_at_iso="2026-06-07T09:05:00Z"))
-    assert out["HN2#2#district_cooling#cooling#h#2026-06-07T08"]["sum"] == 32.0
-    assert out["HN2#2#district_cooling#unallocated#h#2026-06-07T08"]["sum"] == 0.0
+    assert out["HN2#2|HN3#9#electricity#total#h#2026-06-07T08"]["sum"] == 5.0
 
 
 def test_gsi1pk_carries_the_purpose(spark):
@@ -2660,29 +1762,32 @@ def test_min_max_and_last_value_are_gone(spark):
     for dropped in ("min", "max", "last_value", "last_ts"):
         assert dropped not in df.columns
     assert "count" in df.columns
+
+
+def test_the_job_holds_no_formula_logic(spark):
+    """Guard against semantics creeping back into PySpark."""
+    src = open(os.path.join(os.path.dirname(__file__), "..",
+                            "measurements_aggregate.py")).read()
+    for forbidden in ("ancestor_keys", "derived", "allocates", "generation", "def coeffs"):
+        assert forbidden not in src, forbidden
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 2: Run to verify they fail**
 
-Run: `cd infra/daq/data_pipeline/glue && python -m pytest tests/test_rollups.py -q 2>&1 | tail -15`
-Expected: FAIL — `build_rollups() takes 2 positional arguments but 3 were given`.
+Run: `cd infra/daq/data_pipeline/glue && python -m pytest tests/ -q 2>&1 | tail -15` → FAIL.
 
 - [ ] **Step 3: Write the matrix reader**
 
-Create `infra/daq/data_pipeline/glue/hierarchy_matrix.py`:
-
 ```python
-"""Read a company's materialised weight matrix from hierarchy_new (cross-account).
+"""Read a company's materialised coefficient matrix from hierarchy_new.
 
-Deliberately holds NO domain rules: the flattening (containment, outflow, the
-subtree rule, node-reference expansion, derived detection) lives in
-crates/model/src/logic/formulas.rs and is materialised by the hierarchy service.
-This module is a GSI query and a dict transform.
+Holds NO domain rules. The recursion, the defaults, derived detection and the
+Unallocated arithmetic all live in crates/model/src/logic/formulas.rs and are
+materialised by the hierarchy service. This module is a GSI query.
 """
 
 
 def reader_table(role_arn, region, table_name="hierarchy_new"):
-    """hierarchy_new in the hierarchy account, via HierarchyReaderRole."""
     import boto3
     c = boto3.client("sts").assume_role(
         RoleArn=role_arn, RoleSessionName="measurements-aggregate")["Credentials"]
@@ -2693,186 +1798,77 @@ def reader_table(role_arn, region, table_name="hierarchy_new"):
         aws_session_token=c["SessionToken"]).Table(table_name)
 
 
-def _query_gsi(table, gsi1pk):
+def load_matrix(table, company_id):
     from boto3.dynamodb.conditions import Key
-    items, kwargs = [], {"IndexName": "gsi1",
-                         "KeyConditionExpression": Key("gsi1pk").eq(gsi1pk)}
+    rows, kwargs = [], {"IndexName": "gsi1",
+                        "KeyConditionExpression": Key("gsi1pk").eq("W#HN2#%d" % int(company_id))}
     while True:
         page = table.query(**kwargs)
-        items.extend(page.get("Items", []))
+        rows.extend({"node_path": r["node_path"],
+                     "energy_type": r["energy_type"],
+                     "purpose": r["purpose"],
+                     "sensor_id": int(r["sensor_id"]),
+                     "coefficient": float(r["coefficient"])}
+                    for r in page.get("Items", []))
         if "LastEvaluatedKey" not in page:
-            return items
+            return rows
         kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
-
-
-def load_matrix(table, company_id):
-    """One query per company. Returns claims + the total-weight exception list."""
-    rows = _query_gsi(table, "W#HN2#%d" % int(company_id))
-    claims, overrides = [], []
-    for r in rows:
-        if r.get("kind") == "claim":
-            claims.append({
-                "declaring_node": r["declaring_node"],
-                "energy_type": r["energy_type"],
-                "purpose": r["purpose"],
-                "sensor_id": int(r["sensor_id"]),
-                "coefficient": float(r["coefficient"]),
-                "derived": bool(r.get("derived", False)),
-                "allocates": bool(r.get("allocates", True)),
-            })
-        elif r.get("kind") == "total":
-            overrides.append({
-                "node_path": r["node_path"],
-                "energy_type": r["energy_type"],
-                "sensor_id": int(r["sensor_id"]),
-                "coefficient": float(r["coefficient"]),
-            })
-    return {"claims": claims, "total_overrides": overrides}
-
-
-def merge(a, b):
-    """Combine two companies' matrices."""
-    return {"claims": a["claims"] + b["claims"],
-            "total_overrides": a["total_overrides"] + b["total_overrides"]}
-
-
-EMPTY = {"claims": [], "total_overrides": []}
 ```
 
-- [ ] **Step 4: Rewrite the key builders and `build_rollups`**
+The reader deliberately drops `allocates` — the job never needs it, because `Unallocated` is
+already a set of matrix rows.
 
-In `infra/daq/data_pipeline/glue/measurements_aggregate.py`:
+- [ ] **Step 4: Rewrite the job**
 
 ```python
-def build_sk(node_path: str, energy_type: str, purpose: str, gran: str, bucket: str) -> str:
-    """sk = '<node_path>#<energy_type>#<purpose>#<gran>#<bucket>'. The bucket stays
-    LAST so a fixed (energy_type, purpose) is a pure BETWEEN key-range. The '#'
-    after node_path keeps a node's own rows sorting before its descendants'
-    ('|' > '#')."""
+def build_sk(node_path, energy_type, purpose, gran, bucket):
+    """The bucket stays LAST so a fixed (energy_type, purpose) is a pure BETWEEN
+    key-range. '#' after node_path keeps a node's own rows sorting before its
+    descendants' ('|' > '#')."""
     return "%s#%s#%s#%s#%s" % (node_path, energy_type, purpose, gran, bucket)
 
 
-def build_gsi1pk(hn2: int, dimension: str, purpose: str) -> str:
-    """The dimension partition is per-purpose, so a cross-type 'all energy' query
-    can never sum `total` together with its own purpose breakdown."""
+def build_gsi1pk(hn2, dimension, purpose):
+    """Per-purpose, so a cross-type 'all energy' query cannot sum total together
+    with its own purpose breakdown."""
     return "HN2#%d#%s#%s" % (hn2, dimension, purpose)
 
 
-def path_ancestors(node_path: str):
-    """'A|B|C' -> ['A', 'A|B', 'A|B|C'] — the claim-propagation chain."""
-    segs = node_path.split("|")
-    return ["|".join(segs[: i + 1]) for i in range(len(segs))]
+def build_rollups(df, matrix, run_at_iso):
+    """value(node, energy_type, purpose) = Σ coefficient × reading.
 
-
-_PATH_ANCESTORS_UDF = F.udf(path_ancestors, T.ArrayType(T.StringType()))
-_GSI1PK_UDF = F.udf(build_gsi1pk, T.StringType())
-```
-
-Replace `build_rollups`:
-
-```python
-def build_rollups(df: DataFrame, matrix: dict, run_at_iso: str) -> DataFrame:
-    """Aggregate counter rows into per-node/energy_type/purpose/gran/bucket items.
-
-    Three series come out:
-      total        Σ of every descendant sensor of that energy type, each at its
-                   weight — 1 unless the matrix lists an exception for this
-                   (node_path, sensor).
-      <purpose>    Σ of the declared claims, rolled up to every ancestor of the
-                   declaring node.
-      unallocated  total − Σ(claims whose `allocates` flag is set).
-
-    `matrix` is {"claims": [...], "total_overrides": [...]} from hierarchy_matrix.
-    All formula semantics were resolved upstream; this function only joins and sums.
+    The matrix already encodes ancestry, the defaults and Unallocated, so this is
+    one join and one grouped sum. See spec §8.2.
     """
     spark = df.sparkSession
+    with_buckets = df.withColumn("gb", F.explode(F.array(
+        F.struct(F.lit("h").alias("gran"),
+                 F.date_format(F.col("resample_timestamp"), "yyyy-MM-dd'T'HH").alias("bucket")),
+        F.struct(F.lit("d").alias("gran"),
+                 F.date_format(F.col("resample_timestamp"), "yyyy-MM-dd").alias("bucket")),
+    ))).select("*", F.col("gb.gran").alias("gran"), F.col("gb.bucket").alias("bucket"))
 
-    with_buckets = df.withColumn(
-        "gb",
-        F.explode(F.array(
-            F.struct(F.lit("h").alias("gran"),
-                     F.date_format(F.col("resample_timestamp"), "yyyy-MM-dd'T'HH").alias("bucket")),
-            F.struct(F.lit("d").alias("gran"),
-                     F.date_format(F.col("resample_timestamp"), "yyyy-MM-dd").alias("bucket")),
-        )),
-    ).select("*", F.col("gb.gran").alias("gran"), F.col("gb.bucket").alias("bucket"))
-
-    exploded = with_buckets.withColumn(
-        "node_path",
-        F.explode(_ancestor_keys_udf(
-            *[F.col("hn%d" % i) for i in range(2, 10)], F.col("logical_id"))))
-
-    # ── total: left-join the exception list, default weight 1 ──
-    ov_schema = T.StructType([
-        T.StructField("o_node_path", T.StringType()),
-        T.StructField("o_energy_type", T.StringType()),
-        T.StructField("o_logical_id", T.IntegerType()),
-        T.StructField("o_weight", T.DoubleType()),
+    schema = T.StructType([
+        T.StructField("node_path", T.StringType()),
+        T.StructField("m_energy_type", T.StringType()),
+        T.StructField("purpose", T.StringType()),
+        T.StructField("m_logical_id", T.IntegerType()),
+        T.StructField("coefficient", T.DoubleType()),
     ])
-    ov_rows = [(o["node_path"], o["energy_type"], int(o["sensor_id"]), float(o["coefficient"]))
-               for o in matrix["total_overrides"]]
-    overrides = spark.createDataFrame(ov_rows, ov_schema)
+    m_df = spark.createDataFrame(
+        [(r["node_path"], r["energy_type"], r["purpose"],
+          int(r["sensor_id"]), float(r["coefficient"])) for r in matrix], schema)
 
-    totals = (exploded
-        .join(F.broadcast(overrides),
-              (exploded.node_path == overrides.o_node_path)
-              & (exploded.logical_id == overrides.o_logical_id)
-              & (exploded.energy_type == overrides.o_energy_type), "left")
-        .withColumn("weight", F.coalesce(F.col("o_weight"), F.lit(1.0)))
-        .withColumn("contrib", F.col("resample_value") * F.col("weight"))
-        .groupBy("hn2", "node_path", "energy_type", "gran", "bucket")
+    grouped = (with_buckets
+        .join(F.broadcast(m_df),
+              (with_buckets.logical_id == m_df.m_logical_id)
+              & (with_buckets.energy_type == m_df.m_energy_type), "inner")
+        .withColumn("contrib", F.col("resample_value") * F.col("coefficient"))
+        .groupBy("hn2", "node_path", "m_energy_type", "purpose", "gran", "bucket")
         .agg(F.sum("contrib").alias("sum"),
              F.count("contrib").alias("count"),
              F.max("unit").alias("unit"))
-        .withColumn("purpose", F.lit("total"))
-        .withColumn("derived", F.lit(False))
-        .withColumn("allocates", F.lit(False)))
-
-    # ── declared purposes ──
-    if matrix["claims"]:
-        cl_schema = T.StructType([
-            T.StructField("declaring_node", T.StringType()),
-            T.StructField("c_energy_type", T.StringType()),
-            T.StructField("purpose", T.StringType()),
-            T.StructField("c_logical_id", T.IntegerType()),
-            T.StructField("coefficient", T.DoubleType()),
-            T.StructField("derived", T.BooleanType()),
-            T.StructField("allocates", T.BooleanType()),
-        ])
-        claims = spark.createDataFrame(
-            [(c["declaring_node"], c["energy_type"], c["purpose"], int(c["sensor_id"]),
-              float(c["coefficient"]), bool(c["derived"]), bool(c["allocates"]))
-             for c in matrix["claims"]],
-            cl_schema)
-        claimed = (with_buckets
-            .join(F.broadcast(claims),
-                  with_buckets.logical_id == claims.c_logical_id, "inner")
-            # A claim declared on a node counts for that node AND every ancestor.
-            .withColumn("node_path", F.explode(_PATH_ANCESTORS_UDF(F.col("declaring_node"))))
-            .withColumn("contrib", F.col("resample_value") * F.col("coefficient"))
-            .groupBy("hn2", "node_path", "c_energy_type", "purpose", "gran", "bucket",
-                     "derived", "allocates")
-            .agg(F.sum("contrib").alias("sum"),
-                 F.count("contrib").alias("count"),
-                 F.max("unit").alias("unit"))
-            .withColumnRenamed("c_energy_type", "energy_type"))
-    else:
-        claimed = totals.limit(0)
-
-    # ── unallocated = total − Σ(physical, non-outflow claims) ──
-    # `allocates` is computed in crates/model (derived rows and outflow purposes
-    # do not reduce unallocated). The job filters on the flag, never on a purpose name.
-    physical = (claimed
-        .filter(F.col("allocates"))
-        .groupBy("hn2", "node_path", "energy_type", "gran", "bucket")
-        .agg(F.sum("sum").alias("claimed_sum")))
-    unallocated = (totals
-        .join(physical, ["hn2", "node_path", "energy_type", "gran", "bucket"], "left")
-        .withColumn("sum", F.col("sum") - F.coalesce(F.col("claimed_sum"), F.lit(0.0)))
-        .drop("claimed_sum")
-        .withColumn("purpose", F.lit("unallocated")))
-
-    grouped = totals.unionByName(claimed).unionByName(unallocated)
+        .withColumnRenamed("m_energy_type", "energy_type"))
 
     return grouped.select(
         F.concat(F.lit("HN2#"), F.col("hn2").cast("string")).alias("pk"),
@@ -2881,81 +1877,42 @@ def build_rollups(df: DataFrame, matrix: dict, run_at_iso: str) -> DataFrame:
         _GSI1SK_UDF("node_path", "gran", "bucket").alias("gsi1sk"),
         "energy_type", "purpose", "unit", "sum", "count",
         F.lit(run_at_iso).alias("updated_at"),
-        _TTL_UDF("gran", "bucket").alias("ttl"),
-    )
+        _TTL_UDF("gran", "bucket").alias("ttl"))
 ```
 
-Rename the `purpose` column to `energy_type` in `read_counters`'s `SELECT` and projection.
+Delete `ancestor_keys` and `_ancestor_keys_udf`. Rename `purpose` → `energy_type` in
+`read_counters` and point it at `all.logical_data`. In `main`, load and merge the matrix per
+distinct `hn2`, and add `hierarchy_reader_role_arn` to the required args.
 
-- [ ] **Step 5: Run tests to verify they pass**
+In `measurements_aggregate_stack.go`: pass that argument, add `hierarchy_matrix.py` via
+`--extra-py-files`, and grant the Glue role `sts:AssumeRole` on
+`arn:aws:iam::339712745226:role/HierarchyReaderRole`.
 
-Run: `cd infra/daq/data_pipeline/glue && python -m pytest tests/ -q 2>&1 | tail -15`
-Expected: PASS.
+- [ ] **Step 5: Verify, deploy, rebuild the view**
 
-- [ ] **Step 6: Wire the matrix into `main`**
+Run: `cd infra/daq/data_pipeline/glue && python -m pytest tests/ -q 2>&1 | tail -15` → PASS.
 
-```python
-    counters = read_counters(spark, window_start)
-    companies = [r["hn2"] for r in counters.select("hn2").distinct().collect()]
-    table = hierarchy_matrix.reader_table(args["hierarchy_reader_role_arn"], region)
-    matrix = hierarchy_matrix.EMPTY
-    for cid in companies:
-        matrix = hierarchy_matrix.merge(matrix, hierarchy_matrix.load_matrix(table, cid))
-    rollups = build_rollups(counters, matrix, now.strftime("%Y-%m-%dT%H:%M:%S+00:00"))
-```
-
-Add `hierarchy_reader_role_arn` to the `required` args list. In `measurements_aggregate_stack.go`, pass that argument, add `hierarchy_matrix.py` via `--extra-py-files`, and grant the Glue role `sts:AssumeRole` on `arn:aws:iam::339712745226:role/HierarchyReaderRole`.
-
-- [ ] **Step 7: Diff and deploy**
+`cdk diff MeasurementsAggregateStack`: expect Glue script asset `[~]`, IAM `[~]`, a new job
+argument. **Stop and report** if the DynamoDB table shows replacement. Deploy, delete the old
+rollup rows (the sort key gained a segment, so they are unreadable), then:
 
 ```bash
-cd infra/daq/data_pipeline && unset GOROOT && \
-export AWS_PROFILE=daq_dev && \
-eval "$(aws configure export-credentials --profile daq_dev --format env)" && \
-npx cdk diff MeasurementsAggregateStack \
-  -c SHA="$(git rev-parse --short HEAD)" -c RUN_NR="$(date +%s)" \
-  -c ParPerKPU=1 -c MaxKPU=4 -c TableBucketName=measurements -c LookbackDays=1
-```
-
-Expected: Glue script asset `[~]`, IAM policy `[~]`, a new job argument. **Stop and report** if the `measurements_aggregate` table shows replacement. Then deploy with the same `-c` flags.
-
-- [ ] **Step 8: Wipe and rebuild the view**
-
-The sort key gained a segment, so old rows are unreadable garbage:
-
-```bash
-aws dynamodb scan --profile daq_dev --table-name measurements_aggregate \
-  --projection-expression 'pk,sk' --query 'Items[*]' --output json \
-  > /tmp/claude-1000/-home-sla-projects-ems-rust/dc6f41e2-8599-4c7a-8bce-3e403680bd17/scratchpad/old-rollups.json
-# delete in batches of 25 via batch-write-item, then:
 aws glue start-job-run --profile daq_dev --job-name measurements-aggregate \
   --arguments '{"--lookback_days":"30"}'
-aws glue get-job-runs --profile daq_dev --job-name measurements-aggregate \
-  --max-results 1 --query 'JobRuns[0].{State:JobRunState,Error:ErrorMessage}'
 ```
 
-Expected: `State=SUCCEEDED`.
+- [ ] **Step 6: Update the docs the renames invalidated**
 
-- [ ] **Step 9: Update the docs the renames just invalidated**
+`CLAUDE.md` names `meter-identity`, `logical_meter_data`, `purpose` and `meter_type`, and is
+the first file any future session reads. Update it, plus the session memories that still say
+"SPECCED NOT DONE" (`sensor-not-meter-vocabulary.md`, `node-formula-rollup-design.md`), and
+rename `meter-identity-change-auto-triggers-late-recompute.md` with its `[[…]]` backlinks.
 
-Phase 2 renamed four things `CLAUDE.md` documents by name. Leaving it stale is worse than not writing it, because it is the file every future session reads first. Update:
-
-- `CLAUDE.md` — `meter-identity` → `sensor-identity` (Stack 2 section, the cross-account ordering section, the bridge description in Stack 1), `logical_meter_data` → `logical_data` (the `measurements_aggregate` description and the Athena verification query), `purpose` → `energy_type` and `meter_type` → `reading_kind` in the field-contract paragraph, and the `ocaml-meter-identity-bridge` lambda name.
-- `memory/cross_account_bridge.md` if it exists (CLAUDE.md's "Cross-account ordering" section points at it for the full field contract).
-
-Then the session memories that still carry the old names — they are marked "SPECCED NOT DONE" and that is now false:
-
-```bash
-ls /home/sla/.claude/projects/-home-sla-projects-ems-rust/memory/
-```
-
-Flip `sensor-not-meter-vocabulary.md`'s rename table from planned to done, drop the naming note from `meter-identity-change-auto-triggers-late-recompute.md` and rename that file to `sensor-identity-change-auto-triggers-late-recompute.md` (updating the `[[…]]` links in `daq-uniqueness-and-sensor-gsi.md` and the `MEMORY.md` index line), and update `node-formula-rollup-design.md`'s status.
-
-- [ ] **Step 10: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add infra/daq/data_pipeline/ CLAUDE.md
-git commit -m "feat(glue): weighted roll-up from the materialised matrix (total/purpose/unallocated)"
+git commit -m "feat(glue): roll-up is one join and one grouped sum over the coefficient matrix"
 ```
 
 ---
@@ -2967,33 +1924,19 @@ git commit -m "feat(glue): weighted roll-up from the materialised matrix (total/
 ### Task 12: Aggregations reads the purpose axis
 
 **Files:**
-- Modify: `crates/services/aggregations/src/main.rs` — `parse_sk`, `Row` (line 145), `to_rows` (157), `to_rows_dimension` (187), `QueryParams` (236), `query_node` (253), `query_one_resource` (268), `query_dimension` (301), `handle_aggregations` (441), `fetch_node_rows` (550), `tariff_dkk_per_unit` (609), `emission_kg_per_unit` (623), `scale_rows` (654)
-
-**Interfaces:**
-- Produces:
-  - `Row { level_id, energy_type, purpose, unit, resolution, timestamp, value, contributor_count }`
-  - `QueryParams { …, energy_type, purpose }`
-  - `sk_prefix(sk_path, energy_type, purpose, gran) -> String`
-  - `tariff_dkk_per_unit(energy_type, purpose, unit) -> f64`, `emission_kg_per_unit(energy_type, purpose, unit) -> f64`
+- Modify: `crates/services/aggregations/src/main.rs` — `parse_sk`, `Row` (145), `to_rows` (157), `to_rows_dimension` (187), `QueryParams` (236), `query_node` (253), `query_one_resource` (268), `query_dimension` (301), `handle_aggregations` (441), `fetch_node_rows` (550), the factor tables (609/623), `scale_rows` (654)
 
 - [ ] **Step 1: Write the failing tests**
-
-Add to `mod tests` in `crates/services/aggregations/src/main.rs`:
 
 ```rust
     #[test]
     fn parse_sk_reads_the_purpose_segment() {
         let (path, et, purpose, gran, bucket) =
             parse_sk("HN2#2|HN3#9#electricity#lighting#h#2026-06-07T08");
-        assert_eq!(path, "HN2#2|HN3#9");
-        assert_eq!(et, "electricity");
-        assert_eq!(purpose, "lighting");
-        assert_eq!(gran, "h");
-        assert_eq!(bucket, "2026-06-07T08");
+        assert_eq!((path, et, purpose, gran, bucket),
+                   ("HN2#2|HN3#9", "electricity", "lighting", "h", "2026-06-07T08"));
     }
 
-    /// The default purpose is `total`, so existing widgets keep their meaning
-    /// at their current cost — one pure BETWEEN range per energy type.
     #[test]
     fn query_prefix_defaults_to_total() {
         assert_eq!(sk_prefix("HN2#2", "electricity", "", Gran::Hour),
@@ -3002,8 +1945,6 @@ Add to `mod tests` in `crates/services/aggregations/src/main.rs`:
                    "HN2#2#electricity#lighting#h#");
     }
 
-    /// Exported energy must not be billed or charged CO₂ — this is what replaces
-    /// the demo's per-sensor emission factor.
     #[test]
     fn generation_has_no_tariff_or_emissions() {
         assert_eq!(emission_kg_per_unit("electricity", "generation", "kWh"), 0.0);
@@ -3018,75 +1959,29 @@ Add to `mod tests` in `crates/services/aggregations/src/main.rs`:
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 2: Run to verify they fail, then implement**
 
-Run: `cargo test -p aggregations parse_sk_reads 2>&1 | tail -20`
-Expected: FAIL — `parse_sk` returns a 4-tuple.
-
-- [ ] **Step 3: Implement**
-
-1. `parse_sk` returns `(path, energy_type, purpose, gran, bucket)`.
-2. Extract the prefix builder so it is testable:
+`parse_sk` returns a 5-tuple. Extract:
 
 ```rust
-/// `<node_path>#<energy_type>#<purpose>#<gran>#` — the bucket is appended by the
-/// caller to form a pure `BETWEEN` key-range. An empty `purpose` means `total`.
+/// `<node_path>#<energy_type>#<purpose>#<gran>#` — the caller appends the bucket
+/// to form a pure `BETWEEN` range. Empty `purpose` means `total`.
 fn sk_prefix(sk_path: &str, energy_type: &str, purpose: &str, gran: Gran) -> String {
     let purpose = if purpose.is_empty() { "total" } else { purpose };
     format!("{sk_path}#{energy_type}#{purpose}#{}#", gran.code())
 }
 ```
 
-3. Add `purpose: &'a str` to `QueryParams`; thread it from `handle_aggregations` (`qs.get("purpose")`, default `""`) and from `fetch_node_rows` (always `"total"`). Rename `QueryParams.resource` to `energy_type`.
-4. `query_dimension`'s `gsi1pk` becomes `format!("{}#{}#{}", p.pk, dimension, if p.purpose.is_empty() { "total" } else { p.purpose })`.
-5. `Row` gains `energy_type: String`; `purpose` now holds the real purpose.
-6. The factor tables take a purpose:
+Add `purpose` to `QueryParams`, thread it from `handle_aggregations` (default `""`) and
+`fetch_node_rows` (always `"total"`); rename `QueryParams.resource` → `energy_type` and
+`query_one_resource` → `query_one_energy_type`. `query_dimension`'s `gsi1pk` gains the
+purpose. `Row` gains `energy_type`. Both factor tables take `(energy_type, purpose, unit)` and
+return 0 for `generation`; `scale_rows`'s closure becomes `Fn(&str, &str, &str) -> f64`.
+`handle_alarms` and `handle_benchmark` pass `purpose = "total"`. Update the utoipa params.
 
-```rust
-/// Representative unit price (DKK). Outflow purposes are not billed.
-fn tariff_dkk_per_unit(energy_type: &str, purpose: &str, unit: &str) -> f64 {
-    if purpose == "generation" {
-        return 0.0;
-    }
-    let (per_kwh, per_m3) = match energy_type {
-        "electricity" => (2.50, 0.0),
-        "district_heating" | "heat" => (0.90, 0.0),
-        "district_cooling" => (0.50, 0.0),
-        "gas" => (0.0, 8.0),
-        "water" => (0.0, 50.0),
-        _ => (0.0, 0.0),
-    };
-    per_unit(per_kwh, per_m3, unit)
-}
+- [ ] **Step 3: Verify and commit**
 
-/// Representative CO₂e factor (kg CO₂e). Exported energy emits nothing here — it
-/// is an outflow, which is why no per-sensor emission factor is needed.
-fn emission_kg_per_unit(energy_type: &str, purpose: &str, unit: &str) -> f64 {
-    if purpose == "generation" {
-        return 0.0;
-    }
-    let (per_kwh, per_m3) = match energy_type {
-        "electricity" => (0.12, 0.0),
-        "district_heating" | "heat" => (0.06, 0.0),
-        "district_cooling" => (0.04, 0.0),
-        "gas" => (0.0, 2.05),
-        "water" => (0.0, 0.34),
-        _ => (0.0, 0.0),
-    };
-    per_unit(per_kwh, per_m3, unit)
-}
-```
-
-7. `scale_rows`'s closure becomes `Fn(&str, &str, &str) -> f64`, called as `factor(&r.energy_type, &r.purpose, &r.unit)`.
-8. `handle_alarms` and `handle_benchmark` pass `purpose = "total"` explicitly.
-9. Update the `#[utoipa::path]` params with `purpose`, and rename the `resource` param to `energy_type`.
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `cargo test -p aggregations 2>&1 | tail -20`
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
+Run: `cargo test -p aggregations 2>&1 | tail -20` → PASS.
 
 ```bash
 git add crates/services/aggregations/
@@ -3095,20 +1990,15 @@ git commit -m "feat(aggregations): read the purpose axis; (energy_type, purpose)
 
 ---
 
-### Task 13: `get_purpose_split` query action
+### Task 13: `get_purpose_split`
 
 **Files:**
-- Modify: `crates/services/aggregations/src/main.rs` (route table at lines 387-403; new handler; `openapi_response`)
-
-**Interfaces:**
-- Consumes: `sk_prefix`, `QueryParams` (Task 12)
-- Produces: `GET /meterdata/query/get_purpose_split?level_id=&energy_type=&start=&end=&resolution=&format=`
+- Modify: `crates/services/aggregations/src/main.rs` (routes 387-403, new handler, `openapi_response`)
 
 - [ ] **Step 1: Write the failing test**
 
 ```rust
-    /// The split keeps `total` separate and the physical purposes plus
-    /// `unallocated` add up to it.
+    /// The physical purposes plus unallocated add up to total.
     #[test]
     fn purpose_split_rows_are_grouped_by_purpose() {
         let items = vec![
@@ -3117,123 +2007,32 @@ git commit -m "feat(aggregations): read the purpose axis; (energy_type, purpose)
             agg_item("HN2#2#electricity#cooling#d#2026-06-07", 18.0),
             agg_item("HN2#2#electricity#unallocated#d#2026-06-07", 60.0),
         ];
-        let rows = to_rows(items, "HN2#2", "daily", Gran::Day);
         let by: std::collections::BTreeMap<_, _> =
-            rows.iter().map(|r| (r.purpose.as_str(), r.value)).collect();
+            to_rows(items, "HN2#2", "daily", Gran::Day)
+                .iter().map(|r| (r.purpose.clone(), r.value)).collect();
         assert_eq!(by["total"], 100.0);
         assert_eq!(by["lighting"] + by["cooling"] + by["unallocated"], by["total"]);
     }
 ```
 
-Add the `agg_item(sk, sum)` helper (`unit = "kWh"`, `count = 1`) if the module lacks one.
+- [ ] **Step 2: Add the route and handler**
 
-- [ ] **Step 2: Run to verify it fails**
+`GET /meterdata/query/get_purpose_split?level_id=&energy_type=&start=&end=&resolution=&format=`
+fans out over `Purpose::all()` concurrently — the same shape as today's fan-out over the six
+energy types — and returns one `Row` per purpose. Add the utoipa path and register it in
+`openapi_response()`.
 
-Run: `cargo test -p aggregations purpose_split 2>&1 | tail -20`
-Expected: FAIL until `to_rows` populates `purpose` from the new segment.
+- [ ] **Step 3: Verify, deploy, commit**
 
-- [ ] **Step 3: Add the route and handler**
-
-```rust
-            "get_purpose_split" => {
-                api::finish(handle_purpose_split(client, table, &qs).await, Cors::None)
-            }
-```
-
-```rust
-/// `GET /meterdata/query/get_purpose_split` — a node's end-use breakdown for one
-/// energy type: every declared purpose plus `total` and `unallocated`.
-#[utoipa::path(
-    get,
-    path = "/meterdata/query/get_purpose_split",
-    tag = "aggregations",
-    params(
-        ("level_id" = String, Query, description = "Hierarchy node path"),
-        ("energy_type" = String, Query, description = "Energy type to break down"),
-        ("resolution" = Option<String>, Query, description = "hourly | daily (default)"),
-        ("start" = String, Query, description = "ISO-8601 start (required)"),
-        ("end" = String, Query, description = "ISO-8601 end (required)"),
-        ("format" = Option<String>, Query, description = "json (default) | html"),
-    ),
-    responses(
-        (status = 200, description = "One row per purpose", body = Vec<Row>),
-        (status = 400, description = "Missing/invalid parameters", body = api::ErrorResponse),
-    ),
-)]
-async fn handle_purpose_split(
-    client: &Client,
-    table: &str,
-    qs: &HashMap<String, String>,
-) -> Result<ApiResponse, ApiError> {
-    let format = Format::resolve(qs.get("format").map(String::as_str), Format::Json);
-    let (level_id, resolution, start, end) = window_params(qs)?;
-    let energy_type = qs.get("energy_type").cloned().unwrap_or_default();
-    if energy_type.is_empty() {
-        return Err(ApiError::bad_request("energy_type is required"));
-    }
-
-    let gran = Gran::from_resolution(&resolution);
-    let (pk, sk_path) = match parse_node_keys(&level_id) {
-        Ok(keys) => keys,
-        Err(_) => return Ok(rows_response(&[], format)),
-    };
-    let (start_bucket, end_bucket) = match (bucket_label(&start, gran), bucket_label(&end, gran)) {
-        (Ok(s), Ok(e)) => (s, e),
-        _ => return Err(ApiError::bad_request("start/end must be ISO-8601 timestamps")),
-    };
-
-    // Fan out over every purpose concurrently — the same shape as the existing
-    // fan-out over the six energy types.
-    let queries = Purpose::all().map(|p| {
-        let params = QueryParams {
-            table, pk: &pk, sk_path: &sk_path, gran,
-            start_bucket: &start_bucket, end_bucket: &end_bucket,
-            energy_type: &energy_type, purpose: p.as_str(),
-        };
-        query_one_energy_type(client, &params, &energy_type)
-    });
-    let items: Vec<AggItem> = try_join_all(queries)
-        .await
-        .map_err(|e| ApiError::internal(e.to_string()))?
-        .into_iter()
-        .flatten()
-        .collect();
-
-    Ok(rows_response(&to_rows(items, &level_id, &resolution, gran), format))
-}
-```
-
-Import `model::domain::values::Purpose` alongside `EnergyType`, and add the path to `openapi_response()`.
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `cargo test -p aggregations 2>&1 | tail -20`
-Expected: PASS.
-
-- [ ] **Step 5: Build, deploy and verify**
+Run: `cargo test -p aggregations 2>&1 | tail -20` → PASS.
 
 ```bash
 cargo lambda build --release --arm64 -p aggregations
-cd infra/daq/data_pipeline && unset GOROOT && \
-export AWS_PROFILE=daq_dev && \
-eval "$(aws configure export-credentials --profile daq_dev --format env)" && \
-npx cdk diff MeasurementsAggregateStack \
-  -c SHA="$(git rev-parse --short HEAD)" -c RUN_NR="$(date +%s)" \
-  -c ParPerKPU=1 -c MaxKPU=4 -c TableBucketName=measurements -c LookbackDays=1
-```
-
-Expected: Lambda `Code` `[~]` and a new HTTP API route only. Deploy, then:
-
-```bash
-API=$(aws cloudformation describe-stacks --profile daq_dev \
-  --stack-name MeasurementsAggregateStack \
-  --query 'Stacks[0].Outputs[?OutputKey==`AggregationsApiUrl`].OutputValue' --output text)
+# cdk diff + deploy MeasurementsAggregateStack, then:
 curl -s "$API/meterdata/query/get_purpose_split?level_id=HN2%23997&energy_type=electricity&start=2026-07-01T00:00:00Z&end=2026-07-28T00:00:00Z"
 ```
 
-Expected: JSON rows including `total` and `unallocated`.
-
-- [ ] **Step 6: Commit**
+Expected: rows including `total` and `unallocated`.
 
 ```bash
 git add crates/services/aggregations/ infra/daq/data_pipeline/
@@ -3242,13 +2041,13 @@ git commit -m "feat(aggregations): get_purpose_split end-use breakdown"
 
 ---
 
-### Task 14: End-use breakdown in the node dashboard
+### Task 14: End-use breakdown widget
 
 **Files:**
 - Create: `frontend/src/components/PurposeSplit.astro`
-- Modify: the node Data-tab dashboard hosting the aggregation widgets (`grep -rn "get_aggregations" frontend/src`)
+- Modify: the node Data-tab dashboard (`grep -rn "get_aggregations" frontend/src`)
 
-- [ ] **Step 1: Build the widget**
+- [ ] **Step 1: Build it**
 
 ```astro
 ---
@@ -3261,9 +2060,7 @@ const url = `${base}/meterdata/query/get_purpose_split` +
 <section class="purpose-split">
   <h3>Formålsopdeling</h3>
   <table>
-    <thead>
-      <tr><th>Formål</th><th>Tid</th><th>Værdi</th><th>Enhed</th><th>Punkter</th></tr>
-    </thead>
+    <thead><tr><th>Formål</th><th>Tid</th><th>Værdi</th><th>Enhed</th><th>Punkter</th></tr></thead>
     <tbody hx-get={url} hx-trigger="load, ems:refresh from:body" hx-swap="innerHTML">
       <tr><td colspan="5" class="muted">Henter…</td></tr>
     </tbody>
@@ -3277,13 +2074,10 @@ const url = `${base}/meterdata/query/get_purpose_split` +
 </style>
 ```
 
-Layout uses grid, per the project's CSS rule. Mount it in the node Data tab next to the existing aggregation widgets.
+Grid, not flex. Mount it beside the existing aggregation widgets and confirm it re-fires on
+soft navigation (`htmx.process` on `astro:page-load` if it sits outside `#node-data-panel`).
 
-- [ ] **Step 2: Make it soft-nav safe**
-
-Confirm the widget re-fires on soft navigation: content outside `#node-data-panel` must call `htmx.process` on `astro:page-load`. Follow whatever the neighbouring widgets in the same file do.
-
-- [ ] **Step 3: Build and deploy**
+- [ ] **Step 2: Build, deploy, verify, commit**
 
 ```bash
 cd frontend && npm run build
@@ -3294,11 +2088,8 @@ export CDK_DEFAULT_ACCOUNT=339712745226 CDK_DEFAULT_REGION=eu-central-1 && \
 cdk deploy OcamlFrontendStack --require-approval never
 ```
 
-- [ ] **Step 4: Verify live**
-
-Open `https://d24beiqs2cj89y.cloudfront.net`, go to a company node's Data tab, and confirm the Formålsopdeling table renders rows including `total` and `unallocated`.
-
-- [ ] **Step 5: Commit**
+Open the live site, go to a company node's Data tab, confirm the table renders with `total`
+and `unallocated`.
 
 ```bash
 git add frontend/
@@ -3307,32 +2098,27 @@ git commit -m "feat(frontend): end-use breakdown widget on the node Data tab"
 
 ---
 
-### Task 15: End-to-end acceptance against the presentation
-
-**Files:** none (verification only)
+### Task 15: Acceptance against the presentation
 
 `docs/hierarchy-presentation.html` is a runnable model of the arithmetic. Reproducing its numbers through the real stack is the acceptance test for the whole plan.
 
-- [ ] **Step 1: Author the fixture company through the UI**
+- [ ] **Step 1: Build the fixture company through the UI**
 
-On a scratch company, build the presentation's shape and record:
-
-| Where | What |
+| Node | Formula |
 |---|---|
-| Chiller phase-channel sensors (same node as the accumulator — one device) | `contained_in` = the accumulating channel |
-| Building A1 DHW submeter sensor | `contained_in` = the main heat sensor |
-| Area A1b grid-export sensor | `flow` = **out** (import and production stay `in`) |
-| Chiller | `electricity/cooling` = accumulator × 1 |
-| Chiller | `district_cooling/cooling` = accumulator × 3.2 |
-| Area A1b | `electricity/generation` = export × 1 (reporting only) |
-| Building A1 | `district_heating/dhw` = DHW × 1 |
-| Building A1 | `district_heating/space_heating` = main × 1 + DHW × −1 |
-| Building A2 | `district_heating/dhw` = main × 0.28 |
-| Building A2 | `district_heating/space_heating` = main × 0.72 |
-| Building B1 | `electricity/space_heating` = heat pump × 0.7 |
-| Building B1 | `electricity/dhw` = heat pump × 0.3 |
-| Building B1 | `heat/space_heating` = heat pump × 3.5 |
-| Building B2 | `heat/space_heating` = gas × 10.45 |
+| Chiller | `electricity/total` = cL1×0, cL2×0, cL3×0 |
+| Chiller | `electricity/cooling` = ACC×1 |
+| Chiller | `district_cooling/cooling` = ACC×3.2 |
+| Area A1b | `electricity/total` = EXP×−1 |
+| Area A1b | `electricity/generation` = EXP×1 |
+| Building A1 | `district_heating/total` = DHW×0 |
+| Building A1 | `district_heating/dhw` = DHW×1 |
+| Building A1 | `district_heating/space_heating` = HM1×1 + DHW×−1 |
+| Building A2 | `district_heating/dhw` = HM2×0.28; `…/space_heating` = HM2×0.72 |
+| Building B1 | `electricity/lighting` = LGT; `…/ventilation` = AHU |
+| Building B1 | `electricity/space_heating` = HP×0.7; `…/dhw` = HP×0.3; `heat/space_heating` = HP×3.5 |
+| Building B2 | `electricity/plug_loads` = KIT; `heat/space_heating` = GAS×10.45 |
+| **Building C1** | **`electricity/total` = SUB×−1** — SUB lives in Building C2 |
 
 - [ ] **Step 2: Run the roll-up**
 
@@ -3341,22 +2127,18 @@ aws glue start-job-run --profile daq_dev --job-name measurements-aggregate \
   --arguments '{"--lookback_days":"2"}'
 ```
 
-- [ ] **Step 3: Assert the six invariants**
+- [ ] **Step 3: Assert six invariants via `get_purpose_split`**
 
-Query `get_purpose_split` per fixture node and check:
+1. **Recursion** — Chiller `total` = 40 (not 80); Area A1a = 124. The correction needs no restating upward.
+2. **Sideways reference** — C1 = 70, C2 = 30, Property C = 100. The main is counted exactly once.
+3. **Direction** — Area A1b `total` = import + production − export = 120; `generation` = 30 separately; `get_emissions` on `total` charges nothing for the export.
+4. **Exact partition** — A1 `district_heating`: `space_heating + dhw == total`, `unallocated == 0`. Same for A2's 0.28/0.72.
+5. **One sensor, many purposes** — B1 `electricity`: lighting + ventilation + space_heating + dhw == total, `unallocated == 0`.
+6. **Derived floats free** — `district_cooling/cooling` and both `heat/space_heating` sources are non-zero while their `total` and `unallocated` are 0.
 
-1. **No double counting** — the chiller's `electricity/total` equals its `electricity/cooling` (40, not 80), because its three phase channels are covered by the accumulating channel on the same node. For the relational half of the rule, add a tenant submeter on an area below a building's main sensor and confirm the area reports the tenant's use while the building still counts it once.
-2. **Exact partition** — Building A1's `district_heating`: `space_heating + dhw == total`, `unallocated == 0`. Same for A2 with the 0.28/0.72 split.
-3. **Signed total** — Area A1b's `electricity/total` equals `import + production − export`. Remove the production sensor from the fixture and it becomes `import − export`; both are correct, and neither is the 150 that zeroing the export sensor would give.
-4. **One sensor, many purposes** — Building B1's `electricity`: `lighting + ventilation + space_heating + dhw == total`, `unallocated == 0`, with the heat pump's 0.7/0.3 split summing to exactly one sensor's reading.
-5. **Derived rows float free** — `district_cooling/cooling` and both `heat/space_heating` sources are non-zero while their `total` and `unallocated` are 0.
-6. **The matrix is live** — edit one formula, re-run the job, and confirm the numbers move without any manual rebuild.
+- [ ] **Step 4: Record and commit**
 
-- [ ] **Step 4: Record the result**
-
-Append an "Acceptance" section to `docs/superpowers/specs/2026-07-28-node-formula-rollup-design.md` with the measured values, so the spec records what was verified rather than what was intended.
-
-- [ ] **Step 5: Commit**
+Append an "Acceptance" section to the spec with the measured values, so it records what was verified rather than what was intended.
 
 ```bash
 git add docs/superpowers/specs/2026-07-28-node-formula-rollup-design.md
@@ -3367,14 +2149,12 @@ git commit -m "docs: record node-formula roll-up acceptance results"
 
 ## Self-Review
 
-**Spec coverage.** §2 D1–D8 → Tasks 1-3, 5, 11. §2.1 naming → Task 1. §3.1 deletions → Task 2. §3.2 rename → Tasks 1, 9, 10, 11, 12. §3.3 types → Tasks 1, 2. §3.4 flatten → Task 3. §3.5 subtree rule → Task 4. §3.6 claim propagation → Tasks 3, 11. §3.7 derived → Tasks 3, 11. §3.8 containment + outflow → Tasks 2, 3, 4, 7, 11. §4.1 formula items → Task 5. §4.2 materialised matrix → Tasks 5, 6. §5 hierarchy service → Tasks 6, 7. §6 bridge + reader role → Task 9. §7 Flink/Iceberg → Task 10. §8.1 keys, §8.2 stages, §8.3 dropped attributes, §8.4 no duplicated semantics → Task 11. §9 read side → Tasks 12, 13. §11 testing → distributed. §12 deploy order → Tasks 8, 9, 10, 11, 13, 14. §13 out of scope → not planned, correctly.
+**Spec coverage.** D1–D9 → Tasks 1–4, 9, 11. §3.1 deletions → Task 2. §3.2 renames → Tasks 1, 9, 10, 12. §3.3 bare sensor → Tasks 2, 7. §3.4 types → Tasks 1, 2. §3.5 the two defaults → Task 3. §3.6 sideways references → Tasks 3, 4, 7, 15. §3.7 flatten → Task 3. §3.8 derived/outflow → Tasks 3, 4. §3.9 termination → Task 4 (direct-child rule). §4.1/§4.2 storage → Task 5. §5 service + UI → Tasks 6, 7. §6 bridge + `sensor-identity` → Task 9. §7 Flink/Iceberg → Task 10. §8 roll-up → Task 11. §9 read side → Tasks 12, 13. §11 testing → distributed. §12 deploy order → Tasks 8–11, 13, 14.
 
-**Gap found and closed:** §4.2 says the matrix is recomputed by the *service*, but the triggering commands are listed only in §5.2 prose. Task 6 Step 7 names each arm explicitly and Step 5 tests that `attach_sensor` triggers it — recompute-on-formula-write alone would have left the matrix stale on every sensor change.
+**Gap found and closed:** the spec says `Unallocated` arrives as ordinary matrix rows, which only holds if `flatten` emits them. Task 3 tests it explicitly (`unallocated_is_total_minus_allocating`), and Task 11 adds a guard test asserting no formula vocabulary appears in the PySpark source at all, so the semantics cannot creep back.
 
-**Gap found and closed:** §12 says wipe `measurements_aggregate` and re-run, without saying old rows become unreadable when the sort key gains a segment — made explicit in Task 11 Step 8. Likewise, existing companies have no weight rows after Phase 1, so Task 8 Step 3 seeds them via `rebuild_company_matrix`.
+**Gap found and closed:** recompute-on-formula-write alone leaves the matrix stale whenever a *sensor* changes. Task 6 names every triggering command and tests `attach_sensor` specifically.
 
-**Gap found and closed:** `contained_in` and `flow` can both apply to one sensor (a covered channel that also exports). Task 3's `total_overrides` resolves it explicitly — the containment 0 row wins over the −1 row at nodes where the container is present, so a covered sensor is never double counted whichever way it flows.
+**Gap found and closed:** existing companies have no weight rows after Phase 1, so nothing would roll up at all. Task 8 Step 3 seeds them and asserts a non-zero count.
 
-**No Glue change from the `Flow` work.** The roll-up consumes `total_overrides` as opaque `(node_path, sensor, coefficient)` rows and multiplies; a coefficient of −1 needs no code change, which is the payoff of materialising the matrix (D6). Task 11's tests still exercise only 0-weight overrides, which is correct — the −1 path is covered in Task 3 where the rule lives.
-
-**Type consistency.** `Reference`/`Term`/`NodeFormula` (Task 2) are used unchanged in Tasks 3-7. `CompanyGraph`/`Claim`/`TotalOverride`/`Matrix`/`flatten`/`total_weight_at`/`is_derived` (Task 3) are consumed with identical signatures in Tasks 4, 5, 6. The PySpark side (Task 11) uses `sensor_id` where Rust uses `sensor`, and `claims`/`total_overrides` matching `Matrix`'s field names — the codec in Task 5 writes exactly those keys, and Task 11's `load_matrix` reads them. `build_sk` gains its `purpose` parameter in Task 11 and every call site there passes five arguments. `tariff_dkk_per_unit`/`emission_kg_per_unit` gain `purpose` in Task 12 and `scale_rows`'s closure signature is updated in the same task. `query_one_resource` is renamed `query_one_energy_type` in Task 12 and Task 13 calls it by that name.
+**Type consistency.** `Reference`/`Term`/`NodeFormula` (Task 2) are used unchanged in Tasks 3–7. `CompanyGraph`/`MatrixRow`/`coeffs`/`flatten`/`is_derived` (Task 3) keep their signatures in Tasks 4, 5, 6. The PySpark side (Task 11) reads `node_path, energy_type, purpose, sensor_id, coefficient` — exactly the attribute names Task 5's `matrix_row_to_item` writes. `build_sk` takes five arguments at every call site. The factor functions gain `purpose` in Task 12 and `scale_rows` is updated there; `query_one_energy_type` is renamed in Task 12 and called by that name in Task 13.
