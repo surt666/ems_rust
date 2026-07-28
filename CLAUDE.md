@@ -45,7 +45,7 @@ silently never runs. Put cleanup in its own call, or neutralise it: `pkill -f 'a
 | Account | Id | Owns |
 |---|---|---|
 | Hierarchy / backend | `339712745226` | `rust-lambda-hierarchy` API lambda (arm64), `hierarchy_new` table, the cross-account bridge lambda, the **frontend** (S3 + CloudFront) |
-| DAQ / pipeline | `891377204778` | Flink (MSF) app, Glue late-recomputation, `meter-identity` table, S3 Iceberg tables, `measurements_aggregate` + the aggregations Lambda |
+| DAQ / pipeline | `891377204778` | Flink (MSF) app, Glue late-recomputation, `sensor-identity` table, S3 Iceberg tables, `measurements_aggregate` + the aggregations Lambda |
 
 ### Stack 1 — Hierarchy service (account `339712745226`)
 
@@ -66,7 +66,7 @@ cdk deploy OcamlHierarchyStack --require-approval never
 ```
 
 - Updates two lambdas: `rust-lambda-hierarchy` (the API; arm64, `provided.al2023`, synchronous
-  Cognito create/delete with rollback + generated permanent password) and `ocaml-meter-identity-bridge`
+  Cognito create/delete with rollback + generated permanent password) and `sensor-identity-bridge`
   (the cross-account bridge; its Python is inlined in `infra/hierarchy/app.go`).
 - The DynamoDB table is **not** touched by a normal deploy (verify in `cdk diff`).
 - The frontend reaches the API via CloudFront, whose origin reads SSM `/api/rust-hierarchy-api-url`
@@ -106,13 +106,25 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
 - `LateRecomputationStack` swaps the Glue script (`late-data-recomputation` job).
   `OcamlBridgeWriterRoleStack` (the IAM role the bridge assumes) is normally unchanged.
   `S3TablesStack` owns the Iceberg tables; deploying it with **changed columns replaces the table**
-  (data loss) — that's how `logical_meter_data` (columns `resample_value/resample_method/resample_timestamp`)
+  (data loss) — that's how `logical_data` (columns `resample_value/resample_method/resample_timestamp`)
   gets recreated.
 - `MeasurementsAggregateStack` owns the `measurements_aggregate` DynamoDB table (on-demand, TTL,
-  `RETAIN`) + the hourly `measurements-aggregate` Glue job that rolls up `logical_meter_data`
-  counter consumption per node/purpose/hour|day. `-c LookbackDays=N` sets the day-aligned recompute
-  window (default `1` = today + yesterday). Spec/plan:
-  `infra/daq/data_pipeline/docs/superpowers/specs/2026-06-07-measurements-rollup-view-design.md`.
+  `RETAIN`) + the hourly `measurements-aggregate` Glue job that rolls up `logical_data`
+  counter consumption per node/energy_type/purpose/hour|day. `-c LookbackDays=N` sets the
+  day-aligned recompute window (default `1` = today + yesterday). Spec/plan:
+  `infra/daq/data_pipeline/docs/superpowers/specs/2026-06-07-measurements-rollup-view-design.md`
+  and `docs/superpowers/specs/2026-07-28-node-formula-rollup-design.md`.
+  **The job holds no formula semantics** — it is one join and one grouped sum over the
+  materialised coefficient matrix (`crates/model::logic::formulas::flatten`, written into
+  `hierarchy_new`'s `W#HN2#<id>` gsi1 partition by the hierarchy service). Ancestry, both
+  defaults and the `Unallocated` rows are all baked into the matrix; `ancestor_keys` is gone,
+  and `test_the_job_holds_no_formula_logic` asserts (over the AST) that none of it creeps back.
+  The job reads that matrix cross-account by assuming
+  `arn:aws:iam::339712745226:role/HierarchyReaderRole`, which trusts the DAQ Glue role by its
+  pinned name `MeasurementsAggregateGlueRole` — **do not let either name become CFN-generated**,
+  or the trust breaks silently. Sort key is
+  `<node_path>#<energy_type>#<purpose>#<gran>#<bucket>` (bucket last, so a series is one
+  `BETWEEN`); `gsi1pk` is `HN2#<id>#<dimension>#<purpose>`.
   It also hosts **one Rust/arm64 lambda** (`measurements-aggregations-api`, `crates/services/aggregations`)
   behind an **API Gateway HTTP API** (`AggregationsHttpApi`, output `AggregationsApiUrl`). Swapped from a
   Lambda Function URL → HTTP API 2026-06-27 (access logs / throttling / WAF / future Cognito JWT
@@ -146,10 +158,25 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
 
 - **`AWS::S3Tables::Table` cannot be replaced in place.** Changing a column forces a CFN replace,
   which does create-before-delete → fails with `409 "table with an identical name already exists"`.
-  To rename columns / clear a table, do a **two-step deploy**: (1) remove the table resource from
-  `s3tables_stack.go` and `cdk deploy S3TablesStack` (CFN deletes it — clears the data), then
-  (2) restore the resource (new columns) and `cdk deploy` again (CFN creates it fresh). Only the
-  changed table is affected; sibling tables (e.g. `raw_data`) are untouched.
+  **If you are RENAMING the table, none of this applies** — a different name means no collision,
+  so one deploy creates the new table and leaves the old one behind (see below). The dance is only
+  needed to change columns *under an unchanged name*.
+- **The old two-step recipe no longer works as written** (corrected 2026-07-28). It said: remove
+  the table resource, `cdk deploy` (CFN deletes it, clearing data), then restore with new columns
+  and deploy again. Both tables gained `RemovalPolicy: RETAIN` with `ApplyToUpdateReplacePolicy`
+  in `2d21c6c` (2026-07-18), so removing the resource now **retains** the table — step 1 silently
+  clears nothing and step 2 still hits the 409. Relax the removal policy first, or rename.
+- **`RETAIN` means renames orphan, they do not delete.** Renaming `logical_meter_data` →
+  `logical_data` reported `DELETE_SKIPPED` and left the old table in the bucket; likewise
+  `meter-identity` → `sensor-identity` in DynamoDB. Clean the orphan up by hand once verified,
+  or it lingers with its storage and (for DynamoDB) its PITR bill.
+- **Renaming a DynamoDB table breaks cross-stack exports.** `DaqPipelineStack` exports the table
+  ARN/name/stream to `LateRecomputationStack` and `OcamlBridgeWriterRoleStack`; CloudFormation
+  refuses to delete an export in use, and the consumers cannot move first because the new export
+  does not exist yet. Break it with a transitional deploy that re-declares the legacy export
+  **names** explicitly (exports are keyed by name, so a name present in both templates is neither
+  deleted nor updated), move the consumers, then drop the shim. Full recipe in
+  `docs/superpowers/plans/2026-07-28-node-formula-rollup.md` Task 9 Step 6.
 - **Renaming the Flink operator `uid`/keyed-state forces a non-restorable snapshot.** On the next
   Flink deploy the running app keeps writing the old schema and goes into failure, so MSF can't
   snapshot it and the stack sticks in `UPDATE_ROLLBACK_FAILED`. Recover with:
@@ -192,15 +219,15 @@ cdk deploy OcamlFrontendStack --require-approval never
 
 ### Cross-account ordering (important)
 
-The bridge writes the per-sensor resample interval to `meter-identity` as **`resample_minutes`**,
+The bridge writes the per-sensor resample interval to `sensor-identity` as **`resample_minutes`**,
 and the Flink/Glue pipeline reads **only** `resample_minutes`. There is **no `binning` fallback
 anymore** (removed 2026-06-07), so the two sides are a strict contract:
 
 - The bridge (hierarchy account) and the pipeline (daq account) must both be on the post-rename
-  code. They are; keep them that way — a sensor whose `meter-identity` row lacks `resample_minutes`
+  code. They are; keep them that way — a sensor whose `sensor-identity` row lacks `resample_minutes`
   simply gets no resampling (raw passthrough).
 - Because there's no fallback, any future rename of this attribute must deploy both sides together
-  and re-write the affected `meter-identity` rows.
+  and re-write the affected `sensor-identity` rows.
 
 See `memory/cross_account_bridge.md` for the full field contract.
 
