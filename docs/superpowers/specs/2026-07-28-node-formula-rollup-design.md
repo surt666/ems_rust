@@ -643,6 +643,27 @@ Consequences of the chosen options, documented rather than fixed:
   and B2 but not B3 has nowhere to attach unless the schema has a node grouping exactly
   those two. Same family as the limitation below: the tree has to be able to express the
   grouping before a sensor can be scoped to it.
+
+  This is narrower than it first appears, and it is **not a migration gate**:
+
+  - A main covering everything the company owns attaches to the **company node**, which is
+    already an accumulating level — no new node type, no restructuring.
+  - A main covering one building attaches to that building, as today.
+  - Only the subset case (some-but-not-all of a node's children) has no home.
+  - `contained_in` is **opt-in**. An existing tree with a property-wide main attached to a
+    building keeps rolling up exactly as it does today; nothing is rejected until someone
+    declares containment across branches, and that declaration is refused because it is
+    incoherent, not because the tree is. Adoption can be per-property.
+
+  Worth noting the arrangement is already wrong under today's flat Σ — that building's
+  rollup includes the whole property, and the submeter is summed on top above it. This
+  design surfaces the error and gives it a fix; it does not create it.
+
+  **Open question, needs portfolio data:** how often does a main cover some-but-not-all of a
+  node's children in practice? If routine, the options are an intermediate grouping node
+  type in the company schema, or letting a sensor declare a scope set instead of inheriting
+  it from attachment — the latter is a substantially bigger change and should not be
+  attempted without evidence.
 - **Shared plant cannot be apportioned across siblings.** The subtree rule (§3.5) means a
   node may only reference its own descendants, so a chiller sensor hanging off a property
   and serving two buildings 60/40 can only be claimed at the property — neither building
