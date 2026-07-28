@@ -28,7 +28,17 @@
 
 # Phase 1 — Domain + hierarchy service
 
-Ships independently: formulas can be authored, validated, flattened and materialised. Nothing downstream reads them yet.
+Formulas can be authored, validated, flattened and materialised; nothing downstream reads them yet.
+
+**This phase does *not* ship independently, despite reading as if it does.** Task 1's attribute
+rename requires a migration of the stored `hierarchy_new` sensor rows (added as
+`migrations/2026-07-28-sensor-attr-rename.sh` during execution — the original plan omitted it),
+and that migration's `UpdateItem` calls fire the table's DynamoDB stream. The cross-account
+bridge reads the old attribute names off that stream, so it breaks the moment the migration runs
+— which is what happened: `KeyError: 'meter_type'`, four batches to the DLQ, and every subsequent
+sensor change silently failing to reach `meter-identity`. Commit `22d2144` fixed it by having the
+bridge translate between the renamed hierarchy vocabulary and the not-yet-renamed pipeline one.
+**Any future rename on either side of that stream must ship with the bridge, not before it.**
 
 ---
 
@@ -1574,108 +1584,367 @@ git commit --allow-empty -m "chore(hierarchy): deploy node-formula authoring (ph
 
 ---
 
-### Task 9: `sensor-identity`, bridge rename, cross-account reader role
+### Task 9: `sensor-identity`, bridge, cross-account reader role
 
 **Files:**
-- Modify: `infra/daq/data_pipeline/data_pipeline_stack.go:45`, `ocaml_bridge_stack.go`, `scripts/backup_restore_ddb.py`, `lambda/late_arrival_trigger/handler.py`
-- Modify: `infra/hierarchy/app.go` (table constants ~21-26, bridge + DLQ + alarm ~189-270, inlined Python ~285-360), plus a new `HierarchyReaderRole`
+- Modify (daq account `891377204778`): `data_pipeline_stack.go` (table, IAM, Flink property),
+  `main.go` (stack props), `ocaml_bridge_stack.go` (writer role), `late_recomputation_stack.go`
+  (props, IAM, backfill ESM, lambda env, Glue args), `measurements_aggregate_stack.go` (pin the
+  Glue role name), `lambda/backfill_trigger/handler.py`, `lambda/late_arrival_trigger/handler.py`,
+  `glue/late_recomputation.py`, `scripts/backup_restore_ddb.py`
+- Modify (hierarchy account `339712745226`): `infra/hierarchy/app.go` — bridge item builder, plus a
+  new `HierarchyReaderRole`
 
-**DynamoDB tables cannot be renamed**, so this is a replacement: new table, new stream ARN, Flink's ESM repointed and the app re-bootstrapped. The bridge repopulates from `hierarchy_new` stream events, so re-saving each sensor is the whole migration — cheap now (7 rows), expensive later.
+> **Revised 2026-07-28 after verifying against the live system.** The original task named five
+> files; the real footprint is ten, and three of its assumptions were wrong. Corrections:
+>
+> - **The bridge is already half-done.** Commit `22d2144` made it read `energy_type`/`reading_kind`
+>   and stop copying `formula`, because the Phase 1 migration broke it (`KeyError: 'meter_type'`,
+>   4 batches to the DLQ). It currently *translates* to the pipeline's `purpose`/`meter_type`.
+>   Step 5 removes the translation.
+> - **Flink has no event source mapping.** It reads the Kinesis stream
+>   `flink-iceberg-processor-ddb-changes` (attached to the table via `KinesisStreamSpecification`,
+>   `data_pipeline_stack.go:60-63`) and learns the table name from the app property
+>   `METER_IDENTITY_TABLE`. The rename is a property change plus a restart — not an ESM repoint.
+> - **`backfill-trigger` *does* have an ESM** on the `meter-identity` DynamoDB stream, defined in
+>   `late_recomputation_stack.go:232-235` — a stack the original task never mentioned. Replacing
+>   the table replaces that stream, so the ESM must be replaced with it.
+> - **The table is `RemovalPolicy: RETAIN`.** CFN will create `sensor-identity` and *orphan*
+>   `meter-identity` rather than delete it. The orphan keeps PITR billing and a live Kinesis
+>   streaming destination into the same change stream. Delete it by hand in Step 7.
+> - **The Glue role ARN has a CFN-generated random suffix**
+>   (`MeasurementsAggregateStack-AggGlueJobRole76EE978D-LYfqTL5960Ta`). Trusting that ARN directly
+>   means any future role replacement silently breaks the cross-account read, so Step 1 pins it to
+>   a stable name first.
 
-- [ ] **Step 1: Create the new table and repoint everything**
+The cross-account role has a strict ordering: the DAQ-side role must exist under its stable name
+before the hierarchy-side trust policy can name it, and the `sts:AssumeRole` grant comes last.
+Steps 1-3 are that dance; do not reorder them.
 
-Change `TableName` to `sensor-identity`, keeping key schema and stream settings. Rename
-`emsMeterIdentityTable` → `emsSensorIdentityTable`, the function
-`ocaml-meter-identity-bridge` → `ocaml-sensor-identity-bridge`, its DLQ and its
-`…-dlq-not-empty` alarm. Update the two Python scripts (`TABLE_NAME`, `BACKUP_FILE`,
-`METER_IDENTITY_TABLE` → `SENSOR_IDENTITY_TABLE`, `--meter_identity_table`).
+- [ ] **Step 1: Pin the Glue role name (daq account)**
 
-- [ ] **Step 2: Edit the bridge item builder**
+In `measurements_aggregate_stack.go`, find the `AggGlueJobRole` and give it an explicit name:
 
-Emit `energy_type` instead of `purpose` and `reading_kind` instead of `meter_type`, and
-**delete** the two lines copying `formula`.
-
-- [ ] **Step 3: Add the reader role**
+```go
+	RoleName: jsii.String("MeasurementsAggregateGlueRole"),
+```
 
 ```bash
-grep -n 'NewRole\|RoleName' infra/daq/data_pipeline/measurements_aggregate_stack.go
+cd infra/daq/data_pipeline
+unset GOROOT
+export AWS_PROFILE=daq_dev
+eval "$(aws configure export-credentials --profile daq_dev --format env)"
+npx cdk diff MeasurementsAggregateStack -c TableBucketName=measurements -c LookbackDays=1
 ```
+
+Expect the IAM role `[-]`/`[+]` (replacement — a role rename always replaces) and the Glue job
+`[~]` picking up the new ARN. **Stop and report** if `measurements_aggregate` (DynamoDB) shows
+any change. Deploy, then confirm the stable ARN:
+
+```bash
+aws iam get-role --profile daq_dev --role-name MeasurementsAggregateGlueRole \
+  --query 'Role.Arn' --output text
+# arn:aws:iam::891377204778:role/MeasurementsAggregateGlueRole
+```
+
+- [ ] **Step 2: Add the reader role (hierarchy account)**
+
+In `infra/hierarchy/app.go`, beside the `hierarchy_new` table:
 
 ```go
 	// The DAQ account's Glue roll-up assumes this to read the materialised
 	// coefficient matrix (spec §4.2, §8). Read-only, hierarchy_new + gsi1.
 	readerRole := awsiam.NewRole(stack, jsii.String("HierarchyReaderRole"), &awsiam.RoleProps{
-		RoleName:  jsii.String("HierarchyReaderRole"),
-		AssumedBy: awsiam.NewArnPrincipal(jsii.String("arn:aws:iam::891377204778:role/<GlueRoleName>")),
+		RoleName: jsii.String("HierarchyReaderRole"),
+		AssumedBy: awsiam.NewArnPrincipal(
+			jsii.String("arn:aws:iam::891377204778:role/MeasurementsAggregateGlueRole")),
 	})
 	readerRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
 		Actions:   jsii.Strings("dynamodb:Query"),
-		Resources: jsii.Strings(*hierarchyTable.TableArn(), *hierarchyTable.TableArn()+"/index/gsi1"),
+		Resources: jsii.Strings(*table.TableArn(), *table.TableArn()+"/index/gsi1"),
 	}))
 ```
 
-- [ ] **Step 4: Diff, deploy, repopulate**
+```bash
+cd infra/hierarchy
+unset GOROOT
+export AWS_PROFILE=stel-sb
+eval "$(aws configure export-credentials --profile stel-sb --format env)"
+export CDK_DEFAULT_ACCOUNT=339712745226 CDK_DEFAULT_REGION=eu-central-1
+cdk diff OcamlHierarchyStack
+```
 
-`cdk diff` both stacks. Expected: `meter-identity` **replaced** by `sensor-identity`, the
-Flink ESM replaced, a new IAM role, bridge inline code `[~]`. **Stop and report** if
-`hierarchy_new` or `measurements_aggregate` show any change. Deploy, then re-save every sensor
-through the UI and confirm:
+Expect exactly one new IAM role and its policy. **Stop and report** if `hierarchy_new` shows any
+change. Deploy.
+
+- [ ] **Step 3: Grant the Glue role `sts:AssumeRole` (daq account)**
+
+In `measurements_aggregate_stack.go`, after the role:
+
+```go
+	glueRole.AddToPolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Actions:   jsii.Strings("sts:AssumeRole"),
+		Resources: jsii.Strings("arn:aws:iam::339712745226:role/HierarchyReaderRole"),
+	}))
+```
+
+Deploy `MeasurementsAggregateStack`, then prove the trust works end to end before building
+anything on top of it:
+
+```bash
+CREDS=$(aws sts assume-role --profile daq_dev \
+  --role-arn arn:aws:iam::339712745226:role/HierarchyReaderRole \
+  --role-session-name probe --query 'Credentials' --output json)
+AWS_ACCESS_KEY_ID=$(echo "$CREDS" | jq -r .AccessKeyId) \
+AWS_SECRET_ACCESS_KEY=$(echo "$CREDS" | jq -r .SecretAccessKey) \
+AWS_SESSION_TOKEN=$(echo "$CREDS" | jq -r .SessionToken) \
+aws dynamodb query --region eu-central-1 --table-name hierarchy_new --index-name gsi1 \
+  --key-condition-expression 'gsi1pk = :p' \
+  --expression-attribute-values '{":p":{"S":"W#HN2#10003"}}' \
+  --query 'Count'
+```
+
+Expect `42` (SeedCo01's matrix, seeded in Task 8). A `0` means the GSI keys are wrong; an
+`AccessDenied` means the trust policy or the grant has not propagated.
+
+- [ ] **Step 4: Back up the table before replacing it**
+
+```bash
+cd infra/daq/data_pipeline/scripts
+python backup_restore_ddb.py backup --profile daq_dev
+```
+
+The bridge repopulates from `hierarchy_new` stream events, so this backup is insurance, not the
+migration path. Keep the file until Step 7 verifies the row count.
+
+- [ ] **Step 5: Rename the table and every reference to it**
+
+`data_pipeline_stack.go`: `TableName` → `sensor-identity`, local `meterIdentity` →
+`sensorIdentity`, construct id `MeterIdentity` → `SensorIdentity`, the props field
+`MeterIdentityTable` → `SensorIdentityTable`, and the Flink property key `METER_IDENTITY_TABLE`
+→ `SENSOR_IDENTITY_TABLE`.
+
+`main.go`: `MeterIdentityArn`/`MeterIdentityName`/`MeterIdentityStreamArn` →
+`SensorIdentity*`; `MeterIdentityTableArn` → `SensorIdentityTableArn`.
+
+`ocaml_bridge_stack.go`: the props field and the role description.
+
+`late_recomputation_stack.go`: the three props fields, the `dynamodb:Scan`/`Query` grant, the
+Glue argument `--meter_identity_table` → `--sensor_identity_table`, the two lambda env vars
+`METER_IDENTITY_TABLE` → `SENSOR_IDENTITY_TABLE`, and the `MeterIdentityRef` table reference
+that backs `backfill-trigger`'s ESM.
+
+`lambda/backfill_trigger/handler.py`, `lambda/late_arrival_trigger/handler.py`: the env var and
+the Glue argument name.
+
+`glue/late_recomputation.py`: `REQUIRED_ARGS` and `args["meter_identity_table"]` →
+`sensor_identity_table`; `load_meter_identity` → `load_sensor_identity`.
+
+`scripts/backup_restore_ddb.py`: `TABLE_NAME`, `BACKUP_FILE`, the docstring and the argparse help.
+
+In `infra/hierarchy/app.go`, drop the translation added in `22d2144` — emit the hierarchy's own
+vocabulary now that the pipeline speaks it:
+
+```python
+    out = {
+        "pk": {"S": _pk(daq)},
+        "sk": {"S": daq},
+        "logical_id": {"N": str(sid)},
+        "reading_kind": {"S": img["reading_kind"]["S"]},
+        "hierarchy_path": {"S": _path(img["gsi1sk"]["S"])},
+        "energy_type": {"S": img["energy_type"]["S"]},
+    }
+```
+
+Also rename the function `ocaml-meter-identity-bridge` → `ocaml-sensor-identity-bridge`, its
+DLQ, and the `…-dlq-not-empty` alarm. Note this replaces the log group, so the DLQ evidence from
+the Phase 1 breakage is lost — check it is empty first:
+
+```bash
+aws sqs get-queue-attributes --profile stel-sb \
+  --queue-url https://sqs.eu-central-1.amazonaws.com/339712745226/ocaml-meter-identity-bridge-dlq \
+  --attribute-names ApproximateNumberOfMessages --query 'Attributes' --output json
+```
+
+- [ ] **Step 6: Stop Flink, deploy both accounts, restart**
+
+The Flink app holds `meter-identity` mappings in keyed state and reads the change stream. Stop it
+so it cannot write against a half-renamed world:
+
+```bash
+aws kinesisanalyticsv2 stop-application --profile daq_dev \
+  --application-name flink-iceberg-processor
+```
+
+(Graceful stop — no `--force`. The operator `uid`s are unchanged, so it snapshots cleanly.)
+
+```bash
+cd infra/daq/data_pipeline
+unset GOROOT && export AWS_PROFILE=daq_dev
+eval "$(aws configure export-credentials --profile daq_dev --format env)"
+npx cdk diff DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStack \
+  -c SHA="$(git rev-parse --short HEAD)" -c RUN_NR="$(date +%s)" \
+  -c ParPerKPU=1 -c MaxKPU=4 -c TableBucketName=measurements -c LookbackDays=1
+```
+
+Expect: `sensor-identity` `[+]`, `meter-identity` `[-]` (retained, not deleted), the
+`backfill-trigger` ESM replaced, IAM `[~]`, the Flink app `[~]` for the property change.
+**Stop and report** if `logical_meter_data`, `raw_data` or `measurements_aggregate` appear at
+all — they are not in scope for this task. Deploy the same three stacks, then deploy
+`OcamlHierarchyStack` from the hierarchy account (Step 2's recipe) for the bridge.
+
+Restart Flink. The uid and keyed-state descriptors are unchanged, so the snapshot restores:
+
+```bash
+aws kinesisanalyticsv2 start-application --profile daq_dev \
+  --application-name flink-iceberg-processor \
+  --run-configuration '{"ApplicationRestoreConfiguration":{"ApplicationRestoreType":"RESTORE_FROM_LATEST_SNAPSHOT"}}'
+```
+
+- [ ] **Step 7: Repopulate, verify, delete the orphan**
+
+The new table is empty. Re-save every sensor through the UI (or touch each row — a same-value
+`UpdateItem` writes nothing and emits **no** stream record, so change a field and change it back):
 
 ```bash
 aws dynamodb scan --profile daq_dev --table-name sensor-identity \
-  --query 'Items[].{daq:sk.S,et:energy_type.S,rk:reading_kind.S,formula:formula.S}'
+  --query 'Items[].{daq:sk.S,et:energy_type.S,rk:reading_kind.S,f:formula.S}' --output table
 ```
 
-Expected: one row per active sensor; `energy_type` and `reading_kind` populated; `formula`
+Expect one row per active sensor (**7** today), `energy_type`/`reading_kind` populated, `formula`
 absent. Cross-check the count against `hierarchy_new`'s active sensors — a short count means
-Flink will silently drop that sensor's readings.
+Flink silently drops that sensor's readings:
 
-- [ ] **Step 5: Commit**
+```bash
+aws dynamodb query --profile stel-sb --table-name hierarchy_new --index-name gsi1 \
+  --key-condition-expression 'gsi1pk = :p' \
+  --expression-attribute-values '{":p":{"S":"S#HN2#10003"}}' \
+  --query 'length(Items[?type.S==`sensor`])'
+```
+
+Only once the counts match, delete the orphaned table (it still streams into
+`flink-iceberg-processor-ddb-changes`):
+
+```bash
+aws dynamodb delete-table --profile daq_dev --table-name meter-identity
+```
+
+- [ ] **Step 8: Commit**
 
 ```bash
 git add infra/
-git commit -m "feat(bridge)!: sensor-identity table; energy_type/reading_kind; drop formula; reader role"
+git commit -m "feat(bridge)!: sensor-identity table; energy_type/reading_kind end to end; reader role"
 ```
 
 ---
 
-### Task 10: Flink + Iceberg rename
+### Task 10: Iceberg + Flink rename
 
 **Files:**
 - Rename: `.../enrichment/MeterMapping.scala` → `SensorMapping.scala`
-- Modify: `DdbBootstrapLoader.scala`, `DdbStreamDeserializer.scala`, `MeterEnrichmentFunction.scala`, `flink/Main.scala`, `s3tables_stack.go:73`, and the four Scala specs
+- Modify (Scala main): `DdbBootstrapLoader.scala`, `DdbStreamDeserializer.scala`,
+  `MeterEnrichmentFunction.scala`, `ResampleFunction.scala`, `HierarchyPathParser.scala`,
+  `flink/Main.scala`
+- Modify (Scala tests): `DdbBootstrapLoaderSpec`, `DdbStreamDeserializerSpec`,
+  `MeterEnrichmentFunctionSpec`, `ResampleFunctionSpec`, `ResampleHarnessSpec`,
+  `EnrichmentPipelineSpec`, `EnrichmentMiniClusterSpec`, `ParserMiniClusterSpec`,
+  `ScenarioTestHelper`, `ScenarioTestHelperSpec`, `TestEnrichmentMapper`
+- Modify (infra): `s3tables_stack.go`, `late_recomputation_stack.go` (Lake Formation grant),
+  `measurements_aggregate_stack.go:140` (Lake Formation grant)
+- Modify (jobs/scripts): `glue/late_recomputation.py`, `flink_app_scala/scripts/smoke_test/test_smoke.py`,
+  `scripts/verify_ingestion.py`, `docs/generate_diagrams.py`
+
+> **Revised 2026-07-28 after verifying against the live system.** The original task would have
+> destroyed 311 million rows unrecoverably. Corrections:
+>
+> - **`raw_data` is not touched.** It has no `purpose` and no `meter_type` column — `purpose`
+>   appears exactly once in `s3tables_stack.go` (line 73, inside `logical_meter_data`) and
+>   `meter_type` is not an Iceberg column anywhere. The original "rename in both table
+>   definitions" had no target in `raw_data`, and clearing it would have destroyed
+>   **311,220,885 rows across 71,472 daqs** going back to 2026-05-02.
+> - **"~24 h is replayable from Kinesis" is wrong twice over.** `logical_meter_data` holds
+>   **25,970 rows spanning 2026-05-01 → now** — about three months — while `DAQ_INPUT_STREAM`
+>   retention is 24 h. A Kinesis replay would also duplicate `raw_data` (the gotcha already in
+>   CLAUDE.md). The correct rebuild is `late-data-recomputation` over the mapped daqs, which
+>   derives logical rows from `raw_data` — and `raw_data` covers the same window.
+> - **No two-step delete/recreate is needed.** CLAUDE.md's recipe exists because
+>   `AWS::S3Tables::Table` cannot be replaced under an *unchanged* name (create-before-delete
+>   → `409 table with an identical name already exists`). We are renaming, so there is no
+>   collision: one deploy creates `logical_data` and orphans `logical_meter_data`.
+> - **That recipe is stale anyway.** Both tables gained `RemovalPolicy: RETAIN` with
+>   `ApplyToUpdateReplacePolicy` on 2026-07-18 (`2d21c6c`), six weeks after the recipe was
+>   learned on 2026-06-07. Removing the resource no longer deletes the table, so the documented
+>   two-step would silently leave the data in place. Step 6 fixes CLAUDE.md.
 
 - [ ] **Step 1: Rename in Scala**
 
-`MeterMapping` → `SensorMapping`; `.purpose` → `.energyType`, `.meterType` → `.readingKind`;
-`Main.scala`'s table schema and column list; point the sink at **`all.logical_data`**.
+`MeterMapping` → `SensorMapping`; `.purpose` → `.energyType`; `.meterType` → `.readingKind`.
+In `Main.scala`, the property key `METER_IDENTITY_TABLE` → `SENSOR_IDENTITY_TABLE` (matching
+Task 9 Step 5), the table schema's `purpose` column → `energy_type`, and the sink target
+`all.logical_meter_data` → `all.logical_data`.
 
 Run: `cd infra/daq/data_pipeline/flink_app_scala && sbt test 2>&1 | tail -20` → PASS.
 
-- [ ] **Step 2: Rename the Iceberg columns and table**
+- [ ] **Step 2: Rename the Iceberg table and its one column**
 
-In `s3tables_stack.go`: `purpose` → `energy_type` and `meter_type` → `reading_kind` in both
-table definitions, and `logical_meter_data` → `logical_data`.
+In `s3tables_stack.go`, in the `logical_meter_data` definition only:
 
-- [ ] **Step 3: Two-step delete/recreate (destructive — confirm first)**
+```go
+		TableName:       jsii.String("logical_data"),
+...
+					field("energy_type", "string", false),
+```
 
-`AWS::S3Tables::Table` cannot be replaced in place. **This clears both tables.** ~24 h is
-replayable from Kinesis. Stop Flink first:
+Leave `raw_data` alone. The partition spec and sort order reference fields by **index**
+(`partition(7, ...)`, `sortField(7)`), and renaming a field in place does not shift indices, so
+they need no change — but re-read them after editing to confirm the column order is unchanged.
+
+Rename the Lake Formation grants that name the table, in `late_recomputation_stack.go:125` and
+`measurements_aggregate_stack.go:140`:
+
+```go
+				DatabaseName: jsii.String("all"), Name: jsii.String("logical_data"),
+```
+
+- [ ] **Step 3: Rename the columns in the Glue jobs**
+
+`glue/late_recomputation.py` writes this table and reads the identity columns. Rename
+`meter_type` → `reading_kind` and `purpose` → `energy_type` in `_identity_record`, the
+`StructType` schema, the two `F.col("meter_type") == …` filters, the final `F.select`, and point
+`write_df.writeTo(...)` at `all.logical_data`. (`measurements_aggregate.py` is rewritten
+wholesale in Task 11 — leave it.)
+
+Also update the read-only helpers so they do not silently return nothing:
+`flink_app_scala/scripts/smoke_test/test_smoke.py`, `scripts/verify_ingestion.py`,
+`docs/generate_diagrams.py`.
+
+- [ ] **Step 4: Deploy the table (destructive — confirm first)**
+
+**This orphans `logical_meter_data` (25,970 rows) and creates an empty `logical_data`.** The data
+is rebuildable from `raw_data` in Step 5; nothing else is at risk. Stop Flink first so it is not
+writing to a table that is about to disappear from under it:
 
 ```bash
 aws kinesisanalyticsv2 stop-application --profile daq_dev \
-  --application-name flink-iceberg-processor --force
+  --application-name flink-iceberg-processor
 ```
 
-Then comment out both table resources and `cdk deploy S3TablesStack` (CFN deletes them);
-restore with the new columns and name, and deploy again.
+```bash
+cd infra/daq/data_pipeline
+unset GOROOT && export AWS_PROFILE=daq_dev
+eval "$(aws configure export-credentials --profile daq_dev --format env)"
+npx cdk diff S3TablesStack -c TableBucketName=measurements
+```
 
-- [ ] **Step 4: Redeploy Flink, restart, verify**
+Expect exactly one `[+]` (`logical_data`) and one `[-]` (`logical_meter_data`, retained).
+**Stop and report** if `raw_data` appears in the diff at all. Deploy `S3TablesStack`, then
+`LateRecomputationStack` and `DaqPipelineStack` (Task 9 Step 6's recipe, with a fresh
+`RUN_NR`) after `sbt clean assembly`.
+
+Restart Flink from its snapshot — the operator `uid`s and keyed-state descriptors are unchanged:
 
 ```bash
-cd infra/daq/data_pipeline/flink_app_scala && sbt clean assembly
-cd .. && unset GOROOT && export AWS_PROFILE=daq_dev && \
-eval "$(aws configure export-credentials --profile daq_dev --format env)" && \
+cd flink_app_scala && sbt clean assembly && cd ..
 npx cdk deploy DaqPipelineStack --require-approval never \
   -c SHA="$(git rev-parse --short HEAD)" -c RUN_NR="$(date +%s)" \
   -c ParPerKPU=1 -c MaxKPU=4 -c TableBucketName=measurements -c LookbackDays=1
@@ -1684,14 +1953,46 @@ aws kinesisanalyticsv2 start-application --profile daq_dev \
   --run-configuration '{"ApplicationRestoreConfiguration":{"ApplicationRestoreType":"RESTORE_FROM_LATEST_SNAPSHOT"}}'
 ```
 
-Operator `uid` and keyed-state descriptors are unchanged, so the snapshot restores. Verify
-with an Athena query grouping `all.logical_data` by `energy_type`.
+- [ ] **Step 5: Rebuild the history from `raw_data`**
 
-- [ ] **Step 5: Commit**
+Flink only fills `logical_data` going forward. Rebuild the three months from `raw_data` with a
+targeted recomputation over the mapped daqs — cheap, because only the 7 sensors in
+`sensor-identity` have logical rows at all:
 
 ```bash
-git add infra/daq/data_pipeline/
-git commit -m "feat(pipeline)!: sensor vocabulary in Flink and Iceberg (energy_type, reading_kind, logical_data)"
+DAQS=$(aws dynamodb scan --profile daq_dev --table-name sensor-identity \
+  --query 'Items[].sk.S' --output text | tr '\t' ',')
+aws glue start-job-run --profile daq_dev --job-name late-data-recomputation \
+  --arguments "{\"--daq_ids\":\"$DAQS\",\"--lookback_days\":\"90\"}"
+```
+
+Verify against the pre-migration numbers (25,970 rows, 2026-05-01 → now):
+
+```bash
+aws athena start-query-execution --profile daq_dev --work-group daq-workgroup \
+  --query-execution-context 'Catalog=s3tablescatalog/measurements,Database=all' \
+  --query-string 'SELECT energy_type, count(*) AS n, min(resample_timestamp) AS oldest,
+                         max(resample_timestamp) AS newest
+                  FROM "all".logical_data GROUP BY energy_type'
+```
+
+Expect rows grouped by `energy_type` (`electricity`, `district_heating`, `water`) and a row count
+in the same order of magnitude. An exact match is not expected — recomputation re-derives deltas
+and the window boundary differs.
+
+- [ ] **Step 6: Fix the stale CLAUDE.md recipe**
+
+CLAUDE.md's "two-step deploy" for `AWS::S3Tables::Table` predates the `RETAIN` policy added in
+`2d21c6c` (2026-07-18) and no longer works: removing the resource retains the table instead of
+deleting it, so the second deploy still hits `409 … identical name already exists`. Record that
+clearing a table under an unchanged name now needs the removal policy relaxed first, and that a
+**rename** avoids the whole problem. Update the table/column names in the same pass.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add infra/daq/data_pipeline/ CLAUDE.md
+git commit -m "feat(pipeline)!: sensor vocabulary in Flink and Iceberg (energy_type, logical_data)"
 ```
 
 ---
@@ -1703,6 +2004,14 @@ git commit -m "feat(pipeline)!: sensor vocabulary in Flink and Iceberg (energy_t
 - Modify: `glue/measurements_aggregate.py`, `glue/tests/test_rollups.py`, `measurements_aggregate_stack.go`
 
 **`ancestor_keys` is deleted.** Ancestry is baked into the matrix. There is no recursion, no default handling, no derived detection and no `Unallocated` subtraction in PySpark — `Unallocated` arrives as ordinary matrix rows.
+
+> **Revised 2026-07-28.** Three pieces of this task moved into the revised Tasks 9 and 10, so do
+> not repeat them here: the `HierarchyReaderRole` trust policy and the Glue role's
+> `sts:AssumeRole` grant are Task 9 Steps 2-3 (and the role now has the stable ARN
+> `arn:aws:iam::891377204778:role/MeasurementsAggregateGlueRole`), and the Lake Formation grant
+> naming `logical_meter_data` in `measurements_aggregate_stack.go:140` is renamed in Task 10
+> Step 2. What remains here is the job itself, its tests, the matrix reader, and the two job
+> arguments.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1884,9 +2193,16 @@ Delete `ancestor_keys` and `_ancestor_keys_udf`. Rename `purpose` → `energy_ty
 `read_counters` and point it at `all.logical_data`. In `main`, load and merge the matrix per
 distinct `hn2`, and add `hierarchy_reader_role_arn` to the required args.
 
-In `measurements_aggregate_stack.go`: pass that argument, add `hierarchy_matrix.py` via
-`--extra-py-files`, and grant the Glue role `sts:AssumeRole` on
-`arn:aws:iam::339712745226:role/HierarchyReaderRole`.
+In `measurements_aggregate_stack.go`: pass that argument and add `hierarchy_matrix.py` via
+`--extra-py-files`. The `sts:AssumeRole` grant is already in place from Task 9 Step 3 — verify
+rather than re-add it:
+
+```bash
+aws iam get-role-policy --profile daq_dev --role-name MeasurementsAggregateGlueRole \
+  --policy-name $(aws iam list-role-policies --profile daq_dev \
+    --role-name MeasurementsAggregateGlueRole --query 'PolicyNames[0]' --output text) \
+  --query 'PolicyDocument.Statement[?Action==`sts:AssumeRole`]'
+```
 
 - [ ] **Step 5: Verify, deploy, rebuild the view**
 
@@ -1903,10 +2219,12 @@ aws glue start-job-run --profile daq_dev --job-name measurements-aggregate \
 
 - [ ] **Step 6: Update the docs the renames invalidated**
 
-`CLAUDE.md` names `meter-identity`, `logical_meter_data`, `purpose` and `meter_type`, and is
-the first file any future session reads. Update it, plus the session memories that still say
-"SPECCED NOT DONE" (`sensor-not-meter-vocabulary.md`, `node-formula-rollup-design.md`), and
-rename `meter-identity-change-auto-triggers-late-recompute.md` with its `[[…]]` backlinks.
+Task 10 Step 6 already corrected CLAUDE.md's table/column names and its stale `AWS::S3Tables::Table`
+recipe. What is left here is the roll-up description in the `MeasurementsAggregateStack` section
+(it documents the per-node/purpose/hour|day rollup and the `ancestor_keys` behaviour this task
+deletes), plus the session memories that still say "SPECCED NOT DONE"
+(`sensor-not-meter-vocabulary.md`, `node-formula-rollup-design.md`), and renaming
+`meter-identity-change-auto-triggers-late-recompute.md` with its `[[…]]` backlinks.
 
 - [ ] **Step 7: Commit**
 

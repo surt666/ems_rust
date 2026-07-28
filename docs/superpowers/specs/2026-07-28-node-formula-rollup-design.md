@@ -359,12 +359,26 @@ netting to 0), and shared plant apportioned across siblings (0.6 + 0.4).
 The inlined Python `_item` builder drops the `formula` copy and renames `purpose` →
 `energy_type`, `meter_type` → `reading_kind`. The **`meter-identity` table is replaced by
 `sensor-identity`** — DynamoDB tables cannot be renamed, so this is a new table with a new
-stream: Flink's event-source mapping is repointed and the app re-bootstraps, and the bridge
-lambda, its DLQ and its alarm lose the old noun. The bridge repopulates the table from
-`hierarchy_new` stream events, so re-saving each sensor is the whole migration.
+stream, and the bridge lambda, its DLQ and its alarm lose the old noun. The bridge repopulates
+the table from `hierarchy_new` stream events, so re-saving each sensor is the whole migration.
+
+Two consumers hang off the replaced stream, and they are not alike:
+
+- **Flink has no event-source mapping.** It reads the Kinesis stream
+  `flink-iceberg-processor-ddb-changes`, attached to the table by `KinesisStreamSpecification`,
+  and learns the table name from the app property `METER_IDENTITY_TABLE`. Renaming is a property
+  change plus a restart.
+- **`backfill-trigger` does have an ESM** on the DynamoDB stream, declared in
+  `LateRecomputationStack`. Replacing the table replaces that stream, so the ESM goes with it.
+
+The table is `RemovalPolicy: RETAIN`, so CFN orphans `meter-identity` rather than deleting it.
+The orphan keeps PITR billing and a live streaming destination into the same change stream, and
+must be deleted by hand once the new table is verified.
 
 **New CDK resource:** `HierarchyReaderRole` in `339712745226`, trusting the Glue job role in
-`891377204778`, granting `dynamodb:Query` on `hierarchy_new` and its `gsi1`.
+`891377204778`, granting `dynamodb:Query` on `hierarchy_new` and its `gsi1`. That Glue role is
+given a stable `RoleName` first — the CFN-generated name carries a random suffix, so trusting it
+directly would let a future role replacement break the cross-account read silently.
 
 ---
 
@@ -372,16 +386,21 @@ lambda, its DLQ and its alarm lose the old noun. The bridge repopulates the tabl
 
 - `MeterMapping` → `SensorMapping`; `.purpose` → `.energyType`, `.meterType` → `.readingKind`;
   follow through in both deserialisers, `MeterEnrichmentFunction` and `Main.scala`.
-- The `purpose` column in `all.raw_data` and `all.logical_meter_data` renames to
-  `energy_type`, `meter_type` to `reading_kind`, and the table to **`all.logical_data`**.
+- The `purpose` column in `all.logical_meter_data` renames to `energy_type`, and the table to
+  **`all.logical_data`**. **`raw_data` is not touched** — it has no `purpose` column, and
+  `meter_type` is not an Iceberg column in either table.
 
-`AWS::S3Tables::Table` cannot be replaced in place, so this is the documented **two-step
-deploy**: remove the resources and deploy (CFN deletes them, clearing the data), restore with
-the new columns and deploy again. Operator `uid` and keyed-state descriptors are untouched,
-so the Flink snapshot restores; only the sink schema moves.
+`AWS::S3Tables::Table` cannot be replaced under an unchanged name (create-before-delete →
+`409 … identical name already exists`), which is why CLAUDE.md documents a two-step deploy. A
+**rename sidesteps it**: one deploy creates `logical_data` and orphans `logical_meter_data`.
+Operator `uid` and keyed-state descriptors are untouched, so the Flink snapshot restores; only
+the sink schema moves.
 
-**Accepted data loss:** `raw_data` and `logical_data` history is cleared; ~24 h is replayable
-from Kinesis.
+**Accepted data loss:** `logical_data` starts empty — about 26 k rows covering three months.
+It is **rebuilt from `raw_data`** by a targeted `late-data-recomputation` over the mapped daqs,
+which is the only correct recovery: `DAQ_INPUT_STREAM` retains just 24 h, and replaying it would
+duplicate `raw_data` rather than restore anything. `raw_data` itself (311 M rows, 71 k daqs,
+back to 2026-05-02) is never cleared.
 
 **Flink is otherwise untouched** — it resamples per sensor and knows nothing about formulas.
 
@@ -484,15 +503,26 @@ Per-sensor leaf rows keep being emitted, keyed by the sensor's own path
 ## 12. Deploy order
 
 1. `crates/model` + `hierarchy` lambda, then `rebuild_company_matrix` for every company.
-2. `HierarchyReaderRole` (account `339712745226`).
-3. Bridge + `sensor-identity` — must land **with** step 4; the pipeline has no fallback.
-4. Flink + S3 Tables two-step column rename (account `891377204778`).
-5. Glue roll-up job.
-6. `aggregations` lambda.
-7. Frontend rebuild + deploy (`PUBLIC_*` are baked in at build time).
+2. **Migrate the stored `hierarchy_new` sensor rows** to `energy_type`/`reading_kind` and
+   **deploy the bridge in the same window**. The migration writes every sensor row, which fires
+   the table's stream into the bridge; a bridge still reading the old names fails on every record.
+3. Stable `RoleName` on the DAQ Glue role, then `HierarchyReaderRole` in `339712745226`, then the
+   `sts:AssumeRole` grant back in `891377204778`. Strictly in that order — each step names the
+   resource created by the one before.
+4. Bridge + `sensor-identity` — must land **with** step 5; the pipeline has no fallback. Repoint
+   `backfill-trigger`'s ESM and the Flink `SENSOR_IDENTITY_TABLE` property, restart Flink, then
+   delete the orphaned `meter-identity` (it is `RETAIN`, so CFN leaves it behind).
+5. Flink + the `logical_data` rename (account `891377204778`), then rebuild its history from
+   `raw_data` via `late-data-recomputation`.
+6. Glue roll-up job.
+7. `aggregations` lambda.
+8. Frontend rebuild + deploy (`PUBLIC_*` are baked in at build time).
 
 Wipe `measurements_aggregate` and re-run the Glue job with a wide `LookbackDays` — the sort
 key gained a segment, so old rows are unreadable.
+
+**Every step that renames an attribute on either side of a stream must ship with its consumer.**
+Steps 2 and 4 are the two places this bites, and step 2 already bit once.
 
 ---
 
