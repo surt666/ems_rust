@@ -552,15 +552,21 @@ fn rows_response(rows: &[Row], format: Format) -> ApiResponse {
     }
 }
 
-/// A `<tr>` table fragment of rollup rows (purpose / time / value / unit / count).
+/// A `<tr>` table fragment of rollup rows
+/// (energy type / purpose / time / value / unit / count).
+///
+/// Both axes are emitted because this fragment serves two endpoints: for
+/// `get_aggregations` the purpose column is constant (`total`) and the energy type
+/// is what varies, and for `get_purpose_split` it is exactly the other way round.
 fn rows_to_html(rows: &[Row]) -> String {
     if rows.is_empty() {
-        return "<tr><td colspan=\"5\" class=\"muted\">Ingen data.</td></tr>".to_string();
+        return "<tr><td colspan=\"6\" class=\"muted\">Ingen data.</td></tr>".to_string();
     }
     let mut out = String::new();
     for r in rows {
         out.push_str(&format!(
-            "<tr><td>{}</td><td class=\"mono\">{}</td><td class=\"mono\" style=\"text-align:right\">{:.3}</td><td>{}</td><td class=\"mono\">{}</td></tr>",
+            "<tr><td>{}</td><td>{}</td><td class=\"mono\">{}</td><td class=\"mono\" style=\"text-align:right\">{:.3}</td><td>{}</td><td class=\"mono\">{}</td></tr>",
+            esc(&r.energy_type),
             esc(&r.purpose),
             esc(&r.timestamp),
             r.value,

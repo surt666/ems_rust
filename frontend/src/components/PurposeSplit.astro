@@ -1,0 +1,92 @@
+---
+// End-use breakdown (formålsopdeling) for the selected node: one row per
+// (energy type, purpose, bucket) from get_purpose_split.
+//
+// HTML-over-the-wire: the lambda renders the <tr> fragment and this only issues
+// the request. The URL cannot be built at render time — this is a static site and
+// the selected node lives in sessionStorage — so it is assembled on load, the same
+// way the sibling dashboard islands resolve their level.
+//
+// `unallocated` is the remainder (total − Σ declared purposes), already computed
+// by crates/model. With no formulas declared it equals `total`, which is correct:
+// nothing is allocated until a formula says so.
+const { energyType = "electricity", days = 30 } = Astro.props;
+---
+
+<section class="purpose-split card" data-energy-type={energyType} data-days={days}>
+  <div class="section-header">
+    <h2 class="section-title" style="margin-bottom:0">Formålsopdeling</h2>
+    <span class="muted" style="margin-left:auto">{energyType} · seneste {days} dage</span>
+  </div>
+  <div class="ps-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Energiart</th><th>Formål</th><th>Tid</th>
+          <th class="num">Værdi</th><th>Enhed</th><th class="num">Punkter</th>
+        </tr>
+      </thead>
+      <tbody id="purpose-split-rows">
+        <tr><td colspan="6" class="muted">Henter…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+  import { resolveLevelId } from "../lib/agg";
+
+  function loadPurposeSplit() {
+    const root = document.querySelector<HTMLElement>(".purpose-split");
+    const body = document.getElementById("purpose-split-rows");
+    if (!root || !body) return;
+
+    const level = resolveLevelId();
+    if (!level) {
+      body.innerHTML = '<tr><td colspan="6" class="muted">Ingen node valgt.</td></tr>';
+      return;
+    }
+
+    const days = Number(root.dataset.days || 30);
+    const end = new Date();
+    const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+    const qs = new URLSearchParams({
+      level_id: level,
+      energy_type: root.dataset.energyType || "electricity",
+      resolution: "daily",
+      start: start.toISOString(),
+      end: end.toISOString(),
+      format: "html",
+    });
+
+    const base = (import.meta.env.PUBLIC_AGG_API_BASE_URL || "").replace(/\/$/, "");
+    // htmx.ajax rather than hx-get: hx-get caches by URL, and the URL changes with
+    // the selected node (see the sidebar-tree/soft-nav notes).
+    (window as any).htmx?.ajax(
+      "GET",
+      `${base}/meterdata/query/get_purpose_split?${qs.toString()}`,
+      { target: "#purpose-split-rows", swap: "innerHTML" },
+    );
+  }
+
+  document.addEventListener("astro:page-load", loadPurposeSplit);
+  document.addEventListener("ems:refresh", loadPurposeSplit);
+  loadPurposeSplit();
+</script>
+
+<style>
+  /* Grid, not flex — project convention. */
+  .purpose-split { display: grid; gap: 8px; }
+  .ps-scroll { overflow-x: auto; }
+  .purpose-split table { width: 100%; border-collapse: collapse; }
+  .purpose-split th,
+  .purpose-split :global(td) {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+    font-size: var(--text-sm);
+  }
+  .purpose-split th { text-align: left; font-weight: 500; color: var(--text-muted); }
+  .purpose-split th.num { text-align: right; }
+  .purpose-split :global(.mono) { font-variant-numeric: tabular-nums; }
+  .purpose-split :global(.muted) { color: var(--text-muted); }
+</style>

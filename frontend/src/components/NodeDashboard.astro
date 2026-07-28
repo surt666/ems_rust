@@ -12,6 +12,7 @@ import CostCard from "./CostCard.tsx";
 import EmissionsCard from "./EmissionsCard.tsx";
 import BenchmarkCard from "./BenchmarkCard.tsx";
 import AlarmsCard from "./AlarmsCard.tsx";
+import PurposeSplit from "./PurposeSplit.astro";
 
 // Call to action (biggest energy-waste) has no dedicated backend yet — kept
 // representative until an anomaly/waste-detection service exists.
@@ -100,6 +101,10 @@ const ctaRows = [
     {/* Live per-resource consumption cards (ECharts), fed by the aggregations API —
          one card per resource present under the selected node (totals + daily trend). */}
     <ResourceCards client:only="react" resolution="daily" days={30} />
+
+    {/* End-use breakdown — the purpose axis, rendered as HTML by the aggregations
+        lambda (get_purpose_split). */}
+    <PurposeSplit energyType="electricity" days={30} />
   </div>
 </div>
 
