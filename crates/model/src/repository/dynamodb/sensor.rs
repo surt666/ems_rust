@@ -181,7 +181,6 @@ pub async fn transact_replace(
         .energy_type(new_sensor.energy_type)
         .reading_kind(new_sensor.reading_kind)
         .unit(new_sensor.unit.clone())
-        .formula(new_sensor.formula.clone())
         .resample_minutes(new_sensor.resample_minutes)
         .build();
 

@@ -124,12 +124,7 @@ pub fn sensor_to_json(s: &Sensor) -> Value {
 }
 
 // ---------------------------------------------------------------------------
-// Formula parsing — delegate to json::formula_of_json
 // ---------------------------------------------------------------------------
-
-fn parse_formula(v: Option<Value>) -> Result<model::domain::formula::Formula, String> {
-    json::formula_of_json(v.as_ref())
-}
 
 // ---------------------------------------------------------------------------
 // add_node handler
@@ -652,18 +647,15 @@ where
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
-pub async fn handle_attach_sensor<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut, FFD>(
+pub async fn handle_attach_sensor<FGN, FGNFut, FAS, FASFut, FFD>(
     parent_id: String,
     daq_id: String,
     energy_type_s: String,
     reading_kind_s: String,
     unit: Option<String>,
     resample_val: Option<Value>,
-    formula_val: Option<Value>,
     get_node: FGN,
     add_sensor: FAS,
-    get_active_sensor: FGA,
-    delete_sensor: FDS,
     find_active_by_daq: FFD,
 ) -> Value
 where
@@ -671,9 +663,6 @@ where
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
     FAS: FnOnce(Box<dyn Fn(u32) -> (Sensor, EdgeSpec) + Send>) -> FASFut,
     FASFut: Future<Output = Result<Sensor, RepositoryError>>,
-    FGA: Fn(SensorId) -> Option<Sensor> + Clone + 'static,
-    FDS: FnOnce(SensorId, NodeId) -> FDSFut,
-    FDSFut: Future<Output = Result<(), RepositoryError>>,
     FFD: Fn(&str) -> Option<Sensor>,
 {
     let parent = match NodeId::parse(&parent_id) {
@@ -705,10 +694,6 @@ where
         _ => None,
     };
 
-    let formula = match parse_formula(formula_val) {
-        Ok(f) => f,
-        Err(e) => return bad_request(&e),
-    };
 
     match sensors::attach(
         parent,
@@ -716,12 +701,9 @@ where
         energy_type,
         reading_kind,
         unit,
-        formula,
         resample_minutes,
         get_node,
         add_sensor,
-        get_active_sensor,
-        delete_sensor,
         find_active_by_daq,
     )
     .await
@@ -901,7 +883,6 @@ pub async fn run(cmd: Command) -> Value {
             reading_kind,
             unit,
             resample_minutes,
-            formula,
         } => {
             // Pre-fetch the daq's current owner so the synchronous guard inside
             // handle_attach_sensor can enforce one-active-logical-per-daq (the
@@ -919,7 +900,6 @@ pub async fn run(cmd: Command) -> Value {
                 reading_kind,
                 unit,
                 resample_minutes,
-                formula,
                 get_node_fn(ddb, table.clone()),
                 {
                     let t = table.clone();
@@ -945,15 +925,6 @@ pub async fn run(cmd: Command) -> Value {
                             codec::sensor_of_item(&item)
                                 .map_err(|e| RepositoryError::Codec(e.to_string()))
                         }
-                    }
-                },
-                // Synchronous get_active_sensor: not available in the prod path.
-                |_sid| None,
-                {
-                    let t = table.clone();
-                    move |sid, parent| {
-                        let t = t.clone();
-                        async move { ddb_sensor::delete_sensor(ddb, &t, &sid, &parent).await }
                     }
                 },
                 // One-active-logical-per-daq guard, backed by the prefetched
@@ -1220,12 +1191,6 @@ mod tests {
             let sensor = s.add_sensor(build);
             std::future::ready(Ok(sensor))
         }
-    }
-
-    fn make_get_active(
-        s: Rc<Store>,
-    ) -> impl Fn(SensorId) -> Option<model::domain::sensor::Sensor> + Clone {
-        move |sid| s.get_active_sensor(&sid)
     }
 
     fn make_delete_sensor(
@@ -1924,11 +1889,8 @@ mod tests {
             "counter".to_string(),
             Some("kWh".to_string()),
             Some(json!(15)),
-            None,
             make_get_node(store.clone()),
             make_add_sensor(store.clone()),
-            make_get_active(store.clone()),
-            make_delete_sensor(store.clone()),
             |_daq: &str| None,
         )
         .await;
@@ -1954,11 +1916,8 @@ mod tests {
             "counter".to_string(),
             None,
             Some(json!("15")),
-            None,
             make_get_node(store.clone()),
             make_add_sensor(store.clone()),
-            make_get_active(store.clone()),
-            make_delete_sensor(store.clone()),
             |_daq: &str| None,
         )
         .await;
@@ -1978,11 +1937,8 @@ mod tests {
             "counter".to_string(),
             None,
             Some(json!("")),
-            None,
             make_get_node(store.clone()),
             make_add_sensor(store.clone()),
-            make_get_active(store.clone()),
-            make_delete_sensor(store.clone()),
             |_daq: &str| None,
         )
         .await;
@@ -1993,58 +1949,6 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // Test: attach_sensor with formula
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn attach_sensor_with_formula() {
-        let store = Rc::new(Store::new());
-        let c2 = seed_building_company(&store);
-        let bldg = seed_building(&store, c2).await;
-
-        // First sensor to reference.
-        let s1 = handle_attach_sensor(
-            bldg.to_string(),
-            "daq:ref".to_string(),
-            "Electricity".to_string(),
-            "counter".to_string(),
-            None,
-            None,
-            None,
-            make_get_node(store.clone()),
-            make_add_sensor(store.clone()),
-            make_get_active(store.clone()),
-            make_delete_sensor(store.clone()),
-            |_daq: &str| None,
-        )
-        .await;
-        assert_eq!(status(&s1), 200);
-        let s1_id = body(&s1)["id"].as_str().expect("sensor id").to_string();
-
-        let formula = json!({
-            "kind": "expr",
-            "expr": "abs(self - a)",
-            "refs": { "a": s1_id }
-        });
-
-        let resp = handle_attach_sensor(
-            bldg.to_string(),
-            "daq:f".to_string(),
-            "electricity".to_string(),
-            "counter".to_string(),
-            None,
-            None,
-            Some(formula),
-            make_get_node(store.clone()),
-            make_add_sensor(store.clone()),
-            make_get_active(store.clone()),
-            make_delete_sensor(store.clone()),
-            |_daq: &str| None,
-        )
-        .await;
-
-        assert_eq!(status(&resp), 200, "attach with formula; got {resp:?}");
-        assert_eq!(body(&resp)["formula"]["kind"].as_str().unwrap_or(""), "expr");
-    }
 
     // -----------------------------------------------------------------------
     // Test: delete_sensor roundtrip — attach then delete, sensor is gone
@@ -2063,11 +1967,8 @@ mod tests {
             "counter".to_string(),
             Some("kWh".to_string()),
             None,
-            None,
             make_get_node(store.clone()),
             make_add_sensor(store.clone()),
-            make_get_active(store.clone()),
-            make_delete_sensor(store.clone()),
             |_daq: &str| None,
         )
         .await;
@@ -2109,41 +2010,4 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // Test: attach_sensor unbound alias → 400
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn attach_sensor_unbound_alias_400() {
-        let store = Rc::new(Store::new());
-        let c2 = seed_building_company(&store);
-        let bldg = seed_building(&store, c2).await;
-
-        let formula = json!({
-            "kind": "expr",
-            "expr": "self - a",
-            "refs": {}
-        });
-
-        let resp = handle_attach_sensor(
-            bldg.to_string(),
-            "daq:bad".to_string(),
-            "electricity".to_string(),
-            "counter".to_string(),
-            None,
-            None,
-            Some(formula),
-            make_get_node(store.clone()),
-            make_add_sensor(store.clone()),
-            make_get_active(store.clone()),
-            make_delete_sensor(store.clone()),
-            |_daq: &str| None,
-        )
-        .await;
-
-        assert_eq!(status(&resp), 400, "unbound alias should be 400; got {resp:?}");
-        assert!(
-            resp["body"].as_str().unwrap_or("").contains("unbound alias"),
-            "response should mention unbound alias; body: {}",
-            resp["body"]
-        );
-    }
 }

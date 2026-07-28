@@ -1,4 +1,4 @@
-pub mod formula;
+pub mod node_formula;
 pub mod ids;
 pub mod measurement;
 pub mod node;

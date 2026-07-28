@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use aws_sdk_dynamodb::types::AttributeValue;
 use chrono::{DateTime, Utc};
 
-use crate::domain::formula::{Expr, Formula};
 use crate::domain::ids::{Level, NodeId, SensorId, UserId};
 use crate::domain::node::Node;
 use crate::domain::schema::{EdgeSpec, FieldSpec, Schema};
@@ -209,142 +208,6 @@ pub(crate) fn hn2_segment(path: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-// ---------------------------------------------------------------------------
-// Formula encode/decode (expr_to_attr / formula_to_attr)
-// ---------------------------------------------------------------------------
-
-/// Encode a binary expression node `{t, l, r}`.
-fn binop(tag: &str, l: &Expr, r: &Expr) -> AttributeValue {
-    let mut m: HashMap<String, AttributeValue> = HashMap::new();
-    m.insert("t".to_string(), s(tag));
-    m.insert("l".to_string(), expr_to_av(l));
-    m.insert("r".to_string(), expr_to_av(r));
-    AttributeValue::M(m)
-}
-
-fn expr_to_av(e: &Expr) -> AttributeValue {
-    let mut m: HashMap<String, AttributeValue> = HashMap::new();
-    match e {
-        Expr::Num(f) => {
-            m.insert("t".to_string(), s("num"));
-            m.insert("v".to_string(), n(format_float_g17(*f)));
-            AttributeValue::M(m)
-        }
-        Expr::SelfRef => {
-            m.insert("t".to_string(), s("self"));
-            AttributeValue::M(m)
-        }
-        Expr::Ref(a) => {
-            m.insert("t".to_string(), s("ref"));
-            m.insert("a".to_string(), s(a.clone()));
-            AttributeValue::M(m)
-        }
-        Expr::Abs(inner) => {
-            m.insert("t".to_string(), s("abs"));
-            m.insert("e".to_string(), expr_to_av(inner));
-            AttributeValue::M(m)
-        }
-        Expr::Add(a, b) => binop("add", a, b),
-        Expr::Sub(a, b) => binop("sub", a, b),
-        Expr::Mul(a, b) => binop("mul", a, b),
-        Expr::Div(a, b) => binop("div", a, b),
-    }
-}
-
-fn expr_of_av(v: &AttributeValue) -> Result<Expr, RepositoryError> {
-    let kvs = as_m(v)?;
-    let tag = as_s(field(kvs, "t")?)?;
-    match tag {
-        "num" => {
-            let nv = field(kvs, "v")?;
-            match nv {
-                AttributeValue::N(s) => s
-                    .parse::<f64>()
-                    .map(Expr::Num)
-                    .map_err(|_| RepositoryError::Codec("bad num".to_string())),
-                _ => Err(RepositoryError::Codec("num needs N".to_string())),
-            }
-        }
-        "self" => Ok(Expr::SelfRef),
-        "ref" => {
-            let a = as_s(field(kvs, "a")?)?;
-            Ok(Expr::Ref(a.to_string()))
-        }
-        "abs" => {
-            let e = field(kvs, "e")?;
-            Ok(Expr::Abs(Box::new(expr_of_av(e)?)))
-        }
-        "add" | "sub" | "mul" | "div" => {
-            let ctor: fn(Box<Expr>, Box<Expr>) -> Expr = match tag {
-                "add" => Expr::Add,
-                "sub" => Expr::Sub,
-                "mul" => Expr::Mul,
-                _ => Expr::Div,
-            };
-            let l = expr_of_av(field(kvs, "l")?)?;
-            let r = expr_of_av(field(kvs, "r")?)?;
-            Ok(ctor(Box::new(l), Box::new(r)))
-        }
-        other => Err(RepositoryError::Codec(format!("unknown expr tag {:?}", other))),
-    }
-}
-
-fn formula_to_av(f: &Formula) -> AttributeValue {
-    let mut m: HashMap<String, AttributeValue> = HashMap::new();
-    match f {
-        Formula::Identity => {
-            m.insert("kind".to_string(), s("identity"));
-            AttributeValue::M(m)
-        }
-        Formula::Zero => {
-            m.insert("kind".to_string(), s("zero"));
-            AttributeValue::M(m)
-        }
-        Formula::Expr { expr, refs } => {
-            m.insert("kind".to_string(), s("expr"));
-            m.insert("ast".to_string(), expr_to_av(expr));
-            let refs_m: HashMap<String, AttributeValue> = refs
-                .iter()
-                .map(|(alias, sid)| (alias.clone(), n(sid.id().to_string())))
-                .collect();
-            m.insert("refs".to_string(), AttributeValue::M(refs_m));
-            AttributeValue::M(m)
-        }
-    }
-}
-
-fn formula_of_av(v: &AttributeValue) -> Result<Formula, RepositoryError> {
-    let kvs = as_m(v)?;
-    let kind = as_s(field(kvs, "kind")?)?;
-    match kind {
-        "identity" => Ok(Formula::Identity),
-        "zero" => Ok(Formula::Zero),
-        "expr" => {
-            let ast = expr_of_av(field(kvs, "ast")?)?;
-            let refs_av = field(kvs, "refs")?;
-            let refs_m = as_m(refs_av)?;
-            let mut refs: Vec<(String, SensorId)> = Vec::new();
-            for (alias, nv) in refs_m {
-                match nv {
-                    AttributeValue::N(s) => {
-                        let i = s.parse::<u32>().map_err(|_| {
-                            RepositoryError::Codec(format!("bad ref id {:?}", s))
-                        })?;
-                        refs.push((alias.clone(), SensorId::make(i)));
-                    }
-                    _ => {
-                        return Err(RepositoryError::Codec(
-                            "expr ref must be N".to_string(),
-                        ))
-                    }
-                }
-            }
-            // Preserve insertion order
-            Ok(Formula::Expr { expr: ast, refs })
-        }
-        other => Err(RepositoryError::Codec(format!("unknown formula kind {:?}", other))),
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Schema encode/decode (schema_to_attr / decode_schema)
@@ -787,7 +650,6 @@ pub fn sensor_to_item(sn: &Sensor) -> Item {
         "reading_kind".to_string(),
         s(sn.reading_kind.to_string()),
     );
-    item.insert("formula".to_string(), formula_to_av(&sn.formula));
     item.insert("created".to_string(), s(dt_to_rfc3339z(&sn.created)));
     if let Some(rm) = sn.resample_minutes {
         item.insert("resample_minutes".to_string(), n(rm.to_string()));
@@ -879,10 +741,6 @@ pub fn sensor_of_item(item: &Item) -> Result<Sensor, RepositoryError> {
     let unit = opt_s(item, "unit");
     let created_s = as_s(field(item, "created")?)?;
     let created = parse_ts(created_s);
-    let formula = match item.get("formula") {
-        Some(v) => formula_of_av(v)?,
-        None => Formula::Identity,
-    };
     let resample_minutes = opt_num_of_n::<i32>(item.get("resample_minutes"));
     Ok(Sensor::builder()
         .id(id)
@@ -892,7 +750,6 @@ pub fn sensor_of_item(item: &Item) -> Result<Sensor, RepositoryError> {
         .energy_type(energy_type)
         .reading_kind(reading_kind)
         .unit(unit)
-        .formula(formula)
         .resample_minutes(resample_minutes)
         .build())
 }
@@ -1289,7 +1146,6 @@ mod tests {
         assert!(matches!(sensor.reading_kind, ReadingKind::Counter));
         assert_eq!(sensor.unit, Some("KWh".to_string()));
         assert_eq!(sensor.resample_minutes, Some(5));
-        assert!(matches!(sensor.formula, Formula::Identity));
         assert_eq!(
             sensor.path,
             "HN0#root|HN1#10001|HN2#10003|HN3#10004|HN4#10001|S#10010"

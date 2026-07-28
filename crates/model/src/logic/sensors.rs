@@ -6,7 +6,6 @@ use std::future::Future;
 
 use chrono::{DateTime, Utc};
 
-use crate::domain::formula::Formula;
 use crate::domain::ids::{NodeId, SensorId};
 use crate::domain::node::{child_path, Node};
 use crate::domain::sensor::Sensor;
@@ -32,63 +31,20 @@ const fn sensor_not_found(id: SensorId) -> RepositoryError {
 }
 
 // ---------------------------------------------------------------------------
-// Cycle detection
-// ---------------------------------------------------------------------------
-
-/// Return `true` if following the formula references reachable from `id`
-/// revisits an already-seen sensor (i.e. forms a cycle).
-fn walk_refs_sync(
-    visited: &[SensorId],
-    id: SensorId,
-    get_active: &dyn Fn(SensorId) -> Option<Sensor>,
-) -> bool {
-    if visited.contains(&id) {
-        return true;
-    }
-    match get_active(id) {
-        None => false,
-        Some(s) => {
-            let mut new_visited = visited.to_vec();
-            new_visited.push(id);
-            s.formula
-                .referenced_ids()
-                .into_iter()
-                .any(|u| walk_refs_sync(&new_visited, u, get_active))
-        }
-    }
-}
-
-/// Check whether `formula` introduces a cycle, given `self_id` is the sensor
-/// whose formula is being set.
-fn has_cycle(
-    self_id: SensorId,
-    formula: &Formula,
-    get_active: &dyn Fn(SensorId) -> Option<Sensor>,
-) -> bool {
-    formula
-        .referenced_ids()
-        .iter()
-        .any(|u| *u == self_id || walk_refs_sync(&[self_id], *u, get_active))
-}
-
-// ---------------------------------------------------------------------------
 // attach
 // ---------------------------------------------------------------------------
 
 /// Attach a new sensor to `parent`.
 #[allow(clippy::too_many_arguments)]
-pub async fn attach<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut, FFD>(
+pub async fn attach<FGN, FGNFut, FAS, FASFut, FFD>(
     parent: NodeId,
     daq_id: String,
     energy_type: EnergyType,
     reading_kind: ReadingKind,
     unit: Option<String>,
-    formula: Formula,
     resample_minutes: Option<i32>,
     get_node: FGN,
     add_sensor: FAS,
-    get_active_sensor: FGA,
-    delete_sensor: FDS,
     find_active_by_daq: FFD,
 ) -> Result<Sensor, RepositoryError>
 where
@@ -96,9 +52,6 @@ where
     FGNFut: Future<Output = Result<Option<Node>, RepositoryError>>,
     FAS: FnOnce(Box<dyn Fn(u32) -> (Sensor, RepoEdgeSpec) + Send>) -> FASFut,
     FASFut: Future<Output = Result<Sensor, RepositoryError>>,
-    FGA: Fn(SensorId) -> Option<Sensor> + Clone + 'static,
-    FDS: FnOnce(SensorId, NodeId) -> FDSFut,
-    FDSFut: Future<Output = Result<(), RepositoryError>>,
     FFD: Fn(&str) -> Option<Sensor>,
 {
     // Validate parent exists.
@@ -136,9 +89,6 @@ where
     // captured state independently.
     let parent_path = parent_node.path.clone();
     let parent_clone = parent.clone();
-    // Clone formula now so the post-allocation cycle check still owns a copy.
-    let formula_for_build = formula.clone();
-
     // Allocate sensor and write edge atomically.
     let s = add_sensor(Box::new(move |raw_id| {
         let sid = SensorId::make(raw_id);
@@ -151,7 +101,6 @@ where
             .energy_type(energy_type)
             .reading_kind(reading_kind)
             .unit(unit.clone())
-            .formula(formula_for_build.clone())
             .resample_minutes(resample_minutes)
             .build();
         let edge = RepoEdgeSpec {
@@ -163,16 +112,6 @@ where
         (sensor, edge)
     }))
     .await?;
-
-    // Post-allocation cycle check (check AFTER allocation, roll
-    // back via delete_sensor if cycle detected).
-    let sensor_id = s.id;
-    let formula_for_check = formula.clone();
-    let ga = get_active_sensor.clone();
-    if has_cycle(sensor_id, &formula_for_check, &move |id| ga(id)) {
-        delete_sensor(sensor_id, parent.clone()).await?;
-        return Err(validation_err("formula refs form a cycle"));
-    }
 
     Ok(s)
 }
@@ -298,78 +237,6 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// set_formula
-// ---------------------------------------------------------------------------
-
-/// Update the formula on an existing sensor.
-pub async fn set_formula<FGA, FRD, FRDFut>(
-    sensor_id: SensorId,
-    formula: Formula,
-    get_active_sensor: FGA,
-    replace_sensor_device: FRD,
-) -> Result<Sensor, RepositoryError>
-where
-    FGA: Fn(SensorId) -> Option<Sensor> + Clone,
-    FRD: FnOnce(DateTime<Utc>, Sensor) -> FRDFut,
-    FRDFut: Future<Output = Result<(), RepositoryError>>,
-{
-    let old = get_active_sensor(sensor_id).ok_or_else(|| sensor_not_found(sensor_id))?;
-
-    // Cycle check before write.
-    let ga = get_active_sensor.clone();
-    if has_cycle(sensor_id, &formula, &move |id| ga(id)) {
-        return Err(validation_err("formula refs form a cycle"));
-    }
-
-    let old_created = old.created;
-    let new_sensor = Sensor { formula, ..revised(&old) };
-    replace_sensor_device(old_created, new_sensor.clone()).await?;
-    Ok(new_sensor)
-}
-
-// ---------------------------------------------------------------------------
-// evaluate
-// ---------------------------------------------------------------------------
-
-/// Evaluate the formula of a sensor, resolving referenced sensors recursively.
-pub fn evaluate<FGA, FGR>(
-    id: SensorId,
-    get_active_sensor: &FGA,
-    get_sensor_reading: &FGR,
-) -> Result<f64, RepositoryError>
-where
-    FGA: Fn(SensorId) -> Option<Sensor>,
-    FGR: Fn(SensorId) -> Option<f64>,
-{
-    let s = get_active_sensor(id).ok_or_else(|| sensor_not_found(id))?;
-    let reading = || {
-        get_sensor_reading(id).ok_or_else(|| sensor_not_found(id))
-    };
-
-    match &s.formula {
-        Formula::Zero => Ok(0.0),
-        Formula::Identity => reading(),
-        Formula::Expr { refs, .. } => {
-            let self_reading = reading()?;
-            // Resolve all referenced sensors.
-            let mut resolved: Vec<(String, f64)> = Vec::new();
-            for (alias, sid) in refs {
-                let v = evaluate(*sid, get_active_sensor, get_sensor_reading)?;
-                resolved.push((alias.clone(), v));
-            }
-            let resolve_alias = |alias: &str| -> f64 {
-                resolved
-                    .iter()
-                    .find(|(a, _)| a == alias)
-                    .map(|(_, v)| *v)
-                    .unwrap_or_else(|| panic!("Unknown_ref: {}", alias))
-            };
-            Ok(s.formula.eval(self_reading, &resolve_alias))
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // list_under_company
 // ---------------------------------------------------------------------------
 
@@ -429,7 +296,6 @@ mod tests {
     use chrono::{DateTime, Utc};
 
     use super::*;
-    use crate::domain::formula::{Expr, Formula};
     use crate::domain::ids::{Level, NodeId, SensorId};
     use crate::domain::node;
     use crate::domain::schema::{EdgeSpec as SchemaEdgeSpec, Schema};
@@ -580,7 +446,6 @@ mod tests {
         store: Rc<Store>,
         parent: NodeId,
         daq_id: &str,
-        formula: Formula,
         resample_minutes: Option<i32>,
     ) -> Result<Sensor, RepositoryError> {
         attach(
@@ -589,12 +454,9 @@ mod tests {
             EnergyType::Electricity,
             ReadingKind::Counter,
             Some("kWh".to_string()),
-            formula,
             resample_minutes,
             get_node_fn(store.clone()),
             add_sensor_fn(store.clone()),
-            get_active_fn(store.clone()),
-            delete_sensor_fn(store.clone()),
             {
                 let s = store.clone();
                 move |daq: &str| s.find_active_by_daq(daq)
@@ -611,11 +473,11 @@ mod tests {
         let b1 = seed_building(&store, c2.clone()).await;
         let b2 = seed_building(&store, c2).await;
 
-        do_attach(store.clone(), b1, "daq:dup", Formula::Identity, Some(15))
+        do_attach(store.clone(), b1, "daq:dup", Some(15))
             .await
             .expect("first attach ok");
 
-        let err = do_attach(store.clone(), b2, "daq:dup", Formula::Identity, Some(15))
+        let err = do_attach(store.clone(), b2, "daq:dup", Some(15))
             .await
             .expect_err("second attach of the same daq must conflict");
         assert!(matches!(err, RepositoryError::Conflict(_)), "got {err:?}");
@@ -627,7 +489,7 @@ mod tests {
         let store = Rc::new(Store::new());
         let c2 = seed_company(&store);
         let b1 = seed_building(&store, c2).await;
-        let s = do_attach(store.clone(), b1, "daq:del", Formula::Identity, Some(15))
+        let s = do_attach(store.clone(), b1, "daq:del", Some(15))
             .await
             .expect("attach ok");
 
@@ -667,10 +529,10 @@ mod tests {
         let b1 = seed_building(&store, c2.clone()).await;
         let b2 = seed_building(&store, c2).await;
 
-        let s1 = do_attach(store.clone(), b1, "daq:A", Formula::Identity, Some(15))
+        let s1 = do_attach(store.clone(), b1, "daq:A", Some(15))
             .await
             .expect("attach s1");
-        do_attach(store.clone(), b2, "daq:B", Formula::Identity, Some(15))
+        do_attach(store.clone(), b2, "daq:B", Some(15))
             .await
             .expect("attach s2");
 
@@ -703,7 +565,7 @@ mod tests {
         let c2 = seed_company(&store);
         let bldg = seed_building(&store, c2).await;
 
-        let s = do_attach(store.clone(), bldg.clone(), "daq:1", Formula::Identity, Some(15))
+        let s = do_attach(store.clone(), bldg.clone(), "daq:1", Some(15))
             .await
             .expect("attach should succeed");
 
@@ -721,7 +583,7 @@ mod tests {
         let c2 = seed_company(&store);
 
         // Sensors allowed at Hn3 but not Hn2 in sample_schema.
-        let result = do_attach(store.clone(), c2, "daq:2", Formula::Identity, Some(15)).await;
+        let result = do_attach(store.clone(), c2, "daq:2", Some(15)).await;
 
         match result {
             Err(RepositoryError::Validation(_)) => {} // expected
@@ -788,15 +650,15 @@ mod tests {
         assert_eq!(b2.label, "building");
 
         // attach to building at hn3 → Ok
-        assert!(do_attach(store.clone(), b1.id.clone(), "daq:b1", Formula::Identity, Some(15))
+        assert!(do_attach(store.clone(), b1.id.clone(), "daq:b1", Some(15))
             .await
             .is_ok());
         // attach to building at hn4 → Ok (same type, different depth)
-        assert!(do_attach(store.clone(), b2.id.clone(), "daq:b2", Formula::Identity, Some(15))
+        assert!(do_attach(store.clone(), b2.id.clone(), "daq:b2", Some(15))
             .await
             .is_ok());
         // attach to group → rejected, message names the type
-        let err = do_attach(store.clone(), g.id.clone(), "daq:g", Formula::Identity, Some(15))
+        let err = do_attach(store.clone(), g.id.clone(), "daq:g", Some(15))
             .await
             .unwrap_err();
         // The validation message names the rejected node type.
@@ -821,7 +683,7 @@ mod tests {
         let c2 = seed_company(&store);
         let bldg = seed_building(&store, c2).await;
 
-        do_attach(store.clone(), bldg.clone(), "daq:1", Formula::Identity, Some(15))
+        do_attach(store.clone(), bldg.clone(), "daq:1", Some(15))
             .await
             .expect("attach");
 
@@ -868,7 +730,7 @@ mod tests {
         let c2 = seed_company(&store);
         let bldg = seed_building(&store, c2).await;
 
-        let s = do_attach(store.clone(), bldg, "daq:k", Formula::Identity, Some(15))
+        let s = do_attach(store.clone(), bldg, "daq:k", Some(15))
             .await
             .expect("attach");
 
@@ -912,7 +774,7 @@ mod tests {
         let c2 = seed_company(&store);
         let bldg = seed_building(&store, c2).await;
 
-        let s = do_attach(store.clone(), bldg, "daq:old", Formula::Identity, Some(15))
+        let s = do_attach(store.clone(), bldg, "daq:old", Some(15))
             .await
             .expect("attach");
 
@@ -976,37 +838,6 @@ mod tests {
     //
     // Attach a sensor normally, then call set_formula with a formula that
     // references its own id (cycle).
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn set_formula_detects_self_cycle() {
-        let store = Rc::new(Store::new());
-        let c2 = seed_company(&store);
-        let bldg = seed_building(&store, c2).await;
-
-        let s = do_attach(store.clone(), bldg, "daq:1", Formula::Identity, Some(15))
-            .await
-            .expect("attach");
-
-        let cyc = Formula::Expr {
-            refs: vec![("self_again".to_string(), s.id)],
-            expr: Expr::Ref("self_again".to_string()),
-        };
-
-        let result = set_formula(
-            s.id,
-            cyc,
-            get_active_fn(store.clone()),
-            replace_sensor_fn(store.clone()),
-        )
-        .await;
-
-        match result {
-            Err(RepositoryError::Validation(_)) => {} // expected
-            Ok(_) => panic!("should reject cycle"),
-            Err(e) => panic!("wrong error: {:?}", e),
-        }
-    }
 
     // -----------------------------------------------------------------------
     // Test: attach_rolls_back_on_post_allocation_self_cycle
@@ -1014,132 +845,18 @@ mod tests {
     // attach can only detect a self-cycle AFTER it allocates the sensor's id
     // (the formula references that not-yet-known id). This exercises the
     // post-allocation rollback branch: the allocated sensor must be deleted.
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn attach_rolls_back_on_post_allocation_self_cycle() {
-        let store = Rc::new(Store::new());
-        let c2 = seed_company(&store);
-        let bldg = seed_building(&store, c2).await;
-
-        // First sensor fixes the id counter; the next allocation is +1.
-        let s0 = do_attach(store.clone(), bldg.clone(), "daq:0", Formula::Identity, Some(15))
-            .await
-            .expect("attach s0");
-        let next_id = SensorId::make(s0.id.id() + 1);
-
-        // Formula references the id the new sensor will be allocated → a
-        // self-cycle only detectable post-allocation.
-        let cyc = Formula::Expr {
-            refs: vec![("me".to_string(), next_id)],
-            expr: Expr::Ref("me".to_string()),
-        };
-
-        let result = do_attach(store.clone(), bldg, "daq:cyc", cyc, Some(15)).await;
-
-        match result {
-            Err(RepositoryError::Validation(_)) => {} // expected: cycle rejected
-            other => panic!("expected Validation cycle error, got {:?}", other),
-        }
-        // Rollback: the allocated sensor must have been deleted.
-        assert!(
-            store.get_active_sensor(&next_id).is_none(),
-            "post-allocation cycle must roll back (delete) the sensor"
-        );
-    }
 
     // -----------------------------------------------------------------------
     // evaluate tests
-    // -----------------------------------------------------------------------
-
-    /// Evaluate with a fixed reading map.
-    fn eval_with_readings(
-        store: &Rc<Store>,
-        id: SensorId,
-        readings: &[(SensorId, f64)],
-    ) -> Result<f64, RepositoryError> {
-        let ga = {
-            let s = store.clone();
-            move |sid| s.get_active_sensor(&sid)
-        };
-        let gr = |sid: SensorId| {
-            readings
-                .iter()
-                .find(|(s, _)| *s == sid)
-                .map(|(_, v)| *v)
-        };
-        evaluate(id, &ga, &gr)
-    }
 
     // -----------------------------------------------------------------------
     // Test: evaluate_identity
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn evaluate_identity() {
-        let store = Rc::new(Store::new());
-        let c2 = seed_company(&store);
-        let bldg = seed_building(&store, c2).await;
-
-        let s = do_attach(store.clone(), bldg, "daq:1", Formula::Identity, Some(15))
-            .await
-            .expect("attach");
-
-        let readings = [(s.id, 42.0)];
-        let v = eval_with_readings(&store, s.id, &readings).expect("evaluate");
-        assert!((v - 42.0).abs() < 1e-9, "raw passed through");
-    }
 
     // -----------------------------------------------------------------------
     // Test: evaluate_composite
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn evaluate_composite() {
-        let store = Rc::new(Store::new());
-        let c2 = seed_company(&store);
-        let bldg = seed_building(&store, c2).await;
-
-        let s4 = do_attach(store.clone(), bldg.clone(), "daq:4", Formula::Identity, Some(15))
-            .await
-            .expect("attach s4");
-
-        let formula_s3 = Formula::Expr {
-            refs: vec![("s4".to_string(), s4.id)],
-            expr: Expr::Abs(Box::new(Expr::Sub(
-                Box::new(Expr::SelfRef),
-                Box::new(Expr::Ref("s4".to_string())),
-            ))),
-        };
-
-        let s3 = do_attach(store.clone(), bldg, "daq:3", formula_s3, Some(15))
-            .await
-            .expect("attach s3");
-
-        let readings = [(s4.id, 3.0), (s3.id, 10.0)];
-        let v = eval_with_readings(&store, s3.id, &readings).expect("evaluate");
-        assert!((v - 7.0).abs() < 1e-9, "|10 - 3| = 7, got {}", v);
-    }
 
     // -----------------------------------------------------------------------
     // Test: evaluate_zero_short_circuits_reading
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn evaluate_zero_short_circuits_reading() {
-        let store = Rc::new(Store::new());
-        let c2 = seed_company(&store);
-        let bldg = seed_building(&store, c2).await;
-
-        let s = do_attach(store.clone(), bldg, "daq:z", Formula::Zero, Some(15))
-            .await
-            .expect("attach");
-
-        // No readings provided — Zero must not try to fetch one.
-        let readings: &[(SensorId, f64)] = &[];
-        let v = eval_with_readings(&store, s.id, readings).expect("evaluate");
-        assert_eq!(v, 0.0);
-    }
 
     // -----------------------------------------------------------------------
     // Test: list_under_company_scopes_to_hn2

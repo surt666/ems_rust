@@ -6,8 +6,7 @@
 
 use serde_json::{json, Value};
 
-use model::domain::formula::{expr_aliases, expr_to_string, parse_expr_str, Formula};
-use model::domain::ids::{NodeId, SensorId};
+use model::domain::ids::NodeId;
 use model::domain::node::Node;
 use model::domain::schema::{EdgeSpec, FieldSpec, Schema};
 use model::domain::sensor::Sensor;
@@ -255,124 +254,6 @@ pub fn node_to_json(n: &Node) -> Value {
 }
 
 // ---------------------------------------------------------------------------
-// formula_to_json
-// ---------------------------------------------------------------------------
-
-/// Serialise a `Formula` to a `serde_json::Value`.
-pub fn formula_to_json(f: &Formula) -> Value {
-    match f {
-        Formula::Identity => json!({ "kind": "identity" }),
-        Formula::Zero => json!({ "kind": "zero" }),
-        Formula::Expr { refs, expr } => {
-            let refs_obj: serde_json::Map<String, Value> = refs
-                .iter()
-                .map(|(a, sid)| (a.clone(), Value::String(sid.to_string())))
-                .collect();
-            json!({
-                "kind": "expr",
-                "expr": expr_to_string(expr),
-                "refs": Value::Object(refs_obj),
-            })
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// formula_of_json
-// ---------------------------------------------------------------------------
-
-/// Deserialise a `Formula` from an optional `serde_json::Value`.
-///
-/// Behaviour:
-/// - `None` or `Some(null)` → `Identity`
-/// - `Some("identity")` → `Identity`
-/// - `Some("zero")` → `Zero`
-/// - `Some({ "kind": "identity" })` → `Identity`
-/// - `Some({ "kind": "zero" })` → `Zero`
-/// - `Some({ "kind": "expr", "expr": …, "refs": … })` → `Expr`
-/// - `Some({ "expr": …, "refs": … })` (no `kind`) → implicit `Expr`
-/// - `refs` may be a JSON object or a JSON-encoded string.
-/// - Unbound alias → `Err`; unused ref → `Err`.
-pub fn formula_of_json(v: Option<&Value>) -> Result<Formula, String> {
-    match v {
-        None | Some(Value::Null) => Ok(Formula::Identity),
-        Some(Value::String(s)) if s == "identity" => Ok(Formula::Identity),
-        Some(Value::String(s)) if s == "zero" => Ok(Formula::Zero),
-        Some(Value::Object(map)) => {
-            let kind = map.get("kind").and_then(|v| v.as_str());
-            let has_expr = map.get("expr").and_then(|v| v.as_str()).is_some();
-            // "implicit expr": no kind but has expr field
-            let want_expr = kind == Some("expr") || (kind.is_none() && has_expr);
-            match kind {
-                Some("identity") => Ok(Formula::Identity),
-                Some("zero") => Ok(Formula::Zero),
-                _ if want_expr => {
-                    let expr_s = map
-                        .get("expr")
-                        .and_then(|v| v.as_str())
-                        .ok_or("formula.expr must be a string")?;
-                    let ast = parse_expr_str(expr_s)
-                        .map_err(|e| format!("formula.expr parse error: {}", e))?;
-                    let refs_val = map
-                        .get("refs")
-                        .cloned()
-                        .unwrap_or(Value::Null);
-                    let refs = parse_refs_json(&refs_val)?;
-                    let aliases = expr_aliases(&ast);
-                    // Every alias used in the expression must appear in refs.
-                    if let Some(a) = aliases.iter().find(|a| !refs.iter().any(|(r, _)| r == *a)) {
-                        return Err(format!("formula references unbound alias {:?}", a));
-                    }
-                    // Every ref must be used by the expression.
-                    if let Some((a, _)) = refs.iter().find(|(a, _)| !aliases.contains(a)) {
-                        return Err(format!("formula.refs has unused alias {:?}", a));
-                    }
-                    Ok(Formula::Expr { refs, expr: ast })
-                }
-                _ => Err(
-                    "formula object must have a \"kind\" field (identity|zero|expr)".to_string(),
-                ),
-            }
-        }
-        Some(_) => Err("formula must be an object or string".to_string()),
-    }
-}
-
-/// Parse the `refs` field of a formula.  Accepts:
-/// - JSON object (`{"a": "S#1", …}`)
-/// - JSON null → empty list
-/// - A JSON-encoded string containing an object (`'{"a":"S#1"}'`)
-fn parse_refs_json(v: &Value) -> Result<Vec<(String, SensorId)>, String> {
-    let kvs: Vec<(String, Value)> = match v {
-        Value::Object(map) => map.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-        Value::Null => vec![],
-        Value::String(s) => {
-            // refs may be a JSON-serialised string (DynamoDB / form path).
-            match serde_json::from_str::<Value>(s) {
-                Ok(Value::Object(map)) => {
-                    map.into_iter().collect()
-                }
-                Ok(_) => {
-                    return Err("formula.refs string must encode a JSON object".to_string())
-                }
-                Err(_) => return Err("formula.refs is not valid JSON".to_string()),
-            }
-        }
-        _ => return Err("formula.refs must be an object".to_string()),
-    };
-    kvs.into_iter()
-        .map(|(alias, id_val)| {
-            let id_s = id_val
-                .as_str()
-                .ok_or_else(|| format!("ref for alias {:?} must be a string sensor id", alias))?;
-            let sid = SensorId::parse(id_s)
-                .map_err(|e| format!("bad sensor id for alias {:?}: {}", alias, e))?;
-            Ok((alias, sid))
-        })
-        .collect()
-}
-
-// ---------------------------------------------------------------------------
 // sensor_to_json
 // ---------------------------------------------------------------------------
 
@@ -390,7 +271,6 @@ pub fn sensor_to_json(s: &Sensor) -> Value {
         "reading_kind":       s.reading_kind.to_string(),
         "unit":             unit,
         "resample_minutes": resample,
-        "formula":          formula_to_json(&s.formula),
     })
 }
 
@@ -457,12 +337,8 @@ fn opt_f64_of_json(v: &Value) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::DateTime;
-    use model::domain::formula::{parse_expr_str as parse_expr, Formula};
-    use model::domain::ids::{Level, NodeId, SensorId};
+    use model::domain::ids::{Level, NodeId};
     use model::domain::node;
-    use model::domain::sensor::Sensor;
-    use model::domain::values::{ReadingKind, EnergyType};
     use serde_json::json;
 
     // ------------------------------------------------------------------
@@ -552,190 +428,4 @@ mod tests {
         assert_eq!(j["label"], json!("building"));
     }
 
-    // ------------------------------------------------------------------
-    // 4. formula_of_json_default_identity
-    //
-    // Test: formula_of_json None → Identity.
-    // ------------------------------------------------------------------
-    #[test]
-    fn formula_of_json_default_identity() {
-        match formula_of_json(None) {
-            Ok(Formula::Identity) => {}
-            other => panic!("absent formula should be Identity, got {:?}", other),
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // 5. formula_of_json_zero
-    //
-    // Test: formula_of_json (Some { kind: "zero" }) → Zero.
-    // ------------------------------------------------------------------
-    #[test]
-    fn formula_of_json_zero() {
-        let j = json!({ "kind": "zero" });
-        match formula_of_json(Some(&j)) {
-            Ok(Formula::Zero) => {}
-            other => panic!("kind=zero should be Zero, got {:?}", other),
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // 6. formula_of_json_expr_with_refs
-    //
-    // Test: expr "abs(self - a)" with refs {"a": "S#12"}.
-    // Checks ast → "abs(self - a)", refs.len() == 1.
-    // ------------------------------------------------------------------
-    #[test]
-    fn formula_of_json_expr_with_refs() {
-        let j = json!({
-            "kind": "expr",
-            "expr": "abs(self - a)",
-            "refs": { "a": "S#12" }
-        });
-        match formula_of_json(Some(&j)) {
-            Ok(Formula::Expr { expr, refs }) => {
-                assert_eq!(expr_to_string(&expr), "abs(self - a)");
-                assert_eq!(refs.len(), 1);
-            }
-            other => panic!("should parse expr, got {:?}", other),
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // 7. formula_of_json_refs_as_string
-    //
-    // Test: refs given as a JSON-encoded string.
-    // ------------------------------------------------------------------
-    #[test]
-    fn formula_of_json_refs_as_string() {
-        let j = json!({
-            "kind": "expr",
-            "expr": "self - a",
-            "refs": r#"{"a":"S#7"}"#
-        });
-        match formula_of_json(Some(&j)) {
-            Ok(Formula::Expr { .. }) => {}
-            other => panic!("refs as JSON string should parse, got {:?}", other),
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // 8. formula_of_json_unbound_alias_errors
-    //
-    // Test: expr uses "a" but refs is empty → Error.
-    // ------------------------------------------------------------------
-    #[test]
-    fn formula_of_json_unbound_alias_errors() {
-        let j = json!({
-            "kind": "expr",
-            "expr": "self - a",
-            "refs": {}
-        });
-        match formula_of_json(Some(&j)) {
-            Err(_) => {}
-            Ok(f) => panic!("unbound alias must error, got {:?}", f),
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // 9. sensor_to_json_includes_formula
-    //
-    // Test: sensor with formula = Zero → serialised formula.kind == "zero".
-    // ------------------------------------------------------------------
-    #[test]
-    fn sensor_to_json_includes_formula() {
-        let s = Sensor::builder()
-            .id(SensorId::make(5))
-            .created(DateTime::from_timestamp(0, 0).unwrap())
-            .daq_id("d".to_string())
-            .path("HN0#root|S#5".to_string())
-            .energy_type(EnergyType::Electricity)
-            .reading_kind(ReadingKind::Counter)
-            .formula(Formula::Zero)
-            .build();
-        let j = sensor_to_json(&s);
-        let kind = j["formula"]["kind"]
-            .as_str()
-            .expect("formula.kind must be string");
-        assert_eq!(kind, "zero");
-    }
-
-    // ------------------------------------------------------------------
-    // 10. formula_of_json_unused_ref_errors
-    //
-    // Test: expr is "self" (no aliases), refs has "a" → Error.
-    // ------------------------------------------------------------------
-    #[test]
-    fn formula_of_json_unused_ref_errors() {
-        let j = json!({
-            "kind": "expr",
-            "expr": "self",
-            "refs": { "a": "S#1" }
-        });
-        match formula_of_json(Some(&j)) {
-            Err(_) => {}
-            Ok(f) => panic!("unused ref must error, got {:?}", f),
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // 11. formula_of_json_implicit_expr
-    //
-    // Test: no "kind" but has "expr" → implicit Expr.
-    // ------------------------------------------------------------------
-    #[test]
-    fn formula_of_json_implicit_expr() {
-        let j = json!({
-            "expr": "self - a",
-            "refs": { "a": "S#1" }
-        });
-        match formula_of_json(Some(&j)) {
-            Ok(Formula::Expr { .. }) => {}
-            other => panic!("kind-absent expr should parse, got {:?}", other),
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // 12. formula_of_json_string_shorthands
-    //
-    // Test: null→Identity; "identity"→Identity; "zero"→Zero.
-    // ------------------------------------------------------------------
-    #[test]
-    fn formula_of_json_string_shorthands() {
-        match formula_of_json(Some(&Value::Null)) {
-            Ok(Formula::Identity) => {}
-            other => panic!("null→identity, got {:?}", other),
-        }
-        match formula_of_json(Some(&json!("identity"))) {
-            Ok(Formula::Identity) => {}
-            other => panic!("string identity, got {:?}", other),
-        }
-        match formula_of_json(Some(&json!("zero"))) {
-            Ok(Formula::Zero) => {}
-            other => panic!("string zero, got {:?}", other),
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // 13. formula_json_roundtrips
-    //
-    // Test: Formula::Expr with "abs(self - a)" → formula_to_json
-    // → formula_of_json → Expr with same ast/refs.
-    // ------------------------------------------------------------------
-    #[test]
-    fn formula_json_roundtrips() {
-        let ast = parse_expr("abs(self - a)").unwrap();
-        let f = Formula::Expr {
-            refs: vec![("a".to_string(), SensorId::make(12))],
-            expr: ast,
-        };
-        let j = formula_to_json(&f);
-        match formula_of_json(Some(&j)) {
-            Ok(Formula::Expr { expr, refs }) => {
-                assert_eq!(expr_to_string(&expr), "abs(self - a)");
-                assert_eq!(refs.len(), 1);
-            }
-            other => panic!("round-trip failed, got {:?}", other),
-        }
-    }
 }

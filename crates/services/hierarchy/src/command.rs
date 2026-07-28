@@ -55,9 +55,6 @@ pub enum Command {
         /// Validated/coerced downstream.
         #[serde(default)]
         resample_minutes: Option<Value>,
-        /// Formula JSON blob.
-        #[serde(default)]
-        formula: Option<Value>,
     },
 
     /// `replace_sensor_device` — swap the DAQ device on an existing sensor.
@@ -387,11 +384,11 @@ mod tests {
             &data.daq_id=daq%3A1\
             &data.energy_type=Electricity\
             &data.reading_kind=counter\
-            &data.formula.kind=expr\
-            &data.formula.expr=abs%28self%29";
+";
         let v = form_to_command_json(form);
-        assert_eq!(v["formula"]["kind"], json!("expr"));
-        assert_eq!(v["formula"]["expr"], json!("abs(self)"));
+        assert_eq!(v["parent_id"], json!("HN3#1"));
+        assert_eq!(v["energy_type"], json!("Electricity"));
+        assert_eq!(v["reading_kind"], json!("counter"));
     }
 
     // ---- Command JSON deserialization ---------------------------------------

@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use typed_builder::TypedBuilder;
 
-use crate::domain::formula::Formula;
 use crate::domain::ids::{NodeId, SensorId};
 use crate::domain::node::PATH_SEP;
 use crate::domain::values::{ReadingKind, EnergyType};
@@ -25,8 +24,6 @@ pub struct Sensor {
     pub reading_kind: ReadingKind,
     #[builder(default)]
     pub unit: Option<String>,
-    #[builder(default = Formula::Identity)]
-    pub formula: Formula,
     #[builder(default)]
     pub resample_minutes: Option<i32>,
 }
@@ -57,6 +54,15 @@ impl Sensor {
         last.unwrap_or_else(|| {
             panic!("Sensor.parent_id: no node segment in path {:?}", self.path)
         })
+    }
+}
+
+/// The path of the node a sensor hangs off — its own path minus the trailing
+/// `|S#<id>` segment. Formula evaluation keys "own sensors" off this.
+pub fn parent_path(s: &Sensor) -> &str {
+    match s.path.rfind(PATH_SEP) {
+        Some(i) => &s.path[..i],
+        None => &s.path,
     }
 }
 
@@ -94,7 +100,6 @@ mod tests {
             .energy_type(EnergyType::Electricity)
             .reading_kind(ReadingKind::Counter)
             .unit(Some("kWh".to_owned()))
-            .formula(Formula::Identity)
             .resample_minutes(Some(15))
             .build()
     }
@@ -117,6 +122,12 @@ mod tests {
             expected.to_string(),
             "parent id from path"
         );
+    }
+
+    /// The node a sensor hangs off — its path minus the trailing `|S#<id>`.
+    #[test]
+    fn parent_path_strips_the_sensor_segment() {
+        assert_eq!(parent_path(&make_sample()), "HN0#root|HN5#10042");
     }
 
     /// child_path joins with `|`.
