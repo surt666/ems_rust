@@ -110,6 +110,23 @@
       </div>
     </div>
 
+    <!-- Formler — per NODE, not per type.
+         The type graph above says what a hierarchy may look like; a formula says
+         how one particular node's measurements combine, naming specific sensors
+         and specific child nodes. It cannot be templated by type, so this pane is
+         scoped to whichever node opened the dialog.
+
+         Server-rendered: the fragment is exactly what the node page used to embed
+         (GET /hierarchy/query/node_formulas). Only the location moved. -->
+    <div class="sd-formulas" id="sd-formulas" hidden>
+      <h4>Formler — <span id="sd-formula-node" class="mono"></span></h4>
+      <p class="sd-hint">
+        Uden en formel er en nodes værdi summen af alt nedenunder. En formel
+        ændrer kun det, den nævner.
+      </p>
+      <div id="formula-list"><p class="muted">Indlæser…</p></div>
+    </div>
+
     <div class="dialog-footer">
       <p class="sd-hint" x-show="!result.ok">Fix the issues above to enable Done.</p>
       <button type="button" class="btn-secondary" @click="reset()">Clear</button>
@@ -118,6 +135,42 @@
   </div>
 </dialog>
 
+
+<script>
+  // The designer serves two callers. Opened from the add-child form it designs a
+  // company's type graph; opened from a node it edits that node's formulas. The
+  // formula pane is hidden until the second kind of open, so the schema flow is
+  // unchanged.
+  //
+  // The fragment is rendered by the hierarchy lambda — this only says which node
+  // and where to put it (htmx.ajax rather than hx-get, because the URL varies with
+  // the node and hx-get caches by URL).
+  function openFormulas(nodeId) {
+    const dialog = document.getElementById("schema-designer-dialog");
+    const pane = document.getElementById("sd-formulas");
+    if (!dialog || !pane) return;
+
+    pane.hidden = false;
+    document.getElementById("sd-formula-node").textContent = nodeId;
+    dialog.showModal();
+
+    window.htmx?.ajax("GET", "/hierarchy/query/node_formulas", {
+      target: "#formula-list",
+      swap: "innerHTML",
+      values: { node: nodeId },
+      headers: { "HX-Request": "true" },
+    });
+  }
+
+  window.emsOpenFormulas = openFormulas;
+
+  // Hide the formula pane again when the dialog is used for schema design, so a
+  // stale node's formulas never show under someone else's type graph.
+  document.getElementById("schema-designer-dialog")?.addEventListener("close", () => {
+    const pane = document.getElementById("sd-formulas");
+    if (pane) pane.hidden = true;
+  });
+</script>
 
 <style>
   /* override the global `dialog { max-width: 480px }`, which otherwise squishes the 3-column grid */

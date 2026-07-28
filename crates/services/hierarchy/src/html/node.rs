@@ -295,7 +295,7 @@ pub fn render_node(
                     (metadata_section)
                     @if show_sensors && is_admin {
                         (sensor_block(&nid_str, &parent_str))
-                        (formula_block(&nid_str))
+                        (formula_link(&nid_str))
                     }
                 }
             }
@@ -495,19 +495,31 @@ pub fn render_node_formulas(
 
 /// The Formler section inside the node panel, loaded via htmx like the sensor
 /// list beside it.
-fn formula_block(nid_str: &str) -> Markup {
-    let vals = format!(r#"{{"node": "{}"}}"#, nid_str);
+/// A way into the schema designer, which owns formula editing.
+///
+/// The Formler section used to render inline here, directly beneath the sensor
+/// table — which put "what this node measures" and "how those measurements
+/// combine" in the same breath and made the sensor page do two jobs. The editor
+/// now lives in the designer dialog; this only carries the node id across.
+///
+/// The fragment itself (`/hierarchy/query/node_formulas`) is unchanged — the
+/// dialog loads exactly what this used to.
+fn formula_link(nid_str: &str) -> Markup {
+    let open = format!(
+        "window.emsOpenFormulas && window.emsOpenFormulas('{nid_str}')",
+    );
     html! {
         section class="node-section" id="formula-section" {
             h3 class="table-title" { "Formler" }
-            div id="formula-list"
-                data-hx-get="/hierarchy/query/node_formulas"
-                data-hx-vals=(vals)
-                data-hx-trigger="load"
-                data-hx-target="#formula-list"
-                data-hx-swap="innerHTML"
-                data-hx-request=(crate::html::NO_HEADERS)
-            {}
+            p class="muted" {
+                "Hvordan denne nodes målinger lægges sammen — som standard summen af alt nedenunder."
+            }
+            button type="button" class="btn-secondary" id="open-formulas"
+                data-node=(nid_str)
+                onclick=(open)
+            {
+                "Rediger formler"
+            }
         }
     }
 }
@@ -909,6 +921,49 @@ mod tests {
         let html = render_node(&node, false, true, Some(CognitoGroup::Writer), &[]).into_string();
         assert!(!html.contains("id=\"metadata-form\""), "no fields → no edit form");
         assert!(html.contains("No metadata available"));
+    }
+
+        #[test]
+    fn admin_node_offers_formulas_via_the_designer_not_inline() {
+        // The Formler editor used to render inline right under the sensor table,
+        // which made the sensor page do two jobs. It lives in the schema designer
+        // now; the node only hands the designer its id.
+        let node = make_hn2_node();
+        let html = render_node(&node, true, true, Some(CognitoGroup::Admin), &[]).into_string();
+        assert!(html.contains("Rediger formler"), "no way into the formula editor");
+        let id = node.id.to_string();
+        assert!(
+            html.contains(&format!("emsOpenFormulas('{id}')")),
+            "node id not handed over to the designer"
+        );
+        assert!(
+            !html.contains("id=\"formula-list\""),
+            "the editor is still embedded in the node page"
+        );
+    }
+
+    #[test]
+    fn the_add_sensor_form_carries_no_formula_field() {
+        // A sensor records what it measures; how measurements combine is the
+        // node's business. Regression guard for the two ever recombining.
+        let node = make_hn2_node();
+        let html = render_node(&node, true, true, Some(CognitoGroup::Admin), &[]).into_string();
+        // Bound the slice at </form>: the Formler section sits later in the page and
+        // would otherwise satisfy the match on its own.
+        let after = html
+            .split("id=\"add-sensor-form\"")
+            .nth(1)
+            .expect("add-sensor form missing");
+        let form = &after[..after.find("</form>").expect("unterminated form")];
+        assert!(!form.contains("formula"), "formula field back on the sensor form");
+    }
+
+    #[test]
+    fn a_non_admin_sees_neither_sensors_nor_formulas() {
+        let node = make_hn2_node();
+        let html = render_node(&node, true, true, Some(CognitoGroup::Reader), &[]).into_string();
+        assert!(!html.contains("Rediger formler"));
+        assert!(!html.contains("add-sensor-form"));
     }
 
     #[test]

@@ -3076,3 +3076,14 @@ dialog::backdrop {
 .rc-card__metrics { display: grid; grid-auto-flow: column; justify-content: start; gap: 20px; }
 .rc-card__metrics > div { display: grid; gap: 2px; font-size: var(--text-sm); }
 .rc-card__metrics .muted { font-size: var(--text-xs); }
+
+/* Formler pane inside the schema designer. Hidden unless the dialog was opened
+   from a node (window.emsOpenFormulas), because the schema-design flow has no
+   node context and formulas are per-node. */
+.sd-formulas {
+  display: grid; gap: 8px;
+  margin-top: 16px; padding-top: 16px;
+  border-top: 1px solid #e3e8ef;
+}
+.sd-formulas h4 { margin: 0; }
+.sd-formulas .mono { font-variant-numeric: tabular-nums; color: var(--text-muted); }
