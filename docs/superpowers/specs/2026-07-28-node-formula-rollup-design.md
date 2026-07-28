@@ -631,6 +631,14 @@ Consequences of the chosen options, documented rather than fixed:
   value silently inflates every total above that sensor. This is an
   onboarding-data problem, not a modelling one, and the add-sensor form is the only
   mitigation.
+- **A node's consumption cannot be derived by difference from an ancestor.** "Building B1
+  has no meter, so B1 = property main − B2's submeter" is a natural ask and the model
+  refuses it three times over: the subtree rule (§3.5) stops B1 naming a sibling's sensor;
+  `total` is not declarable, so no formula can set what B1 measured; and the quantity is
+  not B1 anyway — it is B1 *plus* common areas, plant and losses. That number is already
+  emitted, correctly labelled, as **`unallocated` at the property**. If it must be
+  attributed to B1, that is an *allocation* — a purpose claim with a coefficient — not a
+  total. Totals stay facts.
 - **A sensor's coverage must correspond to a node.** A main sensor covering buildings B1
   and B2 but not B3 has nowhere to attach unless the schema has a node grouping exactly
   those two. Same family as the limitation below: the tree has to be able to express the
