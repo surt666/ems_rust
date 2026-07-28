@@ -169,11 +169,17 @@ func NewMeasurementsAggregateStack(scope constructs.Construct, id string, props 
 		NumberOfWorkers: jsii.Number(2),
 		Timeout:         jsii.Number(60),
 		DefaultArguments: &map[string]string{
-			"--region":                           region,
-			"--table_bucket_name":                props.TableBucket,
-			"--account_id":                       account,
-			"--rollup_table":                     *table.TableName(),
-			"--lookback_days":                    props.LookbackDays,
+			"--region":            region,
+			"--table_bucket_name": props.TableBucket,
+			"--account_id":        account,
+			"--rollup_table":      *table.TableName(),
+			"--lookback_days":     props.LookbackDays,
+			// Cross-account read of the coefficient matrix in hierarchy_new. The job
+			// assumes this; the sts:AssumeRole grant is on glueRole above.
+			"--hierarchy_reader_role_arn": "arn:aws:iam::339712745226:role/HierarchyReaderRole",
+			// hierarchy_matrix.py is imported by measurements_aggregate.py at runtime and
+			// must be shipped alongside the script, not just deployed to the bucket.
+			"--extra-py-files":                   "s3://" + *scriptBucket.BucketName() + "/measurements-aggregate/hierarchy_matrix.py",
 			"--conf":                             "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
 			"--enable-glue-datacatalog":          "true",
 			"--enable-metrics":                   "true",

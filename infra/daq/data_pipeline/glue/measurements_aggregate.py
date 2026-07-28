@@ -1,7 +1,15 @@
 """
-Glue Spark job: aggregate counter consumption from logical_meter_data into the
-measurements_aggregate DynamoDB materialized view (per node / purpose / granularity / bucket).
-See docs/superpowers/specs/2026-06-07-measurements-rollup-view-design.md.
+Glue Spark job: aggregate counter consumption from logical_data into the
+measurements_aggregate DynamoDB materialized view
+(per node / energy_type / purpose / granularity / bucket).
+
+value(node, energy_type, purpose) = SUM(coefficient * reading), where the coefficients
+come pre-flattened from crates/model. There is no recursion here, no default handling,
+no derived-node detection and no Unallocated subtraction: ancestry and every formula
+rule are already baked into the matrix, so this is one join and one grouped sum.
+
+Specs: docs/superpowers/specs/2026-07-28-node-formula-rollup-design.md §8
+       docs/superpowers/specs/2026-06-07-measurements-rollup-view-design.md
 """
 
 from datetime import datetime, timezone, timedelta
@@ -37,33 +45,21 @@ def ttl_for(gran: str, bucket: str) -> int:
     return _bucket_end_epoch(gran, bucket) + days * 86400
 
 
-def ancestor_keys(hns, logical_id):
-    """hns = [hn2, hn3, ..., hn9] (ints or None). Returns the full hierarchy node_path for every
-    populated level from hn2 down, plus the leaf meter. Paths are '|'-joined hierarchy segments,
-    consistent with the rest of the hierarchy: company = 'HN2#<id>', deeper nodes append
-    '|HN<d>#<id>', and the leaf meter appends '|L#<logical_id>'."""
-    segments = ["HN2#%d" % hns[0]]
-    result = [segments[0]]
-    for depth, hid in enumerate(hns[1:], start=3):  # hn3..hn9
-        # Levels are dense depth indices, not fixed type slots: each company's schema assigns a
-        # type to each consecutive level (e.g. hn3=group|property, hn4=building, hn5=area), and a
-        # populated path is contiguous from hn2 with only trailing nulls — a building always has
-        # its hn3 parent. The first None therefore ends the chain; there is no later populated
-        # level to recover.
-        if hid is None:
-            break
-        segments.append("HN%d#%d" % (depth, hid))
-        result.append("|".join(segments))
-    result.append("|".join(segments + ["L#%d" % logical_id]))
-    return result
+def build_sk(node_path: str, energy_type: str, purpose: str, gran: str, bucket: str) -> str:
+    """sk = '<node_path>#<energy_type>#<purpose>#<gran>#<bucket>'.
+
+    The bucket stays LAST so a fixed (energy_type, purpose) is a pure BETWEEN key-range.
+    The '#' after node_path keeps a node's own rows sorting before its descendants'
+    ('|' > '#')."""
+    return "%s#%s#%s#%s#%s" % (node_path, energy_type, purpose, gran, bucket)
 
 
-def build_sk(node_path: str, resource: str, gran: str, bucket: str) -> str:
-    """sk = '<node_path>#<resource>#<gran>#<bucket>'. The `purpose` column carries the
-    per-meter *resource* (electricity / water / district_heating / …) — that's the
-    read side's series dimension. The '#' after node_path is the delimiter that keeps
-    a node's own rows sorting before its descendants' ('|' > '#')."""
-    return "%s#%s#%s#%s" % (node_path, resource, gran, bucket)
+def build_gsi1pk(hn2: int, dimension: str, purpose: str) -> str:
+    """gsi1pk = 'HN2#<id>#<dimension>#<purpose>'.
+
+    Per-purpose, so a cross-energy_type "all energy" query cannot accidentally sum a
+    node's total together with its own purpose breakdown."""
+    return "HN2#%d#%s#%s" % (hn2, dimension, purpose)
 
 
 # Energy carriers roll up together (Wh/J), volumes together (m³/L). The GSI
@@ -81,8 +77,8 @@ def dimension_of_unit(unit: str) -> str:
 
 
 def build_gsi1sk(node_path: str, gran: str, bucket: str) -> str:
-    """gsi1sk = '<node_path>#<gran>#<bucket>' — resource omitted, so a dimension
-    partition ranges across every resource (and node) by time."""
+    """gsi1sk = '<node_path>#<gran>#<bucket>' — energy_type omitted, so a dimension
+    partition ranges across every energy type (and node) by time."""
     return "%s#%s#%s" % (node_path, gran, bucket)
 
 
@@ -91,34 +87,42 @@ def build_gsi1sk(node_path: str, gran: str, bucket: str) -> str:
 from pyspark.sql import DataFrame, functions as F, types as T  # noqa: E402
 from pyspark.sql.window import Window  # noqa: E402
 
-_ANCESTOR_SCHEMA = T.ArrayType(T.StringType())
-
-
-@F.udf(_ANCESTOR_SCHEMA)
-def _ancestor_keys_udf(hn2, hn3, hn4, hn5, hn6, hn7, hn8, hn9, logical_id):
-    return ancestor_keys([hn2, hn3, hn4, hn5, hn6, hn7, hn8, hn9], logical_id)
-
-
 _TTL_UDF = F.udf(ttl_for, T.LongType())
 _SK_UDF = F.udf(build_sk, T.StringType())
 _DIM_UDF = F.udf(dimension_of_unit, T.StringType())
+_GSI1PK_UDF = F.udf(build_gsi1pk, T.StringType())
 _GSI1SK_UDF = F.udf(build_gsi1sk, T.StringType())
 
+_MATRIX_SCHEMA = T.StructType([
+    T.StructField("node_path", T.StringType()),
+    T.StructField("m_energy_type", T.StringType()),
+    T.StructField("purpose", T.StringType()),
+    T.StructField("m_logical_id", T.IntegerType()),
+    T.StructField("coefficient", T.DoubleType()),
+])
 
-def build_rollups(df: DataFrame, run_at_iso: str) -> DataFrame:
-    """Aggregate counter rows into per-node/purpose/granularity/bucket rollup items.
 
-    Input columns: hn2..hn9 (int), logical_id (int), purpose (str), unit (str),
-    resample_value (double), value (double), timestamp (ts), resample_timestamp (ts).
-    Output columns: pk ('HN2#<id>'), sk ('<full hierarchy path>#<resource>#<gran>#<bucket>'),
-    gsi1pk ('HN2#<id>#<dimension>'), gsi1sk ('<path>#<gran>#<bucket>'),
-    purpose (the per-meter resource), unit, sum, count, min, max, last_value, last_ts,
-    updated_at, ttl. (`bucket` is intentionally NOT written as its own attribute — the
-    date is the last sort-key segment, so the read side ranges on the SK directly.)
-    The GSI keys a company's rollups by aggregation dimension (energy / volume) so a
-    cross-resource company view is a single partition query.
-    NOTE: caller must set spark.sql.session.timeZone='UTC' so the bucket labels are UTC.
+def build_rollups(df: DataFrame, matrix: list, run_at_iso: str) -> DataFrame:
+    """value(node, energy_type, purpose) = SUM(coefficient x reading).
+
+    `matrix` is the flattened coefficient matrix for the companies present in `df`
+    (see hierarchy_matrix.load_matrix). It already encodes ancestry, both defaults and
+    the Unallocated rows, so this is one broadcast join and one grouped sum — see
+    spec 2026-07-28-node-formula-rollup-design.md §8.2.
+
+    Input columns: hn2 (int), logical_id (int), energy_type (str), unit (str),
+    resample_value (double), resample_timestamp (ts).
+    Output columns: pk ('HN2#<id>'), sk, gsi1pk, gsi1sk, energy_type, purpose, unit,
+    sum, count, updated_at, ttl.
+
+    A sensor joins on (logical_id, energy_type): the matrix row carries the energy type
+    the formula was declared for, so a sensor cannot contribute to a series of a
+    different type even if some other node names it.
+
+    NOTE: caller must set spark.sql.session.timeZone='UTC' so bucket labels are UTC.
     """
+    spark = df.sparkSession
+
     with_buckets = df.withColumn(
         "gb",
         F.explode(F.array(
@@ -129,32 +133,31 @@ def build_rollups(df: DataFrame, run_at_iso: str) -> DataFrame:
         )),
     ).select("*", F.col("gb.gran").alias("gran"), F.col("gb.bucket").alias("bucket"))
 
-    with_nodes = with_buckets.withColumn(
-        "node_path",
-        F.explode(_ancestor_keys_udf(
-            *[F.col("hn%d" % i) for i in range(2, 10)], F.col("logical_id"))),
-    )
+    m_df = spark.createDataFrame(
+        [(r["node_path"], r["energy_type"], r["purpose"],
+          int(r["sensor_id"]), float(r["coefficient"])) for r in matrix],
+        _MATRIX_SCHEMA)
 
-    grouped = with_nodes.groupBy(
-        "hn2", "node_path", "purpose", "gran", "bucket"
-    ).agg(
-        F.sum("resample_value").alias("sum"),
-        F.count("resample_value").alias("count"),
-        F.min("resample_value").alias("min"),
-        F.max("resample_value").alias("max"),
-        F.max(F.struct(F.col("timestamp"), F.col("value"))).alias("_last"),
-        F.max("unit").alias("unit"),
+    grouped = (
+        with_buckets
+        .join(F.broadcast(m_df),
+              (with_buckets.logical_id == m_df.m_logical_id)
+              & (with_buckets.energy_type == m_df.m_energy_type),
+              "inner")
+        .withColumn("contrib", F.col("resample_value") * F.col("coefficient"))
+        .groupBy("hn2", "node_path", "m_energy_type", "purpose", "gran", "bucket")
+        .agg(F.sum("contrib").alias("sum"),
+             F.count("contrib").alias("count"),
+             F.max("unit").alias("unit"))
+        .withColumnRenamed("m_energy_type", "energy_type")
     )
 
     return grouped.select(
         F.concat(F.lit("HN2#"), F.col("hn2").cast("string")).alias("pk"),
-        _SK_UDF("node_path", "purpose", "gran", "bucket").alias("sk"),
-        F.concat(F.lit("HN2#"), F.col("hn2").cast("string"),
-                 F.lit("#"), _DIM_UDF("unit")).alias("gsi1pk"),
+        _SK_UDF("node_path", "energy_type", "purpose", "gran", "bucket").alias("sk"),
+        _GSI1PK_UDF("hn2", _DIM_UDF("unit"), "purpose").alias("gsi1pk"),
         _GSI1SK_UDF("node_path", "gran", "bucket").alias("gsi1sk"),
-        "purpose", "unit", "sum", "count", "min", "max",
-        F.col("_last.value").alias("last_value"),
-        F.date_format(F.col("_last.timestamp"), "yyyy-MM-dd'T'HH:mm:ssXXX").alias("last_ts"),
+        "energy_type", "purpose", "unit", "sum", "count",
         F.lit(run_at_iso).alias("updated_at"),
         _TTL_UDF("gran", "bucket").alias("ttl"),
     )
@@ -170,7 +173,7 @@ def window_start_iso(now: datetime, lookback_days: int) -> str:
 
 
 def latest_counters(df: DataFrame) -> DataFrame:
-    """logical_meter_data is event-sourced (append-only): for a given
+    """logical_data is event-sourced (append-only): for a given
     (logical_id, resample_timestamp) the newest ingested_time row supersedes older ones. Keep only
     that newest row per point, then filter to resampled counters that carry a company id.
     Input must include ingested_time and resample_method (plus the rollup columns)."""
@@ -191,19 +194,18 @@ def read_counters(spark, window_start: str):
 
     Windows by resample_timestamp (the bucket axis) so whole hour/day buckets are recomputed from
     all their points, and dedups to the newest ingested_time per (logical_id, resample_timestamp)
-    — matching how every consumer reads the event-sourced logical_meter_data table. Restatements of
+    — matching how every consumer reads the event-sourced logical_data table. Restatements of
     points whose resample_timestamp is older than the window are not picked up (documented hook;
     widen --lookback_days to recompute them)."""
     raw = spark.sql(f"""
-        SELECT hn2, hn3, hn4, hn5, hn6, hn7, hn8, hn9, logical_id, purpose, unit,
-               resample_value, value, timestamp, resample_timestamp,
+        SELECT hn2, logical_id, energy_type, unit,
+               resample_value, resample_timestamp,
                resample_method, ingested_time
-        FROM all.logical_meter_data
+        FROM all.logical_data
         WHERE resample_timestamp >= TIMESTAMP '{window_start}'
     """)
     return latest_counters(raw).select(
-        "hn2", "hn3", "hn4", "hn5", "hn6", "hn7", "hn8", "hn9", "logical_id", "purpose", "unit",
-        "resample_value", "value", "timestamp", "resample_timestamp")
+        "hn2", "logical_id", "energy_type", "unit", "resample_value", "resample_timestamp")
 
 
 def write_to_dynamo(df: DataFrame, table_name: str, region: str) -> None:
@@ -241,7 +243,8 @@ def main():
     job = Job(glue_context)
     job.init("measurements-aggregate", {})
 
-    required = ["JOB_NAME", "region", "table_bucket_name", "account_id", "rollup_table"]
+    required = ["JOB_NAME", "region", "table_bucket_name", "account_id", "rollup_table",
+                "hierarchy_reader_role_arn"]
     args = getResolvedOptions(sys.argv, required)
     try:
         args["lookback_days"] = getResolvedOptions(sys.argv, ["lookback_days"])["lookback_days"]
@@ -263,7 +266,23 @@ def main():
 
     now = datetime.now(timezone.utc)
     window_start = window_start_iso(now, int(args["lookback_days"]))
-    rollups = build_rollups(read_counters(spark, window_start), now.strftime("%Y-%m-%dT%H:%M:%S+00:00"))
+    counters = read_counters(spark, window_start).cache()
+
+    # One matrix query per company actually present in the window, merged into a single
+    # broadcast side. Companies with no readings cost nothing; a company with no matrix
+    # rows contributes none and simply produces no rollups (the join is inner).
+    import hierarchy_matrix
+    companies = [r["hn2"] for r in counters.select("hn2").distinct().collect()]
+    table = hierarchy_matrix.reader_table(args["hierarchy_reader_role_arn"], region)
+    matrix = [row for c in companies for row in hierarchy_matrix.load_matrix(table, c)]
+    print("measurements-aggregate: %d companies, %d matrix rows" % (len(companies), len(matrix)))
+
+    if not matrix:
+        print("measurements-aggregate: empty matrix - nothing to roll up")
+        job.commit()
+        return
+
+    rollups = build_rollups(counters, matrix, now.strftime("%Y-%m-%dT%H:%M:%S+00:00"))
     write_to_dynamo(rollups, args["rollup_table"], region)
     job.commit()
 
