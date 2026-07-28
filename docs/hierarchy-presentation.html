@@ -285,16 +285,22 @@ function totalTerms(id,et,slot){
   return out;
 }
 
-// Terms of a declared purpose: the node's own formula, plus the same purpose
-// rolled up from its children.
+// Terms of a named purpose. Children roll their SAME purpose up at weight 1
+// unless the formula overrides them — the same override rule `total` uses.
+// Sensors differ: one contributes only if the formula names it, because a
+// sensor does not belong to a purpose by default.
 function purposeTerms(id,et,pur,slot){
-  const f=formAt(id,et,pur), out=[];
-  if(f) f.terms.forEach(([ref,w])=>out.push({
-    ref, label:SENS[ref]?SENS[ref].name:N[ref].name, kind:SENS[ref]?"s":"n", w,
-    v:SENS[ref]?SENS[ref].v[slot]:val(ref,et,pur,slot)}));
+  const f=formAt(id,et,pur), ov=new Map(f?f.terms:[]);
+  const mine=sensorsUnder(id), out=[];
   (N[id].ch||[]).forEach(c=>{
-    const cv=val(c,et,pur,slot);
-    if(cv) out.push({ref:c, label:N[c].name, kind:"n", w:1, v:cv});
+    const w=ov.has(c)?ov.get(c):1, v=val(c,et,pur,slot);
+    if(v||ov.has(c)) out.push({ref:c, label:N[c].name, kind:"n", w, v});
+  });
+  ov.forEach((w,ref)=>{
+    if(!SENS[ref]) return;                       // node refs handled above
+    const foreign=!mine.includes(ref);
+    out.push({ref, label:SENS[ref].name, kind:foreign?"x":"s", w, v:SENS[ref].v[slot],
+              from:foreign?N[nodeOf(ref)].name:undefined});
   });
   return out;
 }
