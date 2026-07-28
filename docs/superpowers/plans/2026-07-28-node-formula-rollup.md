@@ -2851,10 +2851,25 @@ aws glue get-job-runs --profile daq_dev --job-name measurements-aggregate \
 
 Expected: `State=SUCCEEDED`.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 9: Update the docs the renames just invalidated**
+
+Phase 2 renamed four things `CLAUDE.md` documents by name. Leaving it stale is worse than not writing it, because it is the file every future session reads first. Update:
+
+- `CLAUDE.md` — `meter-identity` → `sensor-identity` (Stack 2 section, the cross-account ordering section, the bridge description in Stack 1), `logical_meter_data` → `logical_data` (the `measurements_aggregate` description and the Athena verification query), `purpose` → `energy_type` and `meter_type` → `reading_kind` in the field-contract paragraph, and the `ocaml-meter-identity-bridge` lambda name.
+- `memory/cross_account_bridge.md` if it exists (CLAUDE.md's "Cross-account ordering" section points at it for the full field contract).
+
+Then the session memories that still carry the old names — they are marked "SPECCED NOT DONE" and that is now false:
 
 ```bash
-git add infra/daq/data_pipeline/
+ls /home/sla/.claude/projects/-home-sla-projects-ems-rust/memory/
+```
+
+Flip `sensor-not-meter-vocabulary.md`'s rename table from planned to done, drop the naming note from `meter-identity-change-auto-triggers-late-recompute.md` and rename that file to `sensor-identity-change-auto-triggers-late-recompute.md` (updating the `[[…]]` links in `daq-uniqueness-and-sensor-gsi.md` and the `MEMORY.md` index line), and update `node-formula-rollup-design.md`'s status.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add infra/daq/data_pipeline/ CLAUDE.md
 git commit -m "feat(glue): weighted roll-up from the materialised matrix (total/purpose/unallocated)"
 ```
 
