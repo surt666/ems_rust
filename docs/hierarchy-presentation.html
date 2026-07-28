@@ -15,10 +15,10 @@
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
     -webkit-font-smoothing:antialiased;line-height:1.45}
-  .wrap{max-width:1000px;margin:0 auto;padding:26px 18px 60px}
+  .wrap{max-width:1040px;margin:0 auto;padding:26px 18px 60px}
   .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
   h1{font-size:26px;line-height:1.15;margin:0 0 6px;font-weight:650;letter-spacing:-.01em}
-  .sub{color:var(--muted);font-size:14px;margin:0 0 22px;max-width:74ch}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 22px;max-width:76ch}
 
   .bar-row{display:grid;grid-auto-flow:column;grid-auto-columns:max-content;gap:8px;
     align-items:center;margin-bottom:8px;overflow-x:auto;padding-bottom:2px}
@@ -37,9 +37,10 @@
   .rule{border:1px solid #2f3d4c;background:linear-gradient(180deg,#15222c,#131d26);border-radius:10px;padding:12px 14px;margin:0 0 10px;font-size:13px;line-height:1.6}
   .rule code{font-family:var(--mono);color:#cfe9ee;background:#0e1922;padding:1px 6px;border-radius:5px;border:1px solid #22333f;font-size:12px}
   .rule .k{color:var(--violet)} .rule .muted{color:var(--muted)}
-  .rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:9px;margin-top:2px}
+  .rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:9px;margin-top:2px}
   .card{border:1px solid #2b3846;background:#131e27;border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.55;color:var(--muted)}
   .card b{color:var(--ink);font-weight:580}
+  .card code{font-family:var(--mono);font-size:11.5px;color:#cfe9ee}
   .card .hd{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#5f7385;display:block;margin-bottom:4px}
 
   /* tree */
@@ -58,10 +59,12 @@
   .chip.def{color:#5f7385}
   .chip.derived{color:var(--green);border-color:#2f5540}
   .chip.inherit{color:#5f8fa0;border-color:#2b4550}
-  .fx{font-family:var(--mono);font-size:11.5px;margin-top:4px;line-height:1.7;color:var(--muted)}
+  .fx{font-family:var(--mono);font-size:11.5px;margin-top:4px;line-height:1.75;color:var(--muted)}
   .fx .op{color:#55687a} .fx .term{color:var(--ink)} .fx .neg{color:var(--rose)}
+  .fx .zero{color:#6f8090;text-decoration:line-through;opacity:.7}
   .fx .ref{color:#66788a} .fx .tot{color:var(--cyan)} .fx.der .tot{color:var(--green)}
   .fx .coef{color:var(--amber)}
+  .fx .xref{color:var(--violet)}
   .note{color:#6a7f90;font-style:italic}
 
   /* sensor leaf */
@@ -73,11 +76,10 @@
   .sname{font-family:var(--mono);font-size:12px;color:var(--ink)}
   .sname .id{color:#5f7385;font-size:10px;margin-left:5px}
   .stag{font-family:var(--mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:0 5px;border-radius:4px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
-  .stag.inside{color:#8fa3b2;border-color:#374654}
+  .stag.zero{color:#8fa3b2;border-color:#374654}
   .stag.sub{color:var(--rose);border-color:#4a2f2f}
-  .stag.gen{color:var(--green);border-color:#2f5540}
   .stag.frac{color:var(--amber);border-color:#4a3a24}
-  .stag.own{color:#5f8fa0;border-color:#2b4550}
+  .stag.used{color:var(--violet);border-color:#3a3157}
   .sval{text-align:right;font-family:var(--mono);font-size:12.5px;color:#9fb3c2}
 
   .right{display:grid;grid-auto-flow:column;align-items:center;gap:12px;padding-top:1px}
@@ -96,12 +98,11 @@
 <div class="wrap">
   <p class="eyebrow">Metering model · node formulas</p>
   <h1>Node-formula roll-up</h1>
-  <p class="sub">Sensors are plain raw values — no formula, no per-sensor factor. A sensor knows which
-  <b>energy type</b> it measures, whether another sensor's reading already covers it, and which way
-  energy flows through it.
-  Hierarchy nodes carry formulas that declare an <b>(energy type, purpose)</b> output and combine
-  descendant sensors with coefficients. Pick an energy type and a purpose to watch the same tree answer
-  a different question.</p>
+  <p class="sub">There is <b>one kind of sensor</b>. It carries a raw value series and the energy type it
+  measures — nothing else. No main, sub, calculation or sum meters; nothing for a customer to classify.
+  All the intelligence sits on the hierarchy node: <b>a node's value is Σ everything below it, unless the
+  node says otherwise</b>. Pick an energy type and a purpose to watch the same tree answer a different
+  question.</p>
 
   <div class="bar-row" id="etypes"><span class="lbl">Energy type</span></div>
   <div class="bar-row" id="purposes"><span class="lbl">Purpose</span></div>
@@ -109,64 +110,48 @@
 
   <div class="panel">
     <div class="rule">
-      <span class="k">What changed:</span> the formula moved off the sensors and onto the nodes — and the one
-      mis-named axis split into two. <span class="muted"><b>Energy type</b> (energitype) is what the sensor
-      physically measures; it stays on the sensor. <b>Purpose</b> (formål) is what the energy is spent on; the
-      node declares it, because the same sensor's kWh can be space heating here and DHW there. There is no
-      “metric” axis: CO₂ and cost are derived from <code>(energy_type, purpose)</code> at read time, so the
-      demo's old per-sensor emission factor is gone.</span>
+      <span class="k">What changed:</span> the formula moved off the sensors and onto the nodes, and the one
+      mis-named axis split into two. <span class="muted"><b>Energy type</b> (energitype) is what a sensor
+      measures; it is the only thing a sensor knows. <b>Purpose</b> (formål) is what the energy is spent on;
+      the node declares it, because the same sensor's kWh can be space heating here and hot water there.
+      There is no “metric” axis: CO₂ and cost are derived from <code>(energy_type, purpose)</code> at read
+      time, so the old per-sensor emission factor is gone too.</span>
     </div>
     <div class="rules">
-      <div class="card"><span class="hd">Terms are weighted</span>
-        Every term is <b>reference × coefficient</b>. Include = <b>1</b>, subtract = <b>−1</b>,
-        apportion = <b>0.28</b>, convert = <b>10.45</b>. Purely linear, so it commutes with hour/day
-        bucketing and the roll-up keeps its one-pass shape.</div>
-      <div class="card"><span class="hd">Overrides only</span>
-        A formula lists only what <b>differs</b> from the default. Any sensor nobody mentions still counts at
-        weight <b>1</b> — so attaching a sensor always moves the numbers and nothing is silently dropped.</div>
+      <div class="card"><span class="hd">Roll-up is recursive</span>
+        A node's value is <b>Σ of its children's values plus its own sensors</b>. Not a flat sum of every
+        sensor underneath — so when a node corrects itself, <b>every ancestor is right automatically</b>,
+        with nothing to restate further up.</div>
+      <div class="card"><span class="hd">Formulas are overrides</span>
+        A formula lists only what <b>differs</b> from weight 1. Everything unlisted still counts normally, so
+        attaching a sensor always moves the numbers and nothing is silently dropped. <code>×0</code> excludes,
+        <code>×−1</code> subtracts, <code>×0.28</code> apportions.</div>
+      <div class="card"><span class="hd">Formulas can reach sideways</span>
+        Terms may name <b>any sensor in the company</b>, not just ones underneath. That is how a building whose
+        main meter and submeter sit in <b>different buildings</b> gets its own value — see Property C below.
+        Child <i>nodes</i> stay descendants-only, so composition can never loop.</div>
       <div class="card"><span class="hd">The tree is the company's own</span>
         Each company defines its own node types. This one runs <b>property → building → area → meter</b>;
-        another might run <b>field → array → sensor</b>. Sensors hang off whatever node type that company
-        uses, and formulas work the same either way — nothing here assumes a fixed shape.</div>
-      <div class="card"><span class="hd">Overlap is a fact, not a formula</span>
-        A sensor records <b>which other reading already includes it</b> — below, an accumulating channel and
-        its three phase channels, all registers on one device and so all on one node. A covered sensor counts
-        <b>0</b> wherever the covering one is also present, and <b>1</b> where it is not (a tenant submeter on
-        its own area still shows that tenant's use, while the building counts it once via the main). Double
-        counting stays structurally impossible instead of depending on someone remembering an override.</div>
-      <div class="card"><span class="hd">Attach by coverage, not by location</span>
-        A sensor belongs to the node whose consumption it <b>measures</b>, never to where the box is bolted.
-        A main covering the whole property hangs off the <b>property</b> node even if the hardware sits in one
-        building's basement — that is what lets it cover a submeter in a different building. Attach it to the
-        building instead and that building's total silently claims the whole property.</div>
-      <div class="card"><span class="hd">Direction is a fact too</span>
-        Import and export are separate sensors — two registers on one device — so the minus sign has to live
-        somewhere. It lives on the <b>export sensor</b> (<code>flow: out</code>), not in a node formula: said
-        once, correct at every level above. Neither fact can be read off the channel, so both are entered at
-        onboarding.</div>
+        another might run <b>field → array → sensor</b>. Sensors hang off whatever node that company uses.</div>
       <div class="card"><span class="hd">Total &amp; unallocated</span>
-        <b>total</b> is the <b>net energy across the node's boundary</b>: Σ in − Σ out. Fully metered that is
-        consumption; without a production sensor it is the net grid position. <b>unallocated</b> = total − claimed,
-        so partial instrumentation shows up as a number instead of disappearing.</div>
-      <div class="card"><span class="hd">Claims propagate up</span>
-        A purpose claimed on an area is claimed for its building, property and company too — purpose series roll
-        up the tree exactly like total does. One sensor may feed <b>many</b> purposes, but all of its claims are
-        declared on <b>one</b> node, and its coefficients for a given energy type sum to at most 1.</div>
+        <b>Total</b> is the node's value for that energy type. <b>Unallocated</b> is total minus everything
+        claimed for a purpose, so partial instrumentation shows up as a number instead of disappearing.</div>
       <div class="card"><span class="hd">Derived rows</span>
-        When the declared output energy type differs from the sensors' — gas m³ × brændværdi × virkningsgrad,
+        When a formula's output energy type differs from its sensors' — gas m³ × brændværdi × virkningsgrad,
         or el × COP — the row is <b>derived</b>. It is delivered energy, not metered consumption, so it never
-        folds into any total.</div>
+        folds into a total.</div>
       <div class="card"><span class="hd">Straight from Energihåndbogen</span>
-        <b>Bimåler:</b> DHW is metered, space heating = total − DHW. <b>GUF/GAF:</b> with no submeter, the
-        degree-day-independent part is a standard <b>28 %</b> of annual heat. Both are just weighted terms.</div>
+        <b>Bimåler:</b> hot water is metered, space heating = total − hot water. <b>GUF/GAF:</b> with no
+        submeter, the degree-day-independent part is a standard <b>28 %</b> of annual heat. Both are just
+        weighted terms.</div>
     </div>
     <div id="tree" style="margin-top:12px"></div>
     <div class="legend">
-      <span><i style="background:var(--violet)"></i>meter node (groups sensors)</span>
+      <span><i style="background:var(--violet)"></i>meter node</span>
       <span><i style="background:var(--amber)"></i>declares a formula</span>
       <span><i style="background:#5f7385"></i>default Σ</span>
       <span><i style="background:var(--green)"></i>derived (not in any total)</span>
-      <span><i style="background:var(--rose)"></i>subtracted sensor</span>
+      <span><i style="background:var(--rose)"></i>subtracted term</span>
     </div>
   </div>
 </div>
@@ -181,130 +166,156 @@ const ETYPE={
   district_cooling:{label:"District cooling",  unit:"kWh", derived:true},
   heat:            {label:"Heat (delivered)",  unit:"kWh", derived:true},
 };
-const PUR={total:"Total", unallocated:"Unallocated", space_heating:"Space heating", dhw:"DHW",
+const PUR={total:"Total", unallocated:"Unallocated", space_heating:"Space heating", dhw:"Hot water",
            cooling:"Cooling", lighting:"Lighting", ventilation:"Ventilation",
            plug_loads:"Plug loads", generation:"Generation"};
 
-// Sensors: a raw value series, the energy type they measure, and two facts about
-// the installation that nothing can infer from the data — which other sensor's
-// reading already includes this one (`in`), and which way energy flows through it
-// (`flow`, default in). A "meter" is a physical device and appears here only as a
-// node type; its channels are these sensors. No formula, no factor.
+// ── Sensors. One kind. A value series and the energy type it measures. Nothing else. ──
 const SENS={
   L1 :{name:"Phase L1",      et:"electricity",      v:[30,32,31,33]},
   L2 :{name:"Phase L2",      et:"electricity",      v:[28,29,30,31]},
   L3 :{name:"Phase L3",      et:"electricity",      v:[26,27,28,29]},
   ACC:{name:"Accumulator",   et:"electricity",      v:[40,42,44,46]},
-  cL1:{name:"Chiller L1",    et:"electricity",      v:[13,14,14,15], in:"ACC"},
-  cL2:{name:"Chiller L2",    et:"electricity",      v:[14,14,15,15], in:"ACC"},
-  cL3:{name:"Chiller L3",    et:"electricity",      v:[13,14,15,16], in:"ACC"},
+  cL1:{name:"Chiller L1",    et:"electricity",      v:[13,14,14,15]},
+  cL2:{name:"Chiller L2",    et:"electricity",      v:[14,14,15,15]},
+  cL3:{name:"Chiller L3",    et:"electricity",      v:[13,14,15,16]},
   IMP:{name:"Grid import",   et:"electricity",      v:[50,55,52,58]},
   PRD:{name:"PV production", et:"electricity",      v:[100,110,105,115]},
-  EXP:{name:"Grid export",   et:"electricity",      v:[30,35,28,40], flow:"out"},
+  EXP:{name:"Grid export",   et:"electricity",      v:[30,35,28,40]},
   LGT:{name:"Lighting",      et:"electricity",      v:[22,20,22,24]},
   AHU:{name:"Air handling",  et:"electricity",      v:[18,18,20,20]},
   HP :{name:"Heat pump",     et:"electricity",      v:[24,25,26,27]},
   KIT:{name:"Kitchen",       et:"electricity",      v:[15,16,17,18]},
+  MAIN:{name:"Main meter",   et:"electricity",      v:[100,104,98,110]},
+  SUB:{name:"Sub meter",     et:"electricity",      v:[30,32,29,35]},
   HM1:{name:"Heat main",     et:"district_heating", v:[120,118,125,130]},
-  DHW:{name:"DHW submeter",  et:"district_heating", v:[35,34,36,38], in:"HM1"},
+  DHW:{name:"Hot-water sub", et:"district_heating", v:[35,34,36,38]},
   HM2:{name:"Heat main B",   et:"district_heating", v:[90,88,95,99]},
   GAS:{name:"Gas meter",     et:"gas",              v:[4,4.2,3.9,4.5]},
 };
 
-// Nodes. f = declared formulas: {et, pur, terms:[[sensor, coefficient], …], note?}
+// ── Nodes. f = formulas: {et, pur, terms:[[ref, coefficient], …], note?} ──
 const N={
-  ACME:{name:"Acme Corp",type:"company",ch:["PA","PB"]},
-  PA:{name:"Property A",type:"property",ch:["A1","A2"]},
-  PB:{name:"Property B",type:"property",ch:["B1","B2"]},
+  ACME:{name:"Acme Corp",type:"company",ch:["PA","PB","PC"]},
 
+  PA:{name:"Property A",type:"property",ch:["A1","A2"]},
   A1:{name:"Building A1",type:"building",ch:["A1a","A1b"],s:["HM1","DHW"],f:[
+    // The hot-water submeter is already inside the main heat meter — exclude it.
+    {et:"district_heating",pur:"total",terms:[["DHW",0]],
+     note:"bimåleren sidder inde i hovedmåleren"},
     {et:"district_heating",pur:"dhw",terms:[["DHW",1]]},
     {et:"district_heating",pur:"space_heating",terms:[["HM1",1],["DHW",-1]],
      note:"bimåler, jf. bygningsreglementet"},
   ]},
   A1a:{name:"Area A1a",type:"area",ch:["MSB","CHILL"]},
   MSB:{name:"Main switchboard",type:"meter",s:["L1","L2","L3"]},
-  // One device, four channels: an accumulating register and three per-phase
-  // registers. They hang off ONE node — the hierarchy has no meters inside meters.
+  // One device, four channels: an accumulating register and three per-phase registers.
   CHILL:{name:"Chiller",type:"meter",s:["ACC","cL1","cL2","cL3"],f:[
+    {et:"electricity",pur:"total",terms:[["cL1",0],["cL2",0],["cL3",0]],
+     note:"faserne er allerede med i akkumulatoren"},
     {et:"electricity",pur:"cooling",terms:[["ACC",1]]},
     {et:"district_cooling",pur:"cooling",terms:[["ACC",3.2]],note:"COP 3,2 jf. datablad"},
   ]},
   A1b:{name:"Area A1b",type:"area",s:["IMP","PRD","EXP"],f:[
-    {et:"electricity",pur:"generation",terms:[["EXP",1]],
-     note:"reporting only — the minus sign lives on the sensor, not here"},
+    {et:"electricity",pur:"total",terms:[["EXP",-1]],note:"eksport forlader stedet"},
+    {et:"electricity",pur:"generation",terms:[["EXP",1]]},
   ]},
-
   A2:{name:"Building A2",type:"building",s:["HM2"],f:[
     {et:"district_heating",pur:"dhw",terms:[["HM2",0.28]],
-     note:"no submeter — GUF standardværdi 28 %"},
-    {et:"district_heating",pur:"space_heating",terms:[["HM2",0.72]],note:"GAF, the remainder"},
+     note:"ingen bimåler — GUF standardværdi 28 %"},
+    {et:"district_heating",pur:"space_heating",terms:[["HM2",0.72]],note:"GAF, resten"},
   ]},
 
+  PB:{name:"Property B",type:"property",ch:["B1","B2"]},
   B1:{name:"Building B1",type:"building",s:["LGT","AHU","HP"],f:[
     {et:"electricity",pur:"lighting",terms:[["LGT",1]]},
     {et:"electricity",pur:"ventilation",terms:[["AHU",1]]},
-    // One sensor, three formulas — all declared on THIS node. The two electricity
-    // coefficients sum to 1, so nothing is over- or under-allocated.
-    {et:"electricity",pur:"space_heating",terms:[["HP",0.7]],note:"heat pump, annual split"},
+    // One sensor, three purposes, all declared on this node. 0.7 + 0.3 = 1.
+    {et:"electricity",pur:"space_heating",terms:[["HP",0.7]],note:"varmepumpe, årsfordeling"},
     {et:"electricity",pur:"dhw",terms:[["HP",0.3]]},
-    {et:"heat",pur:"space_heating",terms:[["HP",3.5]],note:"SCOP 3,5 — delivered heat"},
+    {et:"heat",pur:"space_heating",terms:[["HP",3.5]],note:"SCOP 3,5 — leveret varme"},
   ]},
   B2:{name:"Building B2",type:"building",s:["KIT","GAS"],f:[
     {et:"electricity",pur:"plug_loads",terms:[["KIT",1]]},
     {et:"heat",pur:"space_heating",terms:[["GAS",10.45]],
      note:"brændværdi 11,0 kWh/m³ × virkningsgrad 0,95"},
   ]},
+
+  // The case that needs a sideways reference: the technician put the main meter in
+  // building C1 and the submeter in C2. C1's own use is main − sub.
+  PC:{name:"Property C",type:"property",ch:["C1","C2"]},
+  C1:{name:"Building C1",type:"building",s:["MAIN"],f:[
+    {et:"electricity",pur:"total",terms:[["SUB",-1]],
+     note:"hovedmåler her, bimåler i C2"},
+  ]},
+  C2:{name:"Building C2",type:"building",s:["SUB"]},
 };
 
 // ── graph helpers ──
 const IDS=Object.keys(N);
 const subtree=id=>[id,...(N[id].ch||[]).flatMap(subtree)];
 const sensorsUnder=id=>subtree(id).flatMap(n=>N[n].s||[]);
-
 const FORMS=[]; IDS.forEach(n=>(N[n].f||[]).forEach(f=>FORMS.push({...f,node:n})));
-const isDerived=f=>f.terms.some(([ref])=>SENS[ref].et!==f.et);
 const formAt=(node,et,pur)=>FORMS.find(f=>f.node===node&&f.et===et&&f.pur===pur);
+const nodeOf=sid=>IDS.find(n=>(N[n].s||[]).includes(sid));
+// A formula is derived when its output energy type differs from a referenced sensor's.
+const isDerived=f=>f.terms.some(([ref])=>SENS[ref]&&SENS[ref].et!==f.et);
 
-// A sensor's weight in `total`, evaluated AT a node:
-//   0  if the sensor that already covers it is also present under this node —
-//      relational, because that energy is counted once by the covering sensor;
-//   −1 if energy flows OUT through it — absolute, at every level;
-//   +1 otherwise.
-// So `total` is the net energy across the node's boundary. Fully metered, that
-// equals consumption; partially metered, it equals the net grid position — and
-// you cannot recover consumption without metering production anyway.
-function totalWeight(sid,nodeId){
-  const container=SENS[sid].in;
-  if(container && sensorsUnder(nodeId).includes(container)) return 0;
-  return SENS[sid].flow==="out" ? -1 : 1;
+// The terms that make up a node's value for `et`: children's values + own sensors,
+// each at weight 1 unless the node's formula overrides it, plus any sensor the
+// formula names from elsewhere in the company (kind "x").
+function totalTerms(id,et,slot){
+  const n=N[id], f=formAt(id,et,"total");
+  const ov=new Map(f?f.terms:[]);
+  const mine=sensorsUnder(id);
+  const out=[];
+  (n.ch||[]).forEach(c=>out.push({
+    ref:c, label:N[c].name, kind:"n", w:ov.has(c)?ov.get(c):1, v:val(c,et,"total",slot)}));
+  (n.s||[]).filter(s=>SENS[s].et===et).forEach(s=>out.push({
+    ref:s, label:SENS[s].name, kind:"s", w:ov.has(s)?ov.get(s):1, v:SENS[s].v[slot]}));
+  ov.forEach((w,ref)=>{
+    if(SENS[ref] && !mine.includes(ref) && SENS[ref].et===et)
+      out.push({ref, label:SENS[ref].name, kind:"x", w, v:SENS[ref].v[slot],
+                 from:N[nodeOf(ref)].name});
+  });
+  return out;
 }
 
-// Σ of the claims for one purpose declared anywhere at or below `id`.
-function claim(id,et,pur,slot,physicalOnly){
+// Terms of a declared purpose: the node's own formula, plus the same purpose
+// rolled up from its children.
+function purposeTerms(id,et,pur,slot){
+  const f=formAt(id,et,pur), out=[];
+  if(f) f.terms.forEach(([ref,w])=>out.push({
+    ref, label:SENS[ref]?SENS[ref].name:N[ref].name, kind:SENS[ref]?"s":"n", w,
+    v:SENS[ref]?SENS[ref].v[slot]:val(ref,et,pur,slot)}));
+  (N[id].ch||[]).forEach(c=>{
+    const cv=val(c,et,pur,slot);
+    if(cv) out.push({ref:c, label:N[c].name, kind:"n", w:1, v:cv});
+  });
+  return out;
+}
+
+// Σ of the physical (non-derived, non-outflow) claims declared at or below `id`.
+function claimedPhysical(id,et,slot){
   const inside=new Set(subtree(id));
-  return FORMS.filter(f=>f.et===et&&f.pur===pur&&inside.has(f.node)
-                         &&!(physicalOnly&&isDerived(f)))
-    .reduce((a,f)=>a+f.terms.reduce((b,[ref,c])=>b+c*SENS[ref].v[slot],0),0);
+  return FORMS.filter(f=>f.et===et && f.pur!=="total" && f.pur!=="generation"
+                         && !isDerived(f) && inside.has(f.node))
+    .reduce((a,f)=>a+f.terms.reduce((b,[ref,w])=>
+      b + w*(SENS[ref]?SENS[ref].v[slot]:val(ref,et,f.pur,slot)), 0), 0);
 }
-const declaredPurposes=et=>[...new Set(FORMS.filter(f=>f.et===et).map(f=>f.pur))];
 
 function val(id,et,pur,slot){
-  if(pur==="total")
-    return r2(sensorsUnder(id).filter(s=>SENS[s].et===et)
-      .reduce((a,s)=>a+totalWeight(s,id)*SENS[s].v[slot],0));
-  if(pur==="unallocated"){
-    const claimed=declaredPurposes(et).filter(p=>p!=="generation")
-      .reduce((a,p)=>a+claim(id,et,p,slot,true),0);
-    return r2(val(id,et,"total",slot)-claimed);
-  }
-  return r2(claim(id,et,pur,slot,false));
+  if(pur==="unallocated")
+    return r2(val(id,et,"total",slot)-claimedPhysical(id,et,slot));
+  const terms = pur==="total" ? totalTerms(id,et,slot) : purposeTerms(id,et,pur,slot);
+  return r2(terms.reduce((a,t)=>a+t.w*t.v,0));
 }
+
+const declaredPurposes=et=>[...new Set(FORMS.filter(f=>f.et===et&&f.pur!=="total").map(f=>f.pur))];
 
 // ── state + controls ──
 let et="electricity", pur="total", slot=0;
 const $=s=>document.querySelector(s);
-
 function purposeList(){return ["total",...declaredPurposes(et),"unallocated"];}
 
 function buildPills(host,items,isOn,onPick,extraCls){
@@ -320,10 +331,8 @@ function renderControls(){
     it=>ETYPE[it.key].derived?" der":"");
   const u=document.createElement("span"); u.className="unit";
   u.textContent="unit · "+ETYPE[et].unit; $("#etypes").appendChild(u);
-
   buildPills($("#purposes"),purposeList().map(k=>({key:k,label:PUR[k]})),
     it=>it.key===pur, k=>{pur=k; render();});
-
   buildPills($("#slots"),["00:00","00:15","00:30","00:45"].map((t,i)=>({key:i,label:t})),
     it=>it.key===slot, k=>{slot=k; render();});
 }
@@ -338,79 +347,57 @@ function sparkline(series,der){
     `<i class="${i===slot?"cur":""}" style="height:${Math.max(8,Math.abs(v)/max*100)}%"></i>`).join("")+`</div>`;
 }
 
-// Descendant sensors this node drops from `total`, and why — the overlap and
-// direction rules made visible at the node where they actually bite.
-function droppedUnder(id){
-  const mine=sensorsUnder(id).filter(s=>SENS[s].et===et);
-  const nested=mine.filter(s=>totalWeight(s,id)===0);
-  const out=mine.filter(s=>totalWeight(s,id)===-1);
-  const parts=[];
-  if(nested.length){
-    const containers=[...new Set(nested.map(s=>SENS[SENS[s].in].name))].join(", ");
-    parts.push(`skipping ${nested.length} reading${nested.length>1?"s":""} already in ${containers}`);
-  }
-  if(out.length){
-    const names=out.map(s=>SENS[s].name).join(", ");
-    parts.push(`minus ${names}`);
-  }
-  return parts.length?` <span class="note">(${parts.join("; ")})</span>`:"";
+function termHTML(t,i){
+  const cls = t.w===0 ? "zero" : t.w<0 ? "term neg" : "term";
+  const sign = t.w<0 ? `<span class="op neg">−</span>` : (i===0?"":`<span class="op">+</span>`);
+  const coef = (Math.abs(t.w)===1||t.w===0) ? "" : `<span class="coef">${Math.abs(t.w)}×</span>`;
+  const from = t.kind==="x" ? `<span class="xref"> ← ${t.from}</span>` : "";
+  return `${sign} ${coef}<span class="${cls}">${fmt(Math.abs(t.v))}</span>`
+       + `<span class="ref"> ${t.label}</span>${from}`;
 }
 
 function formulaHTML(id){
-  const f=formAt(id,et,pur), tot=val(id,et,pur,slot);
-  const der=f&&isDerived(f);
+  const f=formAt(id,et,pur), tot=val(id,et,pur,slot), der=f&&isDerived(f);
   const eq=`<span class="op">=</span> <span class="tot">${fmt(tot)}</span>`;
-  if(!f){
-    if(pur==="total")        return `<div class="fx"><span class="op">Σ</span> everything below${droppedUnder(id)} ${eq}</div>`;
-    if(pur==="unallocated")  return `<div class="fx"><span class="op">total − claimed</span> ${eq}</div>`;
-    return tot? `<div class="fx"><span class="op">rolled up from below</span> ${eq}</div>`
-              : `<div class="fx"><span class="op">—</span></div>`;
-  }
-  const parts=f.terms.map(([ref,c],i)=>{
-    const v=SENS[ref].v[slot];
-    const sign=c<0?`<span class="op neg">−</span>`:(i===0?"":`<span class="op">+</span>`);
-    const coef=(Math.abs(c)===1)?"":`<span class="coef">${Math.abs(c)}×</span>`;
-    return `${sign} ${coef}<span class="${c<0?"term neg":"term"}">${fmt(v)}</span>`
-         + `<span class="ref"> ${SENS[ref].name}</span>`;
-  }).join(" ");
-  const note=f.note?` &nbsp;<span class="note">— ${f.note}</span>`:"";
-  return `<div class="fx${der?" der":""}">${parts} ${eq}${note}</div>`;
+  if(pur==="unallocated")
+    return `<div class="fx"><span class="op">total − claimed</span> ${eq}</div>`;
+  const terms = pur==="total" ? totalTerms(id,et,slot) : purposeTerms(id,et,pur,slot);
+  if(!terms.length) return `<div class="fx"><span class="op">—</span></div>`;
+  const body = terms.map(termHTML).join(" ");
+  const note = f&&f.note ? ` &nbsp;<span class="note">— ${f.note}</span>` : "";
+  const head = (pur==="total"&&!f) ? `<span class="op">Σ</span> ` : "";
+  return `<div class="fx${der?" der":""}">${head}${body} ${eq}${note}</div>`;
 }
 
 function sensorRows(id){
   const own=(N[id].s||[]).filter(s=>SENS[s].et===et);
-  const f=formAt(id,et,pur);
-  return own.map(sid=>{
-    const v=SENS[sid].v[slot];
+  const terms = pur==="total" ? totalTerms(id,et,slot) : purposeTerms(id,et,pur,slot);
+  const byRef=new Map(terms.map(t=>[t.ref,t]));
+  // Sensors this node's formula reaches for from elsewhere in the company.
+  const foreign = terms.filter(t=>t.kind==="x");
+  const rows = own.map(sid=>{
+    const t=byRef.get(sid), w=t?t.w:null, v=SENS[sid].v[slot];
     let tag="", cls="";
-    if(pur==="total"){
-      const w=totalWeight(sid,id);
-      if(w===0){
-        tag=`<span class="stag inside">already in ${SENS[SENS[sid].in].name}</span>`; cls=" off";
-      }else if(w===-1){
-        tag=`<span class="stag sub">flow out · subtracted</span>`; cls=" neg";
-      }else if(SENS[sid].in){
-        tag=`<span class="stag own">counts here</span>`;
-      }
-    }else if(f){
-      const t=f.terms.find(([r])=>r===sid);
-      if(t){
-        const c=t[1];
-        if(c<0){ tag=`<span class="stag sub">subtract</span>`; cls=" neg"; }
-        else if(c!==1){ tag=`<span class="stag frac">×${c}</span>`; }
-      }else cls=" off";
-    }else cls=" off";
+    if(w===0){ tag=`<span class="stag zero">×0 udeladt</span>`; cls=" off"; }
+    else if(w!==null&&w<0){ tag=`<span class="stag sub">trækkes fra</span>`; cls=" neg"; }
+    else if(w!==null&&w!==1){ tag=`<span class="stag frac">×${w}</span>`; }
+    else if(w===null){ cls=" off"; }
     return `<div class="sens${cls}">
       <span class="sdot"></span>
       <span class="sname">${SENS[sid].name}<span class="id">${sid}</span></span>
       ${tag||"<span></span>"}
       <span class="sval">${fmt(v)} ${ETYPE[et].unit}</span></div>`;
-  }).join("");
+  });
+  foreign.forEach(t=>rows.push(`<div class="sens neg">
+      <span class="sdot"></span>
+      <span class="sname">${t.label}<span class="id">${t.ref} · ${t.from}</span></span>
+      <span class="stag used">hentet udefra</span>
+      <span class="sval">${fmt(t.v)} ${ETYPE[et].unit}</span></div>`));
+  return rows.join("");
 }
 
 function nodeHTML(id){
-  const n=N[id];
-  const f=formAt(id,et,pur), der=f&&isDerived(f);
+  const n=N[id], f=formAt(id,et,pur), der=f&&isDerived(f);
   const series=[0,1,2,3].map(i=>val(id,et,pur,i));
   let chip=n.type==="meter"?`<span class="chip meter">meter</span>`:"";
   if(f) chip+=der?`<span class="chip derived">derived</span>`:`<span class="chip custom">formula</span>`;
