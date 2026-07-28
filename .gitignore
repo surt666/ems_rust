@@ -34,3 +34,10 @@ crates/**/target
 
 # superpowers brainstorm visual companion (local, not committed)
 .superpowers/
+
+# Go CDK build outputs. cdk.json uses `go run`, so these are pure residue from a
+# stray `go build` — but they are ~80MB each and every rebuild commits a new copy.
+infra/hierarchy/ocaml-hierarchy
+infra/frontend/frontend
+infra/cognito/cognito
+infra/daq/data_pipeline/data_pipeline
