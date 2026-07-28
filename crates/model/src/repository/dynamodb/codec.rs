@@ -17,7 +17,7 @@ use crate::domain::sensor::Sensor;
 use crate::domain::sensor_sk::SensorSk;
 use crate::domain::user::User;
 use crate::domain::values::{
-    CognitoGroup, Currency, EdgeKind, FieldType, Language, MeterType, Resource,
+    CognitoGroup, Currency, EdgeKind, FieldType, Language, ReadingKind, EnergyType,
 };
 use crate::errors::RepositoryError;
 
@@ -782,10 +782,10 @@ pub fn sensor_to_item(sn: &Sensor) -> Item {
     item.insert("daq_id".to_string(), s(sn.daq_id.clone()));
     item.insert("gsi1pk".to_string(), s(sensor_gsi1pk(&sn.path)));
     item.insert("gsi1sk".to_string(), s(sn.path.clone()));
-    item.insert("purpose".to_string(), s(sn.purpose.to_string()));
+    item.insert("energy_type".to_string(), s(sn.energy_type.to_string()));
     item.insert(
-        "meter_type".to_string(),
-        s(sn.meter_type.to_string()),
+        "reading_kind".to_string(),
+        s(sn.reading_kind.to_string()),
     );
     item.insert("formula".to_string(), formula_to_av(&sn.formula));
     item.insert("created".to_string(), s(dt_to_rfc3339z(&sn.created)));
@@ -869,13 +869,13 @@ pub fn sensor_of_item(item: &Item) -> Result<Sensor, RepositoryError> {
         .map_err(|e| RepositoryError::Codec(format!("bad sensor id {:?}: {}", pk_s, e)))?;
     let daq_id = as_s(field(item, "daq_id")?)?.to_string();
     let path = as_s(field(item, "gsi1sk")?)?.to_string();
-    let purpose_s = as_s(field(item, "purpose")?)?;
-    let purpose = purpose_s
-        .parse::<Resource>()
-        .map_err(|e| RepositoryError::Codec(format!("bad purpose {:?}: {}", purpose_s, e)))?;
-    let mt_s = as_s(field(item, "meter_type")?)?;
-    let meter_type = mt_s.parse::<MeterType>()
-        .map_err(|e| RepositoryError::Codec(format!("bad meter_type {:?}: {}", mt_s, e)))?;
+    let energy_type_s = as_s(field(item, "energy_type")?)?;
+    let energy_type = energy_type_s
+        .parse::<EnergyType>()
+        .map_err(|e| RepositoryError::Codec(format!("bad energy_type {:?}: {}", energy_type_s, e)))?;
+    let mt_s = as_s(field(item, "reading_kind")?)?;
+    let reading_kind = mt_s.parse::<ReadingKind>()
+        .map_err(|e| RepositoryError::Codec(format!("bad reading_kind {:?}: {}", mt_s, e)))?;
     let unit = opt_s(item, "unit");
     let created_s = as_s(field(item, "created")?)?;
     let created = parse_ts(created_s);
@@ -889,8 +889,8 @@ pub fn sensor_of_item(item: &Item) -> Result<Sensor, RepositoryError> {
         .created(created)
         .daq_id(daq_id)
         .path(path)
-        .purpose(purpose)
-        .meter_type(meter_type)
+        .energy_type(energy_type)
+        .reading_kind(reading_kind)
         .unit(unit)
         .formula(formula)
         .resample_minutes(resample_minutes)
@@ -1284,9 +1284,9 @@ mod tests {
         let item = load_fixture("sensor.json");
         let sensor = sensor_of_item(&item).expect("decode sensor");
         assert_eq!(sensor.id.to_string(), "S#10010");
-        assert_eq!(sensor.purpose, Resource::Electricity);
+        assert_eq!(sensor.energy_type, EnergyType::Electricity);
         assert_eq!(sensor.daq_id, "daq:gwb143_json_v1:6003111553:90143675:0");
-        assert!(matches!(sensor.meter_type, MeterType::Counter));
+        assert!(matches!(sensor.reading_kind, ReadingKind::Counter));
         assert_eq!(sensor.unit, Some("KWh".to_string()));
         assert_eq!(sensor.resample_minutes, Some(5));
         assert!(matches!(sensor.formula, Formula::Identity));

@@ -10,7 +10,7 @@ use crate::domain::formula::Formula;
 use crate::domain::ids::{NodeId, SensorId};
 use crate::domain::node::{child_path, Node};
 use crate::domain::sensor::Sensor;
-use crate::domain::values::{EdgeKind, MeterType, Resource};
+use crate::domain::values::{EdgeKind, ReadingKind, EnergyType};
 use crate::errors::RepositoryError;
 use crate::logic::schema_check;
 use crate::repository::EdgeSpec as RepoEdgeSpec;
@@ -80,8 +80,8 @@ fn has_cycle(
 pub async fn attach<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut, FFD>(
     parent: NodeId,
     daq_id: String,
-    purpose: Resource,
-    meter_type: MeterType,
+    energy_type: EnergyType,
+    reading_kind: ReadingKind,
     unit: Option<String>,
     formula: Formula,
     resample_minutes: Option<i32>,
@@ -148,8 +148,8 @@ where
             .created(chrono::Utc::now())
             .daq_id(daq_id.clone())
             .path(path)
-            .purpose(purpose)
-            .meter_type(meter_type)
+            .energy_type(energy_type)
+            .reading_kind(reading_kind)
             .unit(unit.clone())
             .formula(formula_for_build.clone())
             .resample_minutes(resample_minutes)
@@ -434,7 +434,7 @@ mod tests {
     use crate::domain::node;
     use crate::domain::schema::{EdgeSpec as SchemaEdgeSpec, Schema};
     use crate::repository::EdgeSpec as TestRepoEdgeSpec;
-    use crate::domain::values::{EdgeKind, MeterType, Resource};
+    use crate::domain::values::{EdgeKind, ReadingKind, EnergyType};
     use crate::errors::RepositoryError;
     use crate::logic::hierarchy;
     use crate::repository::memory::Store;
@@ -586,8 +586,8 @@ mod tests {
         attach(
             parent,
             daq_id.to_string(),
-            Resource::Electricity,
-            MeterType::Counter,
+            EnergyType::Electricity,
+            ReadingKind::Counter,
             Some("kWh".to_string()),
             formula,
             resample_minutes,
@@ -1156,8 +1156,8 @@ mod tests {
                 .created(ts())
                 .daq_id(format!("d{}", id))
                 .path(path.to_string())
-                .purpose(Resource::Electricity)
-                .meter_type(MeterType::Counter)
+                .energy_type(EnergyType::Electricity)
+                .reading_kind(ReadingKind::Counter)
                 .build()
         };
 

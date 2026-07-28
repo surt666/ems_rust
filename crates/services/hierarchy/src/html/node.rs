@@ -2,18 +2,18 @@ use maud::{html, Markup, PreEscaped};
 use model::domain::node::Node;
 use model::domain::schema::FieldSpec;
 use model::domain::sensor::Sensor;
-use model::domain::values::{CognitoGroup, Resource};
+use model::domain::values::{CognitoGroup, EnergyType};
 
 /// Danish UI label for a resource (the EMS "Målertype" wording). The domain
-/// `Resource` owns the wire token (`Display`); the view owns the label.
-const fn resource_label_da(r: Resource) -> &'static str {
+/// `EnergyType` owns the wire token (`Display`); the view owns the label.
+const fn resource_label_da(r: EnergyType) -> &'static str {
     match r {
-        Resource::Electricity => "El",
-        Resource::DistrictHeating => "Fjernvarme",
-        Resource::DistrictCooling => "Fjernkøling",
-        Resource::Gas => "Gas",
-        Resource::Water => "Vand",
-        Resource::Heat => "Varme",
+        EnergyType::Electricity => "El",
+        EnergyType::DistrictHeating => "Fjernvarme",
+        EnergyType::DistrictCooling => "Fjernkøling",
+        EnergyType::Gas => "Gas",
+        EnergyType::Water => "Vand",
+        EnergyType::Heat => "Varme",
     }
 }
 
@@ -428,13 +428,13 @@ fn sensor_dialog(nid_str: &str, parent_str: &str) -> Markup {
                         span class="required" { "*" }
                     }
                     div class="form-row" {
-                        label class="form-label" { "Resource" }
+                        label class="form-label" { "EnergyType" }
                         // The per-meter resource (EMS "Målertype" / energy form). The
-                        // value is written to the sensor's `purpose` field, so the option
-                        // values are the domain `Resource` tokens themselves — iterated
+                        // value is written to the sensor's `energy_type` field, so the option
+                        // values are the domain `EnergyType` tokens themselves — iterated
                         // here so they can't drift from the enum / the rollup contract.
-                        select name="data.purpose" required class="form-select" {
-                            @for r in Resource::all() {
+                        select name="data.energy_type" required class="form-select" {
+                            @for r in EnergyType::all() {
                                 option value=(r.as_str()) { (resource_label_da(r)) }
                             }
                         }
@@ -442,7 +442,7 @@ fn sensor_dialog(nid_str: &str, parent_str: &str) -> Markup {
                     }
                     div class="form-row" {
                         label class="form-label" { "Meter type" }
-                        select name="data.meter_type" required class="form-select" {
+                        select name="data.reading_kind" required class="form-select" {
                             option value="counter" { "counter" }
                             option value="gauge" { "gauge" }
                         }
@@ -613,18 +613,18 @@ fn render_sensor_row(s: &Sensor) -> Markup {
     // Trailing slash BEFORE the query — the static host 301s `/measurements?x`
     // → `/measurements/` and drops the query string; `/measurements/?x` doesn't.
     let datatilegnelse = format!(
-        "/measurements/?daq={}&sid={}&logical={}&purpose={}&unit={}&type={}",
+        "/measurements/?daq={}&sid={}&logical={}&energy_type={}&unit={}&type={}",
         urlencoding::encode(&s.daq_id),
         urlencoding::encode(&sid),
         urlencoding::encode(logical),
-        urlencoding::encode(&s.purpose.to_string()),
+        urlencoding::encode(&s.energy_type.to_string()),
         urlencoding::encode(&unit),
-        urlencoding::encode(&s.meter_type.to_string()),
+        urlencoding::encode(&s.reading_kind.to_string()),
     );
     html! {
         li class="sensor-item sensor-row" {
             div class="sensor-row__label" {
-                span class="sensor-row__name" { (s.purpose.to_string()) }
+                span class="sensor-row__name" { (s.energy_type.to_string()) }
                 " "
                 span class="muted" { "(" (s.daq_id) ")" }
             }
@@ -856,13 +856,13 @@ mod tests {
     #[test]
     fn render_sensors_nonempty() {
         use model::domain::ids::SensorId;
-        use model::domain::values::{MeterType, Resource};
+        use model::domain::values::{ReadingKind, EnergyType};
         let s = Sensor::builder()
             .id(SensorId::make(1))
             .daq_id("daq:test:001".to_owned())
             .path("HN0#root|HN2#10003|S#1".to_owned())
-            .purpose(Resource::Electricity)
-            .meter_type(MeterType::Counter)
+            .energy_type(EnergyType::Electricity)
+            .reading_kind(ReadingKind::Counter)
             .build();
         let html = render_sensors(&[s]).into_string();
         assert!(html.contains("daq:test:001"));

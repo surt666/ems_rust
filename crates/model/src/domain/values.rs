@@ -208,13 +208,17 @@ pub enum Language {
 
 
 // ---------------------------------------------------------------------------
-// MeterType
+// ReadingKind
 // ---------------------------------------------------------------------------
 
-/// Measurement accumulation style for a sensor.
+/// How a sensor's readings accumulate: a counter is an odometer, a gauge is
+/// instantaneous.
+///
+/// Named for what it describes rather than for a kind of thing — there is only
+/// one kind of sensor, and `SensorType` would repeat the mistake `Resource` made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq,
-         strum::Display, strum::EnumString)]
-pub enum MeterType {
+         strum::Display, strum::EnumString, EnumIter)]
+pub enum ReadingKind {
     #[strum(serialize = "counter")]
     Counter,
     #[strum(serialize = "gauge")]
@@ -223,7 +227,7 @@ pub enum MeterType {
 
 
 // ---------------------------------------------------------------------------
-// Resource / Dimension
+// EnergyType / Dimension
 // ---------------------------------------------------------------------------
 
 /// The accumulation dimension of a resource — the unit family it sums in.
@@ -231,7 +235,7 @@ pub enum MeterType {
 /// Energy carriers roll up in kWh, volume carriers in m³. This is the read
 /// side's `dimension_of_unit` grouping (the `measurements_aggregate` `gsi1`
 /// dimension partition) made explicit in the domain. It is **derived** from the
-/// resource (see [`Resource::dimension`]), never stored on its own.
+/// resource (see [`EnergyType::dimension`]), never stored on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
 pub enum Dimension {
     #[strum(serialize = "energy")]
@@ -243,19 +247,19 @@ pub enum Dimension {
 /// The resource (energy form / EMS "Målertype") a sensor measures.
 ///
 /// The string form (`strum` serialize, always lower-case) is the **wire/storage
-/// contract**: it is written to the sensor's `purpose` attribute, forwarded to
+/// contract**: it is written to the sensor's `energy_type` attribute, forwarded to
 /// `meter-identity`, and keyed verbatim into the `measurements_aggregate` rollup
 /// sort key as the `<resource>` segment. The aggregations read side fans out over
 /// these exact tokens, so this set must stay in lock-step with the rollup. Parsing
 /// is case-insensitive (tolerates legacy rows); `Display` always re-emits the
 /// canonical lower-case token, so writes are normalised.
 ///
-/// Modelling `purpose` as this enum makes "a sensor measures a known resource" a
+/// Modelling `energy_type` as this enum makes "a sensor measures a known energy type" a
 /// type-level invariant — illegal values can't be built, stored, or read back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq,
          strum::Display, strum::EnumString, EnumIter, strum::IntoStaticStr)]
 #[strum(ascii_case_insensitive)]
-pub enum Resource {
+pub enum EnergyType {
     #[strum(serialize = "electricity")]
     Electricity,
     #[strum(serialize = "district_heating")]
@@ -270,7 +274,7 @@ pub enum Resource {
     Heat,
 }
 
-impl Resource {
+impl EnergyType {
     /// The canonical lower-case wire token (zero-alloc). Same string as
     /// `Display`; the read side keys rollup rows by this.
     pub fn as_str(self) -> &'static str {
@@ -280,20 +284,91 @@ impl Resource {
     /// Every resource, in declaration order — the per-node "all" fan-out set.
     /// Exposed as an inherent method so callers don't need `strum`'s iterator
     /// trait in scope.
-    pub fn all() -> impl Iterator<Item = Resource> {
-        Resource::iter()
+    pub fn all() -> impl Iterator<Item = EnergyType> {
+        EnergyType::iter()
     }
 
     /// The accumulation dimension — energy carriers (electricity, heat, district
     /// heating/cooling) sum in kWh; volume carriers (gas, water) in m³.
     pub const fn dimension(self) -> Dimension {
         match self {
-            Resource::Electricity
-            | Resource::DistrictHeating
-            | Resource::DistrictCooling
-            | Resource::Heat => Dimension::Energy,
-            Resource::Gas | Resource::Water => Dimension::Volume,
+            EnergyType::Electricity
+            | EnergyType::DistrictHeating
+            | EnergyType::DistrictCooling
+            | EnergyType::Heat => Dimension::Energy,
+            EnergyType::Gas | EnergyType::Water => Dimension::Volume,
         }
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// Purpose
+// ---------------------------------------------------------------------------
+
+/// The **formål** — what the energy is spent on. Independent of [`EnergyType`]:
+/// electricity serves lighting, cooling and ventilation alike, and space heating
+/// can arrive as district heating, gas or a heat pump. The taxonomy follows
+/// Energihåndbogen 2019's chapters.
+///
+/// The string form (`strum` serialize, always lower-case) is the wire/storage
+/// contract: it is the `<purpose>` segment of the `measurements_aggregate` sort
+/// key and of `formula#<energy_type>#<purpose>` in `hierarchy_new`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq,
+         strum::Display, strum::EnumString, EnumIter, strum::IntoStaticStr)]
+#[strum(ascii_case_insensitive)]
+pub enum Purpose {
+    #[strum(serialize = "space_heating")]
+    SpaceHeating,
+    #[strum(serialize = "dhw")]
+    Dhw,
+    #[strum(serialize = "ventilation")]
+    Ventilation,
+    #[strum(serialize = "cooling")]
+    Cooling,
+    #[strum(serialize = "lighting")]
+    Lighting,
+    #[strum(serialize = "plug_loads")]
+    PlugLoads,
+    #[strum(serialize = "ev_charging")]
+    EvCharging,
+    #[strum(serialize = "process")]
+    Process,
+    #[strum(serialize = "common")]
+    Common,
+    /// Egenproduktion (PV export). Reported, but never reduces `Unallocated` —
+    /// exported energy is not a slice of consumption.
+    #[strum(serialize = "generation")]
+    Generation,
+    /// The node's own value. Declarable: a formula with this head **is** the
+    /// node's formula. Defaults to Σ children + own sensors.
+    #[strum(serialize = "total")]
+    Total,
+    /// `Total − Σ(allocating purposes)`. Derived by the roll-up; never declarable.
+    #[strum(serialize = "unallocated")]
+    Unallocated,
+}
+
+impl Purpose {
+    /// The canonical lower-case wire token (zero-alloc).
+    pub fn as_str(self) -> &'static str {
+        self.into()
+    }
+
+    /// Every purpose, in declaration order.
+    pub fn all() -> impl Iterator<Item = Purpose> {
+        Purpose::iter()
+    }
+
+    /// Whether a node formula may declare this purpose as its output.
+    pub const fn declarable(self) -> bool {
+        !matches!(self, Purpose::Unallocated)
+    }
+
+    /// Whether claims of this purpose leave the site rather than being consumed
+    /// on it — such claims never reduce `Unallocated`.
+    pub const fn is_outflow(self) -> bool {
+        matches!(self, Purpose::Generation)
     }
 }
 
@@ -389,34 +464,76 @@ mod tests {
     use super::*;
     use strum::IntoEnumIterator;
 
-    // ---- Resource -----------------------------------------------------------
+    // ---- Purpose ------------------------------------------------------------
+
+    /// Wire tokens are the `measurements_aggregate` sort-key contract.
+    #[test]
+    fn purpose_wire_tokens_round_trip() {
+        for p in Purpose::iter() {
+            assert_eq!(p.to_string().parse::<Purpose>().unwrap(), p);
+        }
+        assert_eq!(Purpose::SpaceHeating.to_string(), "space_heating");
+        assert_eq!(Purpose::Dhw.to_string(), "dhw");
+        assert_eq!(Purpose::Total.to_string(), "total");
+    }
+
+    /// `Total` IS the node's own formula, so it must be declarable. Only
+    /// `Unallocated` is job-derived.
+    #[test]
+    fn total_is_declarable_unallocated_is_not() {
+        assert!(Purpose::Total.declarable());
+        assert!(!Purpose::Unallocated.declarable());
+        assert!(Purpose::Generation.declarable());
+    }
+
+    /// Generation reports exported energy; it never reduces Unallocated.
+    #[test]
+    fn purpose_outflow() {
+        assert!(Purpose::Generation.is_outflow());
+        assert!(!Purpose::Cooling.is_outflow());
+        assert!(!Purpose::Total.is_outflow());
+    }
+
+    /// Both renames keep their wire contracts exactly.
+    #[test]
+    fn renames_keep_their_wire_contracts() {
+        for e in EnergyType::iter() {
+            assert_eq!(e.to_string().parse::<EnergyType>().unwrap(), e);
+        }
+        assert_eq!(EnergyType::DistrictHeating.to_string(), "district_heating");
+        assert_eq!(EnergyType::Water.dimension(), Dimension::Volume);
+        assert_eq!(ReadingKind::Counter.to_string(), "counter");
+        assert_eq!("gauge".parse::<ReadingKind>().unwrap(), ReadingKind::Gauge);
+    }
+
+    // ---- EnergyType -----------------------------------------------------------
 
     /// `Display` re-emits the exact lower-case wire token for every variant —
     /// the `measurements_aggregate` rollup contract — and round-trips via parse.
     #[test]
     fn resource_wire_tokens_round_trip() {
-        for r in Resource::iter() {
-            assert_eq!(r.to_string().parse::<Resource>().unwrap(), r);
+        for r in EnergyType::iter() {
+            assert_eq!(r.to_string().parse::<EnergyType>().unwrap(), r);
         }
-        assert_eq!(Resource::DistrictHeating.to_string(), "district_heating");
-        assert_eq!(Resource::Electricity.to_string(), "electricity");
+        assert_eq!(EnergyType::DistrictHeating.to_string(), "district_heating");
+        assert_eq!(EnergyType::Electricity.to_string(), "electricity");
     }
 
     /// Parsing tolerates legacy casing but `Display` always normalises.
     #[test]
     fn resource_parse_is_case_insensitive() {
-        assert_eq!("Electricity".parse::<Resource>().unwrap(), Resource::Electricity);
-        assert_eq!("WATER".parse::<Resource>().unwrap(), Resource::Water);
-        assert!("energy".parse::<Resource>().is_err(), "dimension is not a resource");
+        assert_eq!("Electricity".parse::<EnergyType>().unwrap(), EnergyType::Electricity);
+        assert_eq!("WATER".parse::<EnergyType>().unwrap(), EnergyType::Water);
+        assert!("energy".parse::<EnergyType>().is_err(), "dimension is not a resource");
     }
 
     /// Energy carriers sum in kWh, volume carriers in m³.
     #[test]
     fn resource_dimension_split() {
-        assert_eq!(Resource::Electricity.dimension(), Dimension::Energy);
-        assert_eq!(Resource::Heat.dimension(), Dimension::Energy);
-        assert_eq!(Resource::Gas.dimension(), Dimension::Volume);
-        assert_eq!(Resource::Water.dimension(), Dimension::Volume);
+        assert_eq!(EnergyType::Electricity.dimension(), Dimension::Energy);
+        assert_eq!(EnergyType::Heat.dimension(), Dimension::Energy);
+        assert_eq!(EnergyType::Gas.dimension(), Dimension::Volume);
+        assert_eq!(EnergyType::Water.dimension(), Dimension::Volume);
     }
 
     // ---- EdgeKind -----------------------------------------------------------
@@ -709,26 +826,26 @@ mod tests {
         assert!("Danish".parse::<Language>().is_err()); // case-sensitive
     }
 
-    // ---- MeterType ----------------------------------------------------------
+    // ---- ReadingKind ----------------------------------------------------------
 
     #[test]
     fn meter_type_roundtrip() {
-        for mt in [MeterType::Counter, MeterType::Gauge] {
+        for mt in [ReadingKind::Counter, ReadingKind::Gauge] {
             let s = mt.to_string();
-            assert_eq!(s.parse::<MeterType>().unwrap(), mt);
+            assert_eq!(s.parse::<ReadingKind>().unwrap(), mt);
         }
     }
 
     #[test]
     fn meter_type_strings() {
-        assert_eq!(MeterType::Counter.to_string(), "counter");
-        assert_eq!(MeterType::Gauge.to_string(), "gauge");
+        assert_eq!(ReadingKind::Counter.to_string(), "counter");
+        assert_eq!(ReadingKind::Gauge.to_string(), "gauge");
     }
 
     #[test]
     fn meter_type_parse_error() {
-        assert!("Counter".parse::<MeterType>().is_err());
-        assert!("unknown".parse::<MeterType>().is_err());
+        assert!("Counter".parse::<ReadingKind>().is_err());
+        assert!("unknown".parse::<ReadingKind>().is_err());
     }
 
     // ---- FieldType ----------------------------------------------------------

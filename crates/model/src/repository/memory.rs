@@ -537,7 +537,7 @@ mod tests {
     use super::*;
     use crate::domain::ids::Level;
     use crate::domain::node::{make_root, make as make_node};
-    use crate::domain::values::{CognitoGroup, MeterType, Resource};
+    use crate::domain::values::{CognitoGroup, ReadingKind, EnergyType};
 
     fn ts() -> DateTime<Utc> {
         "2026-01-01T00:00:00Z"
@@ -561,8 +561,8 @@ mod tests {
             .created(ts())
             .daq_id(format!("daq:{}", sid))
             .path(path)
-            .purpose(Resource::Electricity)
-            .meter_type(MeterType::Counter)
+            .energy_type(EnergyType::Electricity)
+            .reading_kind(ReadingKind::Counter)
             .build()
     }
 
@@ -851,8 +851,8 @@ mod tests {
                 .created(ts())
                 .daq_id("daq:test".to_owned())
                 .path(path)
-                .purpose(Resource::Electricity)
-                .meter_type(MeterType::Counter)
+                .energy_type(EnergyType::Electricity)
+                .reading_kind(ReadingKind::Counter)
                 .build();
             let e = EdgeSpec {
                 from_: root.id.to_string(),
@@ -882,8 +882,8 @@ mod tests {
                 .created(ts())
                 .daq_id("daq:test".to_owned())
                 .path(path)
-                .purpose(Resource::Electricity)
-                .meter_type(MeterType::Counter)
+                .energy_type(EnergyType::Electricity)
+                .reading_kind(ReadingKind::Counter)
                 .build();
             let e = EdgeSpec {
                 from_: root.id.to_string(),
@@ -914,16 +914,16 @@ mod tests {
             .created(ts())
             .daq_id("d1".to_owned())
             .path("HN0#root|HN1#1|S#1".to_owned())
-            .purpose(Resource::Electricity)
-            .meter_type(MeterType::Counter)
+            .energy_type(EnergyType::Electricity)
+            .reading_kind(ReadingKind::Counter)
             .build();
         let s2 = Sensor::builder()
             .id(SensorId::make(2))
             .created(ts())
             .daq_id("d2".to_owned())
             .path("HN0#root|HN1#2|S#2".to_owned())
-            .purpose(Resource::Electricity)
-            .meter_type(MeterType::Counter)
+            .energy_type(EnergyType::Electricity)
+            .reading_kind(ReadingKind::Counter)
             .build();
         {
             let mut inner = store.inner.borrow_mut();
@@ -949,8 +949,8 @@ mod tests {
             .created(old_created)
             .daq_id("old".to_owned())
             .path("HN0#root|S#10".to_owned())
-            .purpose(Resource::Electricity)
-            .meter_type(MeterType::Counter)
+            .energy_type(EnergyType::Electricity)
+            .reading_kind(ReadingKind::Counter)
             .build();
         {
             let mut inner = store.inner.borrow_mut();
@@ -964,8 +964,8 @@ mod tests {
             .created(new_ts)
             .daq_id("new".to_owned())
             .path("HN0#root|S#10".to_owned())
-            .purpose(Resource::Electricity)
-            .meter_type(MeterType::Counter)
+            .energy_type(EnergyType::Electricity)
+            .reading_kind(ReadingKind::Counter)
             .build();
 
         store.replace_sensor_device(old_created, &new_s);

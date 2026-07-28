@@ -4,7 +4,7 @@ use typed_builder::TypedBuilder;
 use crate::domain::formula::Formula;
 use crate::domain::ids::{NodeId, SensorId};
 use crate::domain::node::PATH_SEP;
-use crate::domain::values::{MeterType, Resource};
+use crate::domain::values::{ReadingKind, EnergyType};
 
 // ---------------------------------------------------------------------------
 // Sensor
@@ -21,8 +21,8 @@ pub struct Sensor {
     pub created: DateTime<Utc>,
     pub daq_id: String,
     pub path: String,
-    pub purpose: Resource,
-    pub meter_type: MeterType,
+    pub energy_type: EnergyType,
+    pub reading_kind: ReadingKind,
     #[builder(default)]
     pub unit: Option<String>,
     #[builder(default = Formula::Identity)]
@@ -91,8 +91,8 @@ mod tests {
             .created(ptime_of("2026-04-18T10:00:00Z"))
             .daq_id("daq:adeunis_pu_v1:123:0018b210000191c7:counter_a".to_owned())
             .path(path)
-            .purpose(Resource::Electricity)
-            .meter_type(MeterType::Counter)
+            .energy_type(EnergyType::Electricity)
+            .reading_kind(ReadingKind::Counter)
             .unit(Some("kWh".to_owned()))
             .formula(Formula::Identity)
             .resample_minutes(Some(15))
@@ -102,9 +102,9 @@ mod tests {
     #[test]
     fn fields_preserved() {
         let s = make_sample();
-        assert_eq!(s.purpose, Resource::Electricity);
+        assert_eq!(s.energy_type, EnergyType::Electricity);
         assert_eq!(s.daq_id, "daq:adeunis_pu_v1:123:0018b210000191c7:counter_a");
-        assert!(matches!(s.meter_type, MeterType::Counter));
+        assert!(matches!(s.reading_kind, ReadingKind::Counter));
         assert_eq!(s.unit, Some("kWh".to_owned()));
     }
 
@@ -135,8 +135,8 @@ mod tests {
             .created(ptime_of("2026-01-01T00:00:00Z"))
             .daq_id("x".to_owned())
             .path("S#1".to_owned()) // no HN segment
-            .purpose(Resource::Water)
-            .meter_type(MeterType::Counter)
+            .energy_type(EnergyType::Water)
+            .reading_kind(ReadingKind::Counter)
             .build();
         let _ = s.parent_id();
     }

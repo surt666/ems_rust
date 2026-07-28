@@ -47,8 +47,8 @@ pub enum Command {
     AttachSensor {
         parent_id: String,
         daq_id: String,
-        purpose: String,
-        meter_type: String,
+        energy_type: String,
+        reading_kind: String,
         #[serde(default)]
         unit: Option<String>,
         /// May be a JSON integer (`15`) or a form-encoded string (`"15"` or `""`).
@@ -385,8 +385,8 @@ mod tests {
         let form = "action=attach_sensor\
             &data.parent_id=HN3%231\
             &data.daq_id=daq%3A1\
-            &data.purpose=Electricity\
-            &data.meter_type=counter\
+            &data.energy_type=Electricity\
+            &data.reading_kind=counter\
             &data.formula.kind=expr\
             &data.formula.expr=abs%28self%29";
         let v = form_to_command_json(form);
@@ -522,8 +522,8 @@ mod tests {
             "action": "attach_sensor",
             "parent_id": "HN3#1",
             "daq_id": "daq:1",
-            "purpose": "Electricity",
-            "meter_type": "counter",
+            "energy_type": "Electricity",
+            "reading_kind": "counter",
             "unit": "kWh",
             "resample_minutes": 15
         });
@@ -541,8 +541,8 @@ mod tests {
             "action": "attach_sensor",
             "parent_id": "HN3#1",
             "daq_id": "daq:1",
-            "purpose": "Electricity",
-            "meter_type": "counter",
+            "energy_type": "Electricity",
+            "reading_kind": "counter",
             "resample_minutes": "15"
         });
         let cmd: Command = serde_json::from_value(json).unwrap();

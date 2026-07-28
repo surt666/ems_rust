@@ -226,12 +226,12 @@ fn to_rows_dimension(
 // ── DynamoDB query ────────────────────────────────────────────────────────────
 
 // The resource a sensor measures (the EMS "Målertype") is shared domain
-// vocabulary — `model::domain::values::Resource`. The meter-data context keys
-// rollup rows by `Resource::as_str` and fans a node's "all" query out over
-// `Resource::all()`; the hierarchy context writes the same token into the
+// vocabulary — `model::domain::values::EnergyType`. The meter-data context keys
+// rollup rows by `EnergyType::as_str` and fans a node's "all" query out over
+// `EnergyType::all()`; the hierarchy context writes the same token into the
 // sensor's `purpose`. Same ubiquitous language, so the type is shared, not
 // re-declared here.
-use model::domain::values::Resource;
+use model::domain::values::EnergyType;
 
 struct QueryParams<'a> {
     table: &'a str,
@@ -245,14 +245,14 @@ struct QueryParams<'a> {
 }
 
 /// Query a node's rollup rows. A specific `resource` runs one key-range query; an
-/// empty `resource` ("all") fans out over every `Resource::ALL` **concurrently** —
+/// empty `resource` ("all") fans out over every `EnergyType::ALL` **concurrently** —
 /// each is its own `sk BETWEEN` key-range, so every query reads only its own
 /// window (no `begins_with` + post-read filter, no cross-granularity reads). The
 /// sort key is `<node_path>#<resource>#<gran>#<date>` with the date last, so once
 /// the resource is fixed the date window is a pure key-condition range.
 async fn query_node(client: &Client, p: QueryParams<'_>) -> Result<Vec<AggItem>> {
     let resources: Vec<&str> = if p.resource.is_empty() {
-        Resource::all().map(|r| r.as_str()).collect()
+        EnergyType::all().map(|r| r.as_str()).collect()
     } else {
         vec![p.resource]
     };
@@ -1212,12 +1212,12 @@ mod tests {
 
     #[test]
     fn resource_all_is_authoritative() {
-        // The all-resources query fans out over the shared domain `Resource` — must
+        // The all-resources query fans out over the shared domain `EnergyType` — must
         // be non-empty, and each `as_str` must match what the Glue rollup writes
         // into the SK.
-        assert!(Resource::all().next().is_some(), "fan-out needs at least one resource");
-        assert_eq!(Resource::Electricity.as_str(), "electricity");
-        assert_eq!(Resource::Water.as_str(), "water");
+        assert!(EnergyType::all().next().is_some(), "fan-out needs at least one resource");
+        assert_eq!(EnergyType::Electricity.as_str(), "electricity");
+        assert_eq!(EnergyType::Water.as_str(), "water");
     }
 
     // parse_node_keys ──────────────────────────────────────────────────────────

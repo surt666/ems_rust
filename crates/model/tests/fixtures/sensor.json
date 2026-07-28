@@ -8,7 +8,7 @@
     "sk": {
         "S": "active#2026-06-07T09:17:16Z"
     },
-    "purpose": {
+    "energy_type": {
         "S": "electricity"
     },
     "resample_minutes": {
@@ -33,7 +33,7 @@
     "created": {
         "S": "2026-06-07T09:17:16Z"
     },
-    "meter_type": {
+    "reading_kind": {
         "S": "counter"
     },
     "gsi1sk": {

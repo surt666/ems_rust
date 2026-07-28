@@ -386,8 +386,8 @@ pub fn sensor_to_json(s: &Sensor) -> Value {
         "created":          created,
         "daq_id":           s.daq_id,
         "path":             s.path,
-        "purpose":          s.purpose.to_string(),
-        "meter_type":       s.meter_type.to_string(),
+        "energy_type":          s.energy_type.to_string(),
+        "reading_kind":       s.reading_kind.to_string(),
         "unit":             unit,
         "resample_minutes": resample,
         "formula":          formula_to_json(&s.formula),
@@ -462,7 +462,7 @@ mod tests {
     use model::domain::ids::{Level, NodeId, SensorId};
     use model::domain::node;
     use model::domain::sensor::Sensor;
-    use model::domain::values::{MeterType, Resource};
+    use model::domain::values::{ReadingKind, EnergyType};
     use serde_json::json;
 
     // ------------------------------------------------------------------
@@ -649,8 +649,8 @@ mod tests {
             .created(DateTime::from_timestamp(0, 0).unwrap())
             .daq_id("d".to_string())
             .path("HN0#root|S#5".to_string())
-            .purpose(Resource::Electricity)
-            .meter_type(MeterType::Counter)
+            .energy_type(EnergyType::Electricity)
+            .reading_kind(ReadingKind::Counter)
             .formula(Formula::Zero)
             .build();
         let j = sensor_to_json(&s);

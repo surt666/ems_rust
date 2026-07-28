@@ -520,7 +520,7 @@ where
                 @for s in &ss {
                     @let id_s = s.id.to_string();
                     option value=(id_s) {
-                        (s.daq_id) " (" (s.purpose.to_string()) ")"
+                        (s.daq_id) " (" (s.energy_type.to_string()) ")"
                     }
                 }
             };

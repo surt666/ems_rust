@@ -178,8 +178,8 @@ pub async fn transact_replace(
         .created(old_created)
         .daq_id(new_sensor.daq_id.clone())
         .path(new_sensor.path.clone())
-        .purpose(new_sensor.purpose)
-        .meter_type(new_sensor.meter_type)
+        .energy_type(new_sensor.energy_type)
+        .reading_kind(new_sensor.reading_kind)
         .unit(new_sensor.unit.clone())
         .formula(new_sensor.formula.clone())
         .resample_minutes(new_sensor.resample_minutes)
@@ -371,7 +371,7 @@ pub async fn delete_sensor(
 mod it_tests {
     use super::*;
     use crate::domain::ids::Level;
-    use crate::domain::values::{MeterType, Resource};
+    use crate::domain::values::{ReadingKind, EnergyType};
 
     async fn it_client() -> (Client, String) {
         let table = std::env::var("HIERARCHY_TABLE")
@@ -388,8 +388,8 @@ mod it_tests {
             .created(Utc::now())
             .daq_id(format!("it-test:{}", id))
             .path(path)
-            .purpose(Resource::Electricity)
-            .meter_type(MeterType::Counter)
+            .energy_type(EnergyType::Electricity)
+            .reading_kind(ReadingKind::Counter)
             .build()
     }
 

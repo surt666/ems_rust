@@ -23,7 +23,7 @@ use model::domain::ids::{NodeId, SensorId, UserId};
 use model::domain::node::Node;
 use model::domain::sensor::Sensor;
 use model::domain::user::User;
-use model::domain::values::{CognitoGroup, Currency, EdgeKind, Language, MeterType, Profile, Resource};
+use model::domain::values::{CognitoGroup, Currency, EdgeKind, Language, ReadingKind, Profile, EnergyType};
 use model::errors::RepositoryError;
 use model::logic::{access, hierarchy, sensors, users};
 use model::repository::EdgeSpec;
@@ -655,8 +655,8 @@ where
 pub async fn handle_attach_sensor<FGN, FGNFut, FAS, FASFut, FGA, FDS, FDSFut, FFD>(
     parent_id: String,
     daq_id: String,
-    purpose_s: String,
-    meter_type_s: String,
+    energy_type_s: String,
+    reading_kind_s: String,
     unit: Option<String>,
     resample_val: Option<Value>,
     formula_val: Option<Value>,
@@ -680,15 +680,15 @@ where
         Ok(id) => id,
         Err(e) => return bad_request(&format!("bad parent_id: {}", e)),
     };
-    let meter_type = match meter_type_s.parse::<MeterType>() {
+    let reading_kind = match reading_kind_s.parse::<ReadingKind>() {
         Ok(mt) => mt,
-        Err(e) => return bad_request(&format!("bad meter_type: {}", e)),
+        Err(e) => return bad_request(&format!("bad reading_kind: {}", e)),
     };
     // "a sensor measures a known resource" is enforced here at the boundary;
-    // `Sensor.purpose: Resource` then carries the invariant through the domain.
-    let purpose = match purpose_s.parse::<Resource>() {
+    // `Sensor.energy_type: EnergyType` then carries the invariant through the domain.
+    let energy_type = match energy_type_s.parse::<EnergyType>() {
         Ok(r) => r,
-        Err(e) => return bad_request(&format!("bad purpose: {}", e)),
+        Err(e) => return bad_request(&format!("bad energy_type: {}", e)),
     };
 
     // Coerce resample_minutes: int or numeric string; empty/null → None.
@@ -713,8 +713,8 @@ where
     match sensors::attach(
         parent,
         daq_id,
-        purpose,
-        meter_type,
+        energy_type,
+        reading_kind,
         unit,
         formula,
         resample_minutes,
@@ -897,8 +897,8 @@ pub async fn run(cmd: Command) -> Value {
         Command::AttachSensor {
             parent_id,
             daq_id,
-            purpose,
-            meter_type,
+            energy_type,
+            reading_kind,
             unit,
             resample_minutes,
             formula,
@@ -915,8 +915,8 @@ pub async fn run(cmd: Command) -> Value {
             handle_attach_sensor(
                 parent_id,
                 daq_id,
-                purpose,
-                meter_type,
+                energy_type,
+                reading_kind,
                 unit,
                 resample_minutes,
                 formula,
