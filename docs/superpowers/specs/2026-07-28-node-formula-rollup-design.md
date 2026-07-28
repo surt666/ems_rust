@@ -315,9 +315,11 @@ formula** — both are properties of the installation, which is why they belong 
 data rather than in a per-node override that someone can forget to declare.
 
 **(a) Overlapping readings — `Sensor.contained_in`.** Sensors whose readings overlap are
-the norm: a chiller's accumulating channel already covers its three phase channels
-(usually registers on the *same* device); a DHW submeter's sensor is already covered by
-the building's main heat sensor (a different device). A blind Σ reads 80 kWh instead of
+the norm, in two shapes. *Same node:* a chiller's accumulating channel already covers its
+three phase channels — registers on one device, so they hang off one node (the hierarchy
+never nests a meter node inside a meter node; node types come from the company schema).
+*Across nodes:* a tenant submeter on its own area is already covered by the building's
+main sensor one level up. A blind Σ reads 80 kWh instead of
 40, and 155 kWh of heat instead of 120.
 
 The fact is *"this sensor's reading is already included in that one's"*, so it is
@@ -332,9 +334,10 @@ Sensor DHW  contained_in = HM1      (submeter, covered by the main heat sensor)
 container is also present, and **1** where it is not. The container must be attached to
 the contained sensor's own node or to an ancestor of it (§5.3), so the weight is 1 at
 nodes strictly below the container and 0 from the container's node upward. That is the
-correct answer at every level for free — a sub-area's own total legitimately shows its
-submeter's reading, while the building's total counts that energy once, via the main
-sensor.
+correct answer at every level for free: the tenant's own area legitimately reports what
+the tenant used, while the building counts that energy once via the main sensor. Where
+both sensors sit on the same node — the chiller's channels — the weight is simply 0
+everywhere, which is the common case.
 
 Because the overlap is structural, **double counting stays structurally impossible** —
 the property today's flat explode has, and the one a per-node weight override would have
@@ -640,7 +643,7 @@ Consequences of the chosen options, documented rather than fixed:
 |---|---|
 | `model` domain | `Purpose` and `EnergyType` wire-token round-trip; reserved purposes rejected; `Term`/`NodeFormula` construction |
 | `model` logic | `flatten`: nested coefficient multiplication, override-only defaults, subtree-rule rejection, derived detection, claim propagation to ancestors |
-| `model` logic (§3.8) | overlap yields weight 0 at and above the container's node and 1 below it; `flow: Out` yields −1 everywhere; the three-sensor PV case nets to 120 and the two-sensor case to 20; the handbook cases partition exactly (`space_heating + dhw = total`, `unallocated = 0`) |
+| `model` logic (§3.8) | overlap yields 0 for channels sharing a node, and 0 at/above but 1 below for a tenant submeter under a building main; `flow: Out` yields −1 everywhere; the three-sensor PV case nets to 120 and the two-sensor case to 20; the handbook cases partition exactly (`space_heating + dhw = total`, `unallocated = 0`) |
 | `model` logic (§3.6) | one sensor across several purposes on one node is accepted; claims split across a node and its ancestor are rejected; coefficients summing past 1 are rejected; a derived claim of a different `energy_type` does not count toward the sum |
 | `model` repository | formula + weight-row codec round-trip; `F#HN2#…` and `W#HN2#…` GSI partition queries; cascade delete with the node |
 | `hierarchy` api | `set_node_formula` / `delete_node_formula` happy paths and every validation failure; `writes`-edge gating; matrix recompute fires on each triggering command; `node_formulas` fragment |

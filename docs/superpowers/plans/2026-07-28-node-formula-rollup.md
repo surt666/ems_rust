@@ -546,22 +546,19 @@ mod tests {
         Term { reference: r, coefficient: c }
     }
 
-    /// The chiller from the presentation: the accumulating channel (S#1) hangs
-    /// off the chiller node; its three phase channels hang off a child panel node
-    /// and record that the accumulator already covers them.
+    /// The chiller from the presentation: one device exposing an accumulating
+    /// channel (S#1) and two per-phase channels, all on ONE node. The hierarchy
+    /// has no meters inside meters — a node's type comes from the company schema
+    /// (property → building → area → meter here), and channels of one device
+    /// never span nodes.
     fn chiller_graph() -> CompanyGraph {
         let chill = format!("{CO}|HN5#5");
-        let panel = format!("{chill}|HN6#6");
         CompanyGraph {
-            nodes: vec![
-                node(Level::Hn2, 997, CO),
-                node(Level::Hn5, 5, &chill),
-                node(Level::Hn6, 6, &panel),
-            ],
+            nodes: vec![node(Level::Hn2, 997, CO), node(Level::Hn5, 5, &chill)],
             sensors: vec![
                 sensor(1, &chill, EnergyType::Electricity, None),
-                sensor(2, &panel, EnergyType::Electricity, Some(1)),
-                sensor(3, &panel, EnergyType::Electricity, Some(1)),
+                sensor(2, &chill, EnergyType::Electricity, Some(1)),
+                sensor(3, &chill, EnergyType::Electricity, Some(1)),
             ],
             formulas: vec![NodeFormula {
                 node: NodeId::make(Level::Hn5, 5),
@@ -583,21 +580,46 @@ mod tests {
         assert_eq!(total_weight_at(&g, &sens(&g, 1), &format!("{CO}|HN5#5")), 1.0);
     }
 
-    /// Overlap is RELATIONAL: the phase channels count 0 where the accumulating
-    /// channel is also present (the chiller and above), and 1 where it is not
-    /// (their own panel). Both answers are correct.
+    /// Channels of one device sit on one node, so the covering channel is always
+    /// present: the phases weigh 0 at the chiller and everywhere above.
     #[test]
-    fn containment_zeroes_only_where_the_container_is_present() {
+    fn covered_channels_on_the_same_node_weigh_zero() {
         let g = chiller_graph();
         let chill = format!("{CO}|HN5#5");
-        let panel = format!("{chill}|HN6#6");
         for id in [2u32, 3] {
-            assert_eq!(total_weight_at(&g, &sens(&g, id), &panel), 1.0,
-                       "phase {id} counts at its own panel");
-            assert_eq!(total_weight_at(&g, &sens(&g, id), &chill), 0.0,
-                       "phase {id} is already covered by the accumulator at the chiller");
-            assert_eq!(total_weight_at(&g, &sens(&g, id), CO), 0.0,
-                       "…and at every ancestor above it");
+            for path in [chill.as_str(), CO] {
+                assert_eq!(total_weight_at(&g, &sens(&g, id), path), 0.0,
+                           "phase {id} is already covered by the accumulator at {path}");
+            }
+        }
+    }
+
+    /// Overlap is RELATIONAL, and the natural case is tenant submetering: a
+    /// building's main electricity sensor covers a shop's submeter one level
+    /// down. The shop's own area legitimately reports what the shop used; the
+    /// building counts that energy once, via the main. Both answers are correct.
+    #[test]
+    fn covered_sensor_counts_below_its_container_and_not_at_or_above() {
+        let bld = format!("{CO}|HN4#4");
+        let shop = format!("{bld}|HN5#41");
+        let g = CompanyGraph {
+            nodes: vec![
+                node(Level::Hn2, 997, CO),
+                node(Level::Hn4, 4, &bld),
+                node(Level::Hn5, 41, &shop),
+            ],
+            sensors: vec![
+                sensor(40, &bld, EnergyType::Electricity, None),       // building main
+                sensor(41, &shop, EnergyType::Electricity, Some(40)),  // tenant submeter
+            ],
+            formulas: vec![],
+        };
+        assert_eq!(total_weight_at(&g, &sens(&g, 41), &shop), 1.0,
+                   "the shop's own area reports the shop's use");
+        for path in [bld.as_str(), CO] {
+            assert_eq!(total_weight_at(&g, &sens(&g, 41), path), 0.0,
+                       "counted once via the main at {path}");
+            assert_eq!(total_weight_at(&g, &sens(&g, 40), path), 1.0, "the main itself");
         }
     }
 
@@ -664,20 +686,19 @@ mod tests {
     }
 
     /// The exception list carries only what differs from 1, one row per node
-    /// where the container is present.
+    /// where the covering sensor is present.
     #[test]
     fn total_overrides_are_an_exception_list() {
         let m = flatten(&chiller_graph());
         let chill = format!("{CO}|HN5#5");
-        let panel = format!("{chill}|HN6#6");
         let at = |p: &str, s: u32| {
             m.total_overrides.iter().any(|o| o.node_path == p && o.sensor == SensorId::make(s))
         };
         assert!(at(&chill, 2) && at(&chill, 3), "zeroed at the chiller");
         assert!(at(CO, 2) && at(CO, 3), "zeroed at the company");
-        assert!(!at(&panel, 2), "NOT zeroed at their own panel");
         assert!(m.total_overrides.iter().all(|o| o.coefficient == 0.0));
-        assert!(m.total_overrides.iter().all(|o| o.sensor != SensorId::make(1)));
+        assert!(m.total_overrides.iter().all(|o| o.sensor != SensorId::make(1)),
+                "the covering channel itself is never an exception");
     }
 
     #[test]
@@ -1165,13 +1186,26 @@ Append inside the existing `mod tests` in `crates/model/src/logic/formulas.rs`:
 
     #[test]
     fn containment_rejects_a_container_below_the_sensor() {
-        let mut g = chiller_graph();
-        // Flip it: make the accumulating channel claim to be covered by a phase
-        // channel, which lives on a DEEPER node. The container must be at or above.
-        let mut acc = sens(&g, 1);
-        acc.contained_in = Some(SensorId::make(2));
-        g.sensors[0] = acc.clone();
-        assert!(validate_containment(&g, &acc).unwrap_err().contains("ancestor"));
+        let bld = format!("{CO}|HN4#4");
+        let shop = format!("{bld}|HN5#41");
+        let mut g = CompanyGraph {
+            nodes: vec![
+                node(Level::Hn2, 997, CO),
+                node(Level::Hn4, 4, &bld),
+                node(Level::Hn5, 41, &shop),
+            ],
+            sensors: vec![
+                sensor(40, &bld, EnergyType::Electricity, None),
+                sensor(41, &shop, EnergyType::Electricity, None),
+            ],
+            formulas: vec![],
+        };
+        // Upside down: the building main claims to be covered by the tenant
+        // submeter one level DOWN. The covering sensor must be at or above.
+        let mut main = g.sensors[0].clone();
+        main.contained_in = Some(SensorId::make(41));
+        g.sensors[0] = main.clone();
+        assert!(validate_containment(&g, &main).unwrap_err().contains("ancestor"));
     }
 
     #[test]
@@ -3234,7 +3268,7 @@ On a scratch company, build the presentation's shape and record:
 
 | Where | What |
 |---|---|
-| Chiller phase-channel sensors | `contained_in` = the accumulating channel |
+| Chiller phase-channel sensors (same node as the accumulator — one device) | `contained_in` = the accumulating channel |
 | Building A1 DHW submeter sensor | `contained_in` = the main heat sensor |
 | Area A1b grid-export sensor | `flow` = **out** (import and production stay `in`) |
 | Chiller | `electricity/cooling` = accumulator × 1 |
@@ -3260,7 +3294,7 @@ aws glue start-job-run --profile daq_dev --job-name measurements-aggregate \
 
 Query `get_purpose_split` per fixture node and check:
 
-1. **No double counting** — the chiller's `electricity/total` equals its `electricity/cooling`; the phase panel's own `electricity/total` equals the phase sum. Both are true at once, which is the point of the overlap rule being relational.
+1. **No double counting** — the chiller's `electricity/total` equals its `electricity/cooling` (40, not 80), because its three phase channels are covered by the accumulating channel on the same node. For the relational half of the rule, add a tenant submeter on an area below a building's main sensor and confirm the area reports the tenant's use while the building still counts it once.
 2. **Exact partition** — Building A1's `district_heating`: `space_heating + dhw == total`, `unallocated == 0`. Same for A2 with the 0.28/0.72 split.
 3. **Signed total** — Area A1b's `electricity/total` equals `import + production − export`. Remove the production sensor from the fixture and it becomes `import − export`; both are correct, and neither is the 150 that zeroing the export sensor would give.
 4. **One sensor, many purposes** — Building B1's `electricity`: `lighting + ventilation + space_heating + dhw == total`, `unallocated == 0`, with the heat pump's 0.7/0.3 split summing to exactly one sensor's reading.

@@ -124,11 +124,16 @@
       <div class="card"><span class="hd">Overrides only</span>
         A formula lists only what <b>differs</b> from the default. Any sensor nobody mentions still counts at
         weight <b>1</b> — so attaching a sensor always moves the numbers and nothing is silently dropped.</div>
+      <div class="card"><span class="hd">The tree is the company's own</span>
+        Each company defines its own node types. This one runs <b>property → building → area → meter</b>;
+        another might run <b>field → array → sensor</b>. Sensors hang off whatever node type that company
+        uses, and formulas work the same either way — nothing here assumes a fixed shape.</div>
       <div class="card"><span class="hd">Overlap is a fact, not a formula</span>
-        A sensor records <b>which other reading already includes it</b> — an accumulating channel over its
-        phase channels, usually on the very same device. It then counts <b>0</b> wherever that sensor is also
-        present, and <b>1</b> where it is not, automatically at every level. Double counting stays structurally
-        impossible instead of depending on someone remembering an override.</div>
+        A sensor records <b>which other reading already includes it</b> — below, an accumulating channel and
+        its three phase channels, all registers on one device and so all on one node. A covered sensor counts
+        <b>0</b> wherever the covering one is also present, and <b>1</b> where it is not (a tenant submeter on
+        its own area still shows that tenant's use, while the building counts it once via the main). Double
+        counting stays structurally impossible instead of depending on someone remembering an override.</div>
       <div class="card"><span class="hd">Direction is a fact too</span>
         Import and export are separate sensors — two registers on one device — so the minus sign has to live
         somewhere. It lives on the <b>export sensor</b> (<code>flow: out</code>), not in a node formula: said
@@ -214,11 +219,12 @@ const N={
   ]},
   A1a:{name:"Area A1a",type:"area",ch:["MSB","CHILL"]},
   MSB:{name:"Main switchboard",type:"meter",s:["L1","L2","L3"]},
-  CHILL:{name:"Chiller",type:"meter",ch:["CHILLPH"],s:["ACC"],f:[
+  // One device, four channels: an accumulating register and three per-phase
+  // registers. They hang off ONE node — the hierarchy has no meters inside meters.
+  CHILL:{name:"Chiller",type:"meter",s:["ACC","cL1","cL2","cL3"],f:[
     {et:"electricity",pur:"cooling",terms:[["ACC",1]]},
     {et:"district_cooling",pur:"cooling",terms:[["ACC",3.2]],note:"COP 3,2 jf. datablad"},
   ]},
-  CHILLPH:{name:"Chiller phase panel",type:"meter",s:["cL1","cL2","cL3"]},
   A1b:{name:"Area A1b",type:"area",s:["IMP","PRD","EXP"],f:[
     {et:"electricity",pur:"generation",terms:[["EXP",1]],
      note:"reporting only — the minus sign lives on the sensor, not here"},
