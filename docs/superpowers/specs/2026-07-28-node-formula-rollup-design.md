@@ -93,6 +93,18 @@ on **one** device, as are OBIS 1.8.0 and 2.8.0 (import and export), so the relat
 "this sensor's reading already includes that one's" — a statement about values, not about
 hardware.
 
+The same correction applies to three existing names, all renamed here (§6, §7):
+
+| Before | After | Why |
+|---|---|---|
+| `logical_data` (Iceberg) | **`logical_data`** | Pairs with `raw_data`; the axis that differs is device-addressed vs hierarchy-addressed, not "meter" |
+| `meter-identity` (DynamoDB) | **`sensor-identity`** | It resolves an incoming device channel to a hierarchy sensor |
+| `MeterType { Counter, Gauge }` | **`ReadingKind { Counter, Gauge }`** | Not a kind of *thing* — it is how a sensor's readings accumulate. `SensorType` would repeat the `Resource` mistake |
+
+Deliberately **not** renamed here: the `/meterdata/` route prefix. It is a public URL
+touching the frontend build, the OpenAPI spec and the CQRS-convention docs, and as a
+bounded-context label it is far less wrong than a type name. Worth doing separately.
+
 ### 2.2 What D1 kills
 
 The demo's per-sensor emission factor `f`. Under `(energy_type, purpose)` it has no
@@ -125,6 +137,9 @@ and requires no per-sensor coefficient anywhere.
 `Sensor.purpose: Resource` → `Sensor.energy_type: EnergyType`, and the `Resource` type
 itself → `EnergyType`. This frees the word `purpose` for its real meaning and propagates
 to the wire (§6, §7).
+
+`Sensor.meter_type: MeterType` → `Sensor.reading_kind: ReadingKind`, same `counter` /
+`gauge` wire tokens, so no stored value changes — only the attribute name.
 
 ### 3.3 New
 
@@ -471,7 +486,15 @@ server-rendered maud.
 The inlined Python `_item` builder:
 
 - **drops** the `formula` copy entirely;
-- **renames** `purpose` → `energy_type` in the `meter-identity` item.
+- **renames** `purpose` → `energy_type` and `meter_type` → `reading_kind` in the
+  `sensor-identity` item.
+
+The **`meter-identity` table is replaced by `sensor-identity`** (§2.1). DynamoDB tables
+cannot be renamed, so this is a new table with a new stream: the Flink event-source
+mapping is repointed and the app re-bootstraps, and the bridge lambda, its DLQ and its
+alarm lose the `meter-identity` name. The data migration is trivial — the bridge
+repopulates the table from `hierarchy_new` stream events, so re-saving each sensor is
+enough.
 
 The bridge does not carry formulas or the weight matrix — the Glue job reads
 `hierarchy_new` directly (D6). `contained_in` also stays hierarchy-side; the pipeline
@@ -485,10 +508,12 @@ Glue job role in `891377204778`, granting `dynamodb:Query` on `hierarchy_new` an
 
 ## 7. Flink + Iceberg — `infra/daq/data_pipeline`
 
-- `MeterMapping.purpose` → `.energyType`, plus `DdbBootstrapLoader`,
-  `DdbStreamDeserializer`, `MeterEnrichmentFunction` and `Main.scala`'s table schema.
-- The `purpose` column in **`all.raw_data`** and **`all.logical_meter_data`** renames to
-  `energy_type`.
+- `MeterMapping` → `SensorMapping`, `.purpose` → `.energyType` and `.meterType` →
+  `.readingKind`, plus `DdbBootstrapLoader`, `DdbStreamDeserializer`,
+  `MeterEnrichmentFunction` and `Main.scala`'s table schema.
+- The `purpose` column in **`all.raw_data`** and **`all.logical_data`** renames to
+  `energy_type`, and the table itself to **`all.logical_data`** — free, because the
+  column change already forces a delete/recreate.
 
 Per the documented gotcha, `AWS::S3Tables::Table` cannot be replaced in place: this is a
 **two-step deploy** — remove the table resource from `s3tables_stack.go` and deploy (CFN
@@ -497,7 +522,7 @@ deletes it, clearing the data), then restore it with the new column and deploy a
 The operator `uid` and keyed-state descriptor names are untouched, so the Flink snapshot
 still restores; only the sink schema changes.
 
-**Accepted data loss:** `raw_data` and `logical_meter_data` history is cleared. Kinesis
+**Accepted data loss:** `raw_data` and `logical_data` history is cleared. Kinesis
 retention is 24 h, so roughly one day is recoverable by replay.
 
 ---
@@ -630,7 +655,8 @@ Consequences of the chosen options, documented rather than fixed:
 1. `crates/model` + `hierarchy` lambda (formula and weight items readable/writable before
    anything reads them), then `rebuild_company_matrix` for every company.
 2. `HierarchyReaderRole` (account `339712745226`).
-3. Bridge (`purpose` → `energy_type` in `meter-identity`) — must land **with** step 4,
+3. Bridge (`purpose` → `energy_type`, `meter_type` → `reading_kind`, and the
+   `meter-identity` → `sensor-identity` table replacement) — must land **with** step 4,
    since the pipeline has no fallback.
 4. Flink + S3 Tables two-step column rename (account `891377204778`).
 5. Glue roll-up job.

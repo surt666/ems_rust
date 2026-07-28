@@ -4,7 +4,7 @@
 
 **Goal:** Move consumption formulas off sensors and onto hierarchy nodes, splitting the single mis-named `purpose` axis into `energy_type` (what a sensor measures) and `purpose` (what the energy is spent on), and make the Glue roll-up evaluate those formulas.
 
-**Architecture:** A sensor becomes a raw value carrying its `EnergyType` and, where they apply, two facts about the installation — which other sensor's reading already includes its own, and which way energy flows through it. Hierarchy nodes hold `NodeFormula` items declaring an `(energy_type, purpose)` output as weighted linear terms over their own descendants. `crates/model` owns the flattening into a weight matrix; the hierarchy service **materialises** that matrix into `hierarchy_new`, and the Glue job reads the flat rows cross-account and joins them to `logical_meter_data`. Glue holds no formula semantics at all. Purely linear terms mean evaluation commutes with hour/day bucketing, so the roll-up keeps its single explode + groupBy shape.
+**Architecture:** A sensor becomes a raw value carrying its `EnergyType` and, where they apply, two facts about the installation — which other sensor's reading already includes its own, and which way energy flows through it. Hierarchy nodes hold `NodeFormula` items declaring an `(energy_type, purpose)` output as weighted linear terms over their own descendants. `crates/model` owns the flattening into a weight matrix; the hierarchy service **materialises** that matrix into `hierarchy_new`, and the Glue job reads the flat rows cross-account and joins them to `logical_data`. Glue holds no formula semantics at all. Purely linear terms mean evaluation commutes with hour/day bucketing, so the roll-up keeps its single explode + groupBy shape.
 
 **Tech Stack:** Rust (workspace: `model`, `api`, `services/hierarchy`, `services/aggregations`), maud + HTMX server-rendered HTML, DynamoDB (`hierarchy_new`, `measurements_aggregate`), Scala/Flink on MSF, Iceberg S3 Tables, PySpark on Glue, Go CDK, Astro frontend.
 
@@ -22,7 +22,7 @@
 - UI is HTML-over-the-wire (HTMX). Never introduce client-side JSON rendering.
 - CSS uses **grid**, never flexbox.
 - Naming: the type is `EnergyType`, the wire token and field name is `energy_type`, the Danish UI label is *Energitype*.
-- Vocabulary: the system's inputs are **sensors** (one per device channel/register). A *meter* is a physical device, and exists in the hierarchy only as a **node type**. State every rule over sensors — an accumulating channel and its phase channels are usually registers on one device, so `contained_in` means "this sensor's reading is already included in that one's", never "this meter sits inside that meter".
+- Vocabulary: the system's inputs are **sensors** (one per device channel/register). A *meter* is a physical device, and exists in the hierarchy only as a **node type**. State every rule over sensors — an accumulating channel and its phase channels are usually registers on one device, so `contained_in` means "this sensor's reading is already included in that one's", never "this meter sits inside that meter". Three existing names are corrected in the same pass: `logical_meter_data` → **`logical_data`**, `meter-identity` → **`sensor-identity`**, `MeterType` → **`ReadingKind`**. The `/meterdata/` route prefix is deliberately left alone — it is a public URL and a bounded-context label, and belongs in its own change.
 - Roll-up sort key after this change: `<node_path>#<energy_type>#<purpose>#<gran>#<bucket>`. GSI: `gsi1pk = HN2#<id>#<dimension>#<purpose>`, `gsi1sk = <node_path>#<gran>#<bucket>`.
 
 ---
@@ -36,11 +36,11 @@ Ships independently: formulas can be authored, validated, listed, rendered, and 
 ### Task 1: `EnergyType` rename and the `Purpose` value type
 
 **Files:**
-- Modify: `crates/model/src/domain/values.rs` (the `Resource` block at ~lines 226-298, plus its `mod tests` section)
+- Modify: `crates/model/src/domain/values.rs` (the `Resource` block at ~lines 226-298, the `MeterType` block at ~lines 211-222, plus its `mod tests` section)
 - Modify: every `Resource` reference the compiler flags across `crates/`
 
 **Interfaces:**
-- Produces: `EnergyType` (renamed from `Resource`, same six variants and wire tokens, same `dimension()`); `Purpose` with `as_str() -> &'static str`, `all() -> impl Iterator<Item = Purpose>`, `declarable() -> bool`, `is_outflow() -> bool`
+- Produces: `EnergyType` (renamed from `Resource`, same six variants and wire tokens, same `dimension()`); `ReadingKind` (renamed from `MeterType`, same `counter`/`gauge` tokens; the field becomes `Sensor.reading_kind`); `Purpose` with `as_str() -> &'static str`, `all() -> impl Iterator<Item = Purpose>`, `declarable() -> bool`, `is_outflow() -> bool`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -79,6 +79,16 @@ Add to the `mod tests` block in `crates/model/src/domain/values.rs`:
         assert!(!Purpose::Cooling.is_outflow());
     }
 
+    /// `Counter`/`Gauge` is not a kind of *thing* — it is how a sensor's readings
+    /// accumulate. `SensorType` would repeat the `Resource` mistake, so the type
+    /// is named for what it describes.
+    #[test]
+    fn reading_kind_keeps_the_meter_type_wire_contract() {
+        assert_eq!(ReadingKind::Counter.to_string(), "counter");
+        assert_eq!(ReadingKind::Gauge.to_string(), "gauge");
+        assert_eq!("counter".parse::<ReadingKind>().unwrap(), ReadingKind::Counter);
+    }
+
     /// The rename is a rename: same tokens, same dimensions, new type name.
     #[test]
     fn energy_type_keeps_the_resource_wire_contract() {
@@ -96,9 +106,9 @@ Add to the `mod tests` block in `crates/model/src/domain/values.rs`:
 Run: `cargo test -p model purpose_ 2>&1 | tail -20`
 Expected: FAIL — `cannot find type Purpose in this scope`.
 
-- [ ] **Step 3: Rename `Resource` → `EnergyType`**
+- [ ] **Step 3: Rename `Resource` → `EnergyType` and `MeterType` → `ReadingKind`**
 
-Rename the type and every use of it. **Do not blind-`sed`** — `resource` appears in unrelated contexts (`RepositoryError`, CDK `Resources:`, `boto3.resource`). Rename in `crates/model/src/domain/values.rs` first, then let `cargo build` point at each call site:
+Rename both types and every use of them. `Sensor.meter_type` becomes `Sensor.reading_kind` and its DynamoDB attribute follows; the `counter`/`gauge` tokens are unchanged, so no stored value moves. **Do not blind-`sed`** — `resource` appears in unrelated contexts (`RepositoryError`, CDK `Resources:`, `boto3.resource`). Rename in `crates/model/src/domain/values.rs` first, then let `cargo build` point at each call site:
 
 ```bash
 cargo build 2>&1 | grep -E '^error' | head -40
@@ -193,7 +203,7 @@ Expected: PASS.
 
 ```bash
 git add -A crates/
-git commit -m "feat(model)!: rename Resource -> EnergyType; add the Purpose (formål) axis"
+git commit -m "feat(model)!: Resource -> EnergyType, MeterType -> ReadingKind; add the Purpose axis"
 ```
 
 ---
@@ -504,7 +514,7 @@ mod tests {
     use crate::domain::ids::Level;
     use crate::domain::node::Node;
     use crate::domain::sensor::Sensor;
-    use crate::domain::values::MeterType;
+    use crate::domain::values::ReadingKind;
 
     const CO: &str = "HN0#root|HN2#997";
 
@@ -522,7 +532,7 @@ mod tests {
             .daq_id(format!("daq{id}"))
             .path(format!("{node_path}|S#{id}"))
             .energy_type(et)
-            .meter_type(MeterType::Counter)
+            .reading_kind(ReadingKind::Counter)
             .contained_in(inside.map(SensorId::make))
             .build()
     }
@@ -2300,21 +2310,34 @@ git commit --allow-empty -m "chore(hierarchy): deploy node-formula authoring (ph
 
 # Phase 2 — Pipeline
 
-Renames the `purpose` column to `energy_type` end-to-end and teaches the roll-up job to consume the matrix. **Tasks 9–11 must land together** — there is no fallback in the contract.
+Corrects the vocabulary end-to-end (`purpose` → `energy_type`, `meter_type` → `reading_kind`, `meter-identity` → `sensor-identity`, `logical_meter_data` → `logical_data`) and teaches the roll-up job to consume the matrix. **Tasks 9–11 must land together** — there is no fallback in the contract, and Task 9 leaves `sensor-identity` empty until it is repopulated.
 
 ---
 
-### Task 9: Bridge rename + cross-account reader role
+### Task 9: `sensor-identity` table, bridge rename, cross-account reader role
 
 **Files:**
-- Modify: `infra/hierarchy/app.go:285-360` (inlined Python bridge `_item` builder), plus a new `HierarchyReaderRole`
+- Modify: `infra/daq/data_pipeline/data_pipeline_stack.go:45` (the table definition and the Flink event-source mapping)
+- Modify: `infra/hierarchy/app.go` (lines 21-26 table constants, 189-270 the bridge construct + DLQ + alarm, 285-360 the inlined Python `_item` builder), plus a new `HierarchyReaderRole`
+- Modify: `infra/daq/data_pipeline/ocaml_bridge_stack.go`, `infra/daq/data_pipeline/scripts/backup_restore_ddb.py`, `infra/daq/data_pipeline/lambda/late_arrival_trigger/handler.py`
 
 **Interfaces:**
-- Produces: `meter-identity` items with `energy_type` instead of `purpose` and **no** `formula`; an IAM role `arn:aws:iam::339712745226:role/HierarchyReaderRole` consumed by Task 11.
+- Produces: a new **`sensor-identity`** table (replacing `meter-identity`) whose items carry `energy_type` and `reading_kind` (instead of `purpose` and `meter_type`) and **no** `formula`; an IAM role `arn:aws:iam::339712745226:role/HierarchyReaderRole` consumed by Task 11.
+
+**Why this is a replacement, not a rename:** DynamoDB tables cannot be renamed. The new table gets a new stream ARN, so Flink's event-source mapping is repointed and the app re-bootstraps from the new table. The data migration is trivial — the bridge populates the table from `hierarchy_new` stream events, so re-saving each sensor repopulates it (dev currently holds 7 rows). Doing it now is far cheaper than doing it once real rows exist.
+
+- [ ] **Step 0: Create `sensor-identity` and repoint Flink**
+
+In `infra/daq/data_pipeline/data_pipeline_stack.go:45`, change `TableName` from `meter-identity` to `sensor-identity`. Keep the key schema and stream settings identical. In the same stack, confirm the Flink `DdbBootstrapLoader` table name and the stream event-source mapping both follow the new table.
+
+Rename the bridge's own resources in `infra/hierarchy/app.go` so nothing keeps the old noun: `emsMeterIdentityTable` → `emsSensorIdentityTable`, function `ocaml-meter-identity-bridge` → `ocaml-sensor-identity-bridge`, queue `…-dlq`, and the `…-dlq-not-empty` alarm. Update `ocaml_bridge_stack.go`, `scripts/backup_restore_ddb.py` (`TABLE_NAME`, `BACKUP_FILE`) and `lambda/late_arrival_trigger/handler.py` (`METER_IDENTITY_TABLE` → `SENSOR_IDENTITY_TABLE`, and the `--meter_identity_table` Glue argument).
+
+Run: `cd infra/daq/data_pipeline && unset GOROOT && npx cdk diff DaqPipelineStack -c TableBucketName=measurements`
+Expected: the DynamoDB table is **replaced** (create new + delete old) and the Flink ESM is replaced. This is the one deliberate table replacement in the plan — confirm it is `meter-identity` only, and that `hierarchy_new` and `measurements_aggregate` are untouched.
 
 - [ ] **Step 1: Edit the bridge item builder**
 
-In the inlined Python in `infra/hierarchy/app.go`, emit `"energy_type": {"S": img["energy_type"]["S"]}` instead of `"purpose"`, and **delete** the two lines copying `formula`:
+In the inlined Python in `infra/hierarchy/app.go`, emit `"energy_type"` instead of `"purpose"` and `"reading_kind"` instead of `"meter_type"`, point the writer at the new `sensor-identity` table (Step 2a), and **delete** the two lines copying `formula`:
 
 ```python
         if "formula" in img:
@@ -2360,22 +2383,22 @@ cdk diff OcamlHierarchyStack
 
 Expected: a new IAM role plus the bridge Lambda's inline code `[~]`. **Stop and report** if the DynamoDB table shows any change. Then `cdk deploy OcamlHierarchyStack --require-approval never`.
 
-- [ ] **Step 4: Verify the bridge writes the new shape**
+- [ ] **Step 4: Repopulate `sensor-identity` and verify the new shape**
 
-Re-save a sensor through the UI, then:
+The new table starts empty. Re-save every sensor through the UI (or re-run `replace_sensor_device` with the same daq id) so the `hierarchy_new` stream fires and the bridge writes each row, then:
 
 ```bash
-aws dynamodb scan --profile daq_dev --table-name meter-identity --limit 3 \
-  --query 'Items[].{daq:sk.S,et:energy_type.S,purpose:purpose.S,formula:formula.S}'
+aws dynamodb scan --profile daq_dev --table-name sensor-identity \
+  --query 'Items[].{daq:sk.S,et:energy_type.S,rk:reading_kind.S,purpose:purpose.S,formula:formula.S}'
 ```
 
-Expected: `energy_type` populated; `purpose` and `formula` absent on freshly written rows.
+Expected: one row per active sensor, `energy_type` and `reading_kind` populated, `purpose` / `meter_type` / `formula` absent. Cross-check the count against `hierarchy_new`'s active sensors — a short count means a sensor was missed, and Flink will silently drop its readings.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add infra/hierarchy/app.go
-git commit -m "feat(bridge): purpose -> energy_type, drop formula; add HierarchyReaderRole"
+git commit -m "feat(bridge)!: sensor-identity table; energy_type/reading_kind; drop formula; add HierarchyReaderRole"
 ```
 
 ---
@@ -2383,20 +2406,21 @@ git commit -m "feat(bridge): purpose -> energy_type, drop formula; add Hierarchy
 ### Task 10: Flink + Iceberg column rename
 
 **Files:**
-- Modify: `.../enrichment/MeterMapping.scala:25,72`, `DdbBootstrapLoader.scala:27,39`, `DdbStreamDeserializer.scala:35,45`, `MeterEnrichmentFunction.scala:109`, `flink/Main.scala:304,336,345`
+- Rename: `.../enrichment/MeterMapping.scala` → `SensorMapping.scala`
+- Modify: `DdbBootstrapLoader.scala:27,39`, `DdbStreamDeserializer.scala:32,35,41,45`, `MeterEnrichmentFunction.scala:109`, `flink/Main.scala:304,336,345`
 - Modify: `infra/daq/data_pipeline/s3tables_stack.go:73`
 - Modify: the four Scala spec files under `src/test/scala/` referencing `purpose`
 
 - [ ] **Step 1: Rename in Scala and its tests**
 
-Rename `purpose` → `energyType` in `MeterMapping`, both deserialisers, the enrichment function, and `Main.scala`'s table schema and column list (the Iceberg column is `energy_type`). Update the four spec files.
+Rename the class `MeterMapping` → `SensorMapping`, its `purpose` → `energyType` and `meterType` → `readingKind`, and follow through in both deserialisers, the enrichment function, and `Main.scala`'s table schema and column list (the Iceberg columns are `energy_type` and `reading_kind`). Point the sink at **`all.logical_data`**. Update the four spec files.
 
 Run: `cd infra/daq/data_pipeline/flink_app_scala && sbt test 2>&1 | tail -20`
 Expected: all specs PASS.
 
 - [ ] **Step 2: Rename the Iceberg column**
 
-In `infra/daq/data_pipeline/s3tables_stack.go:73`, change `field("purpose", "string", false)` to `field("energy_type", "string", false)` — in **both** the `raw_data` and `logical_meter_data` definitions.
+In `infra/daq/data_pipeline/s3tables_stack.go:73`, change `field("purpose", "string", false)` to `field("energy_type", "string", false)` in **both** table definitions, rename `meter_type` → `reading_kind`, and rename the table `logical_data` → **`logical_data`**. The table rename is free here: the column change already forces the delete/recreate below.
 
 - [ ] **Step 3: Two-step delete/recreate (destructive — confirm first)**
 
@@ -2451,7 +2475,7 @@ Expected: rows grouped by populated `energy_type` values.
 
 ```bash
 git add infra/daq/data_pipeline/
-git commit -m "feat(pipeline)!: rename purpose -> energy_type in Flink and the Iceberg tables"
+git commit -m "feat(pipeline)!: sensor vocabulary in Flink and Iceberg (energy_type, reading_kind, logical_data)"
 ```
 
 ---
