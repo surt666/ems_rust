@@ -803,6 +803,10 @@ fn rows_to_chart(rows: &[Row], kind: ChartKind) -> String {
 ///
 /// Mirrors `frontend/src/components/Chart.astro`; a change to the contract
 /// should touch exactly these two.
+///
+/// No height: the block fills whatever box the caller put it in, which the
+/// `[data-chart]` rule in global.css turns into a real height. Sizing it here
+/// instead would mean guessing the card's height from inside the lambda.
 fn chart_block(config: &serde_json::Value) -> String {
     format!(
         "<div data-chart><div data-chart-canvas style=\"width:100%;height:100%\"></div>\

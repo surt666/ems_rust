@@ -39,7 +39,9 @@ export function drawChart(el, { categories = [], series = [], unit = "kWh", stac
   chart.setOption({
     backgroundColor: "transparent",
     textStyle: { color: TEXT, fontSize: 11 },
-    grid: { left: 56, right: 18, top: 28, bottom: zoom ? 64 : 36 },
+    // Margins are what is left for axis labels, legend and the zoom slider — every
+    // pixel here comes out of the plot, so they are kept tight.
+    grid: { left: 48, right: 12, top: 24, bottom: zoom ? 46 : 26 },
     tooltip: { trigger: "axis", backgroundColor: "#ffffff", borderColor: GRID, textStyle: { color: TEXT } },
     legend: { data: series.map((s) => s.name), textStyle: { color: MUTED }, top: 0, right: 0 },
     xAxis: {
@@ -59,7 +61,7 @@ export function drawChart(el, { categories = [], series = [], unit = "kWh", stac
     dataZoom: zoom
       ? [
           { type: "inside", throttle: 50 },
-          { type: "slider", height: 18, bottom: 16, borderColor: GRID, textStyle: { color: MUTED } },
+          { type: "slider", height: 14, bottom: 6, borderColor: GRID, textStyle: { color: MUTED } },
         ]
       : [],
     series: series.map((s, i) => ({

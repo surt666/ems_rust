@@ -3121,10 +3121,20 @@ dialog::backdrop {
 .pw-toggle:hover { color: var(--text-primary, #111827); }
 .pw-toggle:focus-visible { outline: 2px solid var(--brand, #f5841f); outline-offset: 1px; }
 
-/* Per-carrier consumption chart on the Forbrugsoverblik cards. 180px because it
-   carries a dataZoom slider (drag-select inside, plus a handle) — the same height
-   and interaction it had before the rendering moved server-side. */
-.rc-chart { height: 180px; }
+/* A chart block fills the box it is given.
+
+   Without this it does the opposite: `[data-chart-canvas]` asks for `height:100%`
+   of a wrapper that has no height of its own, which resolves to auto, and ECharts
+   falls back to its 100px default — a 100px plot sitting in a 280px card, which is
+   what "more whitespace than data" looked like. `min-block-size` covers the case
+   where the container is content-sized and there is no height to inherit. */
+[data-chart] { block-size: 100%; min-block-size: 160px; }
+
+/* Per-carrier consumption chart on the Forbrugsoverblik cards. The card is a grid
+   whose last row takes the slack, so the chart grows to whatever the tallest card
+   in the row makes available instead of stopping at a fixed height. */
+.rc-card { grid-template-rows: auto auto 1fr; }
+.rc-chart { min-block-size: 180px; }
 
 /* ── Formula editor ───────────────────────────────────────────────────────────
    Grid throughout (project convention: no flex). The action row exists because

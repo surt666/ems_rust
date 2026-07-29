@@ -7,6 +7,9 @@
 //
 // `event` names a window CustomEvent whose detail is merged over the config, which
 // is how page controls update a chart without page-level JS.
+// `height` sizes the block itself; the canvas always fills it. Pass nothing and the
+// block fills its container instead (see `[data-chart]` in global.css) — that is how
+// the lambda-rendered blocks in `chart_block` work, and the two must stay identical.
 const {
   categories = [],
   series = [],
@@ -18,7 +21,7 @@ const {
 } = Astro.props;
 const config = JSON.stringify({ categories, series, unit, stacked, zoom });
 ---
-<div data-chart data-chart-event={event}>
-  <div data-chart-canvas style={`width:100%;height:${height}px`}></div>
+<div data-chart data-chart-event={event} style={height ? `height:${height}px` : undefined}>
+  <div data-chart-canvas style="width:100%;height:100%"></div>
   <script type="application/json" set:html={config}></script>
 </div>
