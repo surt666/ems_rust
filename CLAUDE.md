@@ -209,6 +209,25 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
   `logical_data` reported `DELETE_SKIPPED` and left the old table in the bucket; likewise
   `meter-identity` → `sensor-identity` in DynamoDB. Clean the orphan up by hand once verified,
   or it lingers with its storage and (for DynamoDB) its PITR bill.
+- **Recreating a table under an unchanged name is one deploy, not two** (2026-07-29). With
+  `RETAIN` the old table has to go first, and CFN will not do it: delete it by hand
+  (`aws s3tables delete-table --namespace all --name <t> --table-bucket-arn <arn>`), then
+  `cdk deploy S3TablesStack` — the create-before-delete now finds the name free, and the
+  (already gone) old table is `DELETE_SKIPPED`.
+- **Recreating a table drops its Lake Formation grants**, and a principal without them does
+  not get "access denied" — it gets `TABLE_OR_VIEW_NOT_FOUND`, which reads like a typo. The
+  `CfnPermissions` resources in the stack are unchanged by the recreation, so a re-deploy will
+  not re-grant. Re-grant by hand: `aws lakeformation grant-permissions --principal
+  DataLakePrincipalIdentifier=arn:aws:iam::891377204778:role/MeasurementsAggregateGlueRole
+  --resource '{"Table":{"CatalogId":"891377204778:s3tablescatalog/measurements",
+  "DatabaseName":"all","Name":"logical_data"}}' --permissions SELECT DESCRIBE`.
+- **Changing a case class held in Flink keyed state forces a fresh start.** The resample
+  buffer holds `EnrichedRecord`; case classes go through Kryo, which is not schema-tolerant,
+  so adding a field makes the snapshot unrestorable even though the operator `uid`s are
+  unchanged. `SKIP_RESTORE_FROM_SNAPSHOT` then replays the Kinesis retention and writes every
+  reading to `raw_data` a second time — `late_recomputation.dedupe_raw` absorbs that, but be
+  aware the same replay puts the **sensor-identity DDB change stream** back at `TRIM_HORIZON`,
+  where records written before an attribute rename still carry the old name.
 - **Renaming a DynamoDB table breaks cross-stack exports.** `DaqPipelineStack` exports the table
   ARN/name/stream to `LateRecomputationStack` and `OcamlBridgeWriterRoleStack`; CloudFormation
   refuses to delete an export in use, and the consumers cannot move first because the new export
