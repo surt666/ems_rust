@@ -6,7 +6,17 @@ import org.apache.flink.api.common.serialization.DeserializationSchema
 import org.apache.flink.api.common.typeinfo.TypeInformation
 import org.slf4j.LoggerFactory
 
-/** Deserializes DynamoDB Streams JSON records (via Kinesis adapter) into IdMappingChange. */
+import scala.util.control.NonFatal
+
+/** Deserializes DynamoDB Streams JSON records (via Kinesis adapter) into IdMappingChange.
+  *
+  * A record this cannot map becomes `IdMappingChange("MALFORMED", ...)`, which
+  * `MeterEnrichmentFunction.processBroadcastElement` ignores. Throwing instead would be a
+  * poison pill: the source cannot advance past the offset, so one unreadable record halts
+  * the whole pipeline until its 24h stream retention expires. That is not hypothetical —
+  * a restart at TRIM_HORIZON replays records written before an attribute rename, whose
+  * images still carry the old name. Broadcast state is seeded by DdbBootstrapLoader from
+  * the live table, so skipping a stale stream record loses nothing. */
 class DdbStreamDeserializer extends DeserializationSchema[IdMappingChange]:
   @transient private lazy val logger = LoggerFactory.getLogger(getClass)
   @transient private lazy val mapper =
@@ -15,6 +25,14 @@ class DdbStreamDeserializer extends DeserializationSchema[IdMappingChange]:
     m
 
   override def deserialize(message: Array[Byte]): IdMappingChange =
+    try parse(message)
+    catch
+      case NonFatal(e) =>
+        logger.warn(s"Skipping unreadable DDB Streams record (${e.getClass.getSimpleName}: " +
+          s"${e.getMessage}): ${new String(message, "UTF-8").take(500)}")
+        IdMappingChange("MALFORMED", "", None)
+
+  private def parse(message: Array[Byte]): IdMappingChange =
     val record = mapper.readValue(message, classOf[Map[String, Any]])
     val eventName = record("eventName").toString
     val dynamodb = record("dynamodb").asInstanceOf[Map[String, Any]]

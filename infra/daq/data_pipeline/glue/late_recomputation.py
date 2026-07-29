@@ -250,6 +250,19 @@ enumerate_bins_udf = F.udf(enumerate_bins, ArrayType(LongType()))
 enumerate_overlapping_bins_udf = F.udf(enumerate_overlapping_bins, ArrayType(LongType()))
 
 
+def dedupe_raw(raw_df: DataFrame) -> DataFrame:
+    """Keep the newest-ingested row per (daq_id, timestamp).
+
+    raw_data is append-only, so the same reading can appear more than once — a Flink restart
+    that replays the Kinesis retention writes every reading a second time. Both resampling
+    paths LAG over a sensor's readings ordered by time, and a duplicated timestamp makes a
+    reading its own predecessor: a spurious zero delta. The Athena read path already dedups
+    this way (`max_by(value, ingested_time)`); this makes the batch path agree."""
+    newest = Window.partitionBy("daq_id", "timestamp").orderBy(F.col("ingested_time").desc())
+    return raw_df.withColumn("_rn", F.row_number().over(newest)) \
+        .filter(F.col("_rn") == 1).drop("_rn")
+
+
 def compute_counter_bins(joined_df: DataFrame) -> DataFrame:
     """For counter readings: compute delta, then for resampled meters fan out time-proportionally
     across overlapping bins in (prev_ts, current_ts]. Unbinned meters get one row per reading
@@ -446,6 +459,8 @@ def main():
         raw_df = raw_df.filter(F.col("timestamp") >= F.lit(time_start).cast(TimestampType()))
     if time_end:
         raw_df = raw_df.filter(F.col("timestamp") <= F.lit(time_end).cast(TimestampType()))
+
+    raw_df = dedupe_raw(raw_df)
 
     record_count = raw_df.count()
     logger.info("Read %d raw records from raw_data", record_count)

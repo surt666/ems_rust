@@ -85,3 +85,24 @@ def test_passthrough_row_carries_its_own_reading(spark):
     ])).collect()
     assert _same_instant(out[0]["timestamp"], _ts(8, 7))
     assert out[0]["value"] == 4000.0
+
+
+def test_dedupe_raw_keeps_the_newest_ingest_of_a_reading(spark):
+    """A Flink restart replays the Kinesis retention, so raw_data holds each of those
+    readings twice. Without this the LAG makes a reading its own predecessor (delta 0)."""
+    schema = T.StructType([
+        T.StructField("daq_id", T.StringType()),
+        T.StructField("timestamp", T.TimestampType()),
+        T.StructField("value", T.DoubleType()),
+        T.StructField("ingested_time", T.TimestampType()),
+    ])
+    rows = [
+        ("daq-1", _ts(8), 100.0, _ts(9)),
+        ("daq-1", _ts(8), 100.0, _ts(11)),   # replay of the same reading
+        ("daq-1", _ts(9), 110.0, _ts(11)),
+        ("daq-2", _ts(8), 7.0, _ts(9)),      # different sensor, same instant
+    ]
+    out = lr.dedupe_raw(spark.createDataFrame(rows, schema)).collect()
+    assert len(out) == 3
+    kept = [r for r in out if r["daq_id"] == "daq-1" and _same_instant(r["timestamp"], _ts(8))]
+    assert len(kept) == 1 and _same_instant(kept[0]["ingested_time"], _ts(11))

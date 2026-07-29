@@ -95,4 +95,25 @@ class DdbStreamDeserializerSpec extends AnyFlatSpec with Matchers {
     result.mapping.get.resampleMinutes shouldBe null
     result.mapping.get.energyType shouldBe ""
   }
+
+  it should "skip a record it cannot map instead of failing the job" in {
+    // A record written before the meter_type -> reading_kind rename. A restart at
+    // TRIM_HORIZON replays these, and throwing here would stall the source on the offset.
+    val legacy = s"""{
+      "pk": {"S": "04821"},
+      "sk": {"S": "daq:std_json_v1:cust:meter1:temp"},
+      "logical_id": {"N": "101"},
+      "meter_type": {"S": "gauge"},
+      "hierarchy_path": {"S": "HN0#root|HN1#1|HN2#2"}
+    }"""
+    val result = deserializer.deserialize(makeJson("MODIFY", legacy))
+
+    result.eventType shouldBe "MALFORMED"
+    result.mapping shouldBe empty
+  }
+
+  it should "skip a record that is not JSON at all" in {
+    val result = deserializer.deserialize("not json".getBytes(StandardCharsets.UTF_8))
+    result.eventType shouldBe "MALFORMED"
+  }
 }
