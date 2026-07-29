@@ -1,52 +1,24 @@
 ---
-// End-use breakdown (formålsopdeling) for the selected node.
+// Formålsopdeling — the end-use breakdown for one energy type: one stacked
+// column per bucket, split by purpose.
 //
-// HTML-over-the-wire: the aggregations lambda renders the <tr> fragment
-// (get_purpose_split?format=html) and this only declares the request — same shape
-// as the Data panel in pages/node.astro. The node id is client-side state, so the
-// query is built by hx-vals rather than at render time; that one expression is the
-// only scripting here.
-//
-// `unallocated` is the remainder (total − Σ declared purposes), already computed by
-// crates/model. With no formulas declared it equals `total`, which is correct:
-// nothing is allocated until a formula says so.
+// Stacked because the parts sum to the node's total by construction (crates/model
+// materialises `unallocated` as the remainder), so the column height is meaningful
+// and the split reads as a share of it. `total` itself is excluded server-side.
 import AggWidget from "./AggWidget.astro";
-const { energyType = "electricity", days = 30 } = Astro.props;
+const { energyType = "electricity", days = 30, height = 240 } = Astro.props;
 ---
 
-<section class="purpose-split card">
+<section class="card">
   <div class="section-header">
     <h2 class="section-title" style="margin-bottom:0">Formålsopdeling</h2>
     <span class="muted" style="margin-left:auto">{energyType} · seneste {days} dage</span>
   </div>
-  <div class="ps-scroll">
-    <table>
-      <thead>
-        <tr>
-          <th>Energiart</th><th>Formål</th><th>Tid</th>
-          <th class="num">Værdi</th><th>Enhed</th><th class="num">Punkter</th>
-        </tr>
-      </thead>
-      <AggWidget action="get_purpose_split" energy_type={energyType} days={days} as="tbody">
-        <tr><td colspan="6" class="muted">Henter…</td></tr>
-      </AggWidget>
-    </table>
-  </div>
+  <AggWidget
+    action="get_purpose_split"
+    view="chart"
+    energy_type={energyType}
+    days={days}
+    height={height}
+  />
 </section>
-
-<style>
-  /* Grid, not flex — project convention. */
-  .purpose-split { display: grid; gap: 8px; }
-  .ps-scroll { overflow-x: auto; }
-  .purpose-split table { width: 100%; border-collapse: collapse; }
-  .purpose-split th,
-  .purpose-split :global(td) {
-    padding: 4px 8px;
-    border-bottom: 1px solid var(--border, #e5e7eb);
-    font-size: var(--text-sm);
-  }
-  .purpose-split th { text-align: left; font-weight: 500; color: var(--text-muted); }
-  .purpose-split th.num { text-align: right; }
-  .purpose-split :global(.mono) { font-variant-numeric: tabular-nums; }
-  .purpose-split :global(.muted) { color: var(--text-muted); }
-</style>

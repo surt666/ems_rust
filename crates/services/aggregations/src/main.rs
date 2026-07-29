@@ -626,8 +626,7 @@ fn rows_to_cards(rows: &[Row]) -> String {
             "series": [{
                 "name": energy_label(t),
                 "key": t,
-                "type": "line",
-                "areaStyle": true,
+                "type": "bar",
                 "data": rs.iter().map(|r| r.value).collect::<Vec<_>>(),
             }],
             "unit": unit,
@@ -655,14 +654,59 @@ fn rows_to_cards(rows: &[Row]) -> String {
     out
 }
 
-/// How to fold rows into series.
+/// How to fold rows into series, and how to draw them.
+///
+/// The series type is per-widget and matches what each one looked like before the
+/// rendering moved server-side: only the consumption trend was ever a line;
+/// cost, emissions and the per-carrier sparklines were columns.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ChartKind {
-    /// One series per energy type — the consumption / emissions view.
+    /// One line per energy type — the consumption trend.
     PerEnergyType,
-    /// Everything summed per bucket into a single series — the cost view, where
+    /// One column per energy type — emissions.
+    PerEnergyTypeBars,
+    /// Everything summed per bucket into a single column series — cost, where
     /// separate carriers would be meaningless once priced in the same currency.
     Total,
+    /// One stacked column per bucket, split by purpose — the end-use breakdown.
+    /// Stacked because the parts sum to the node's total by construction, so the
+    /// column height is meaningful in its own right.
+    PerPurposeStacked,
+}
+
+impl ChartKind {
+    /// ECharts series type.
+    fn series_type(self) -> &'static str {
+        match self {
+            ChartKind::PerEnergyType => "line",
+            _ => "bar",
+        }
+    }
+
+    /// Stacked series share a bucket's column.
+    fn stacked(self) -> bool {
+        self == ChartKind::PerPurposeStacked
+    }
+
+}
+
+/// Danish labels for the purposes (formål).
+fn purpose_label(p: &str) -> &str {
+    match p {
+        "total" => "I alt",
+        "unallocated" => "Ikke fordelt",
+        "space_heating" => "Rumvarme",
+        "dhw" => "Varmt brugsvand",
+        "ventilation" => "Ventilation",
+        "cooling" => "Køling",
+        "lighting" => "Belysning",
+        "plug_loads" => "Apparater",
+        "ev_charging" => "Elbilopladning",
+        "process" => "Proces",
+        "common" => "Fælles",
+        "generation" => "Produktion",
+        other => other,
+    }
 }
 
 /// Danish labels for the energy types.
@@ -707,8 +751,9 @@ fn rows_to_chart(rows: &[Row], kind: ChartKind) -> String {
     let mut series: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
     for r in rows {
         let key = match kind {
-            ChartKind::PerEnergyType => r.energy_type.as_str(),
             ChartKind::Total => "total",
+            ChartKind::PerPurposeStacked => r.purpose.as_str(),
+            _ => r.energy_type.as_str(),
         };
         let slot = series.entry(key).or_insert_with(|| vec![0.0; buckets.len()]);
         if let Some(i) = index.get(r.timestamp.as_str()) {
@@ -725,15 +770,16 @@ fn rows_to_chart(rows: &[Row], kind: ChartKind) -> String {
         .iter()
         .map(|(key, data)| {
             let (name, key) = match kind {
-                ChartKind::PerEnergyType => (energy_label(key), Some(*key)),
                 ChartKind::Total => ("Total", None),
+                // Purposes carry no carrier colour; the palette cycles instead.
+                ChartKind::PerPurposeStacked => (purpose_label(key), None),
+                _ => (energy_label(key), Some(*key)),
             };
             serde_json::json!({
                 "name": name,
                 // The browser maps key -> colour; see energy_label's note.
                 "key": key,
-                "type": "line",
-                "areaStyle": kind == ChartKind::Total,
+                "type": kind.series_type(),
                 "data": data,
             })
         })
@@ -743,6 +789,7 @@ fn rows_to_chart(rows: &[Row], kind: ChartKind) -> String {
         "categories": categories,
         "series": series,
         "unit": unit,
+        "stacked": kind.stacked(),
         "zoom": false,
     }))
 }
@@ -1000,7 +1047,18 @@ async fn handle_purpose_split(
     .map_err(|e| ApiError::internal(e.to_string()))?;
 
     let items: Vec<AggItem> = per_purpose.into_iter().flatten().collect();
-    Ok(rows_response(&to_rows(items, &level_id, &resolution, gran), format, Render::Table))
+    let rows = to_rows(items, &level_id, &resolution, gran);
+    let render = Render::resolve(qs.get("view").map(String::as_str));
+    if format == Format::Html && render == Render::Chart {
+        // `total` is dropped from the chart: it is the sum of the other series by
+        // construction, so stacking it alongside them would double the column.
+        let parts: Vec<Row> = rows.into_iter().filter(|r| r.purpose != "total").collect();
+        return Ok(ApiResponse::html(
+            200,
+            rows_to_chart(&parts, ChartKind::PerPurposeStacked),
+        ));
+    }
+    Ok(rows_response(&rows, format, render))
 }
 
 /// `GET /meterdata/query/get_cost` — consumption × per-resource tariff, one row
@@ -1067,7 +1125,12 @@ async fn handle_emissions(
     let format = Format::resolve(qs.get("format").map(String::as_str), Format::Json);
     let (level_id, resolution, start, end) = window_params(qs)?;
     let rows = fetch_node_rows(client, table, &level_id, &resolution, &start, &end).await?;
-    Ok(rows_response(&scale_rows(rows, "kg CO₂e", emission_kg_per_unit), format, Render::resolve(qs.get("view").map(String::as_str))))
+    let scaled = scale_rows(rows, "kg CO₂e", emission_kg_per_unit);
+    let render = Render::resolve(qs.get("view").map(String::as_str));
+    if format == Format::Html && render == Render::Chart {
+        return Ok(ApiResponse::html(200, rows_to_chart(&scaled, ChartKind::PerEnergyTypeBars)));
+    }
+    Ok(rows_response(&scaled, format, render))
 }
 
 /// One building's cost + CO₂e over the window, with its deviation from the
@@ -1822,6 +1885,8 @@ mod tests {
         // Colour is the browser's job; the fragment names the carrier instead.
         assert!(html.contains(r#""key":"electricity""#), "carrier key missing: {html}");
         assert!(!html.contains("color"), "colour must not be sent: {html}");
+        // The consumption trend is the only line; everything else is columns.
+        assert!(html.contains(r#""type":"line""#), "consumption should be a line: {html}");
     }
 
     #[test]
@@ -1833,7 +1898,53 @@ mod tests {
         let html = rows_to_chart(&rows, ChartKind::Total);
         assert!(html.contains(r#""name":"Total""#));
         assert!(html.contains("[15.0]"), "carriers not summed: {html}");
-        assert_eq!(html.matches(r#""type":"line""#).count(), 1, "should be one series");
+        assert_eq!(html.matches(r#""type":"bar""#).count(), 1, "cost is one column series");
+    }
+
+
+    #[test]
+    fn each_widget_keeps_the_series_type_it_had_before_going_server_side() {
+        // Only the consumption trend was ever a line. Rendering everything as a
+        // line silently restyled cost, emissions and the sparklines.
+        assert_eq!(ChartKind::PerEnergyType.series_type(), "line");
+        assert_eq!(ChartKind::PerEnergyTypeBars.series_type(), "bar");
+        assert_eq!(ChartKind::Total.series_type(), "bar");
+    }
+
+    #[test]
+    fn emissions_and_sparklines_are_columns() {
+        let rows = vec![
+            row("electricity", "kg CO₂e", 10.0, "2026-07-01T00:00:00Z"),
+            row("water", "kg CO₂e", 3.0, "2026-07-01T00:00:00Z"),
+        ];
+        let html = rows_to_chart(&rows, ChartKind::PerEnergyTypeBars);
+        assert_eq!(html.matches(r#""type":"bar""#).count(), 2, "one column series per carrier");
+        assert!(!html.contains(r#""type":"line""#));
+
+        let cards = rows_to_cards(&rows);
+        assert!(cards.contains(r#""type":"bar""#), "sparklines are columns: {cards}");
+    }
+
+
+    #[test]
+    fn purpose_split_chart_stacks_the_parts_and_drops_total() {
+        // total is the sum of the parts, so stacking it too would double the column.
+        let r = |purpose: &str, v: f64| Row {
+            level_id: "HN2#1".into(),
+            energy_type: "electricity".into(),
+            purpose: purpose.into(),
+            unit: "kWh".into(),
+            resolution: "daily".into(),
+            timestamp: "2026-07-01T00:00:00Z".into(),
+            value: v,
+            contributor_count: 1,
+        };
+        let parts: Vec<Row> = vec![r("lighting", 4.0), r("plug_loads", 6.0)];
+        let html = rows_to_chart(&parts, ChartKind::PerPurposeStacked);
+        assert!(html.contains(r#""stacked":true"#), "not stacked: {html}");
+        assert_eq!(html.matches(r#""type":"bar""#).count(), 2, "one column series per purpose");
+        assert!(html.contains("Belysning") && html.contains("Apparater"), "danish labels: {html}");
+        assert!(!html.contains("I alt"), "total must not be a stacked series: {html}");
     }
 
     #[test]
