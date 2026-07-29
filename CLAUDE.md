@@ -2,10 +2,15 @@
 
 Project-level guidance for working in `ems_ocaml`. Read before building/deploying.
 
-## Branching & pushing
+## Branching, Feature switches & pushing
 
 Work directly on `main`. Don't spin up feature/temporary branches by default — `main`
 is the single source of truth and production deploys from it.
+
+Do use feature switches where appropriate, i.e. when old code is disrupted. Since we mainly runs
+Lambdas an env var can be used to as feature switch, and in Flink and SPARK the same, though
+it will take a restart. Instead of huge if/else blocks, move code into functions, so only a
+function call is inside the switch.
 
 **Do not `git push`.** Commit to `main` locally, but leave pushing to the remote to the
 user — they decide when `main` is published. Never run `git push` (or delete/replace remote
