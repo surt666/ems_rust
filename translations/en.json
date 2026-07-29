@@ -186,7 +186,9 @@
     "no_sensors": "No sensors found",
     "sensors_loading": "Loading sensors…",
     "no_metadata": "No metadata available",
-    "metadata": "Metadata"
+    "metadata": "Metadata",
+    "schema": "Hierarchy schema",
+    "schema_title": "Design hierarchy schema"
   },
   "sensor": {
     "actions": "Actions",
@@ -198,7 +200,8 @@
       "datatilegnelse": "Go to data acquisition",
       "deactivate": "Deactivate sensor",
       "delete": "Delete sensor"
-    }
+    },
+    "resample": "Sampling interval"
   },
   "measurements": {
     "title": "Data acquisition",
@@ -218,5 +221,20 @@
     "loading": "Loading meter data from Athena…",
     "loading_more": "Loading more…",
     "use_redshift": "Redshift (VPC)"
+  },
+  "formula": {
+    "edit_title": "Edit formulas",
+    "add_term": "+ Term",
+    "create": "Create",
+    "delete": "Delete formula — use the default",
+    "help_default": "Without a formula a node's value is the sum of everything beneath it. A formula changes only what it names; everything else still counts.",
+    "help_terms": "A term is a meter or a child node multiplied by a number: 1 includes it, 0 excludes it, −1 subtracts it, 0.28 takes 28 %.",
+    "gloss_energy_type": "Energy type",
+    "gloss_energy_type_desc": "What the meter measures — electricity, district heating, water.",
+    "gloss_purpose": "Purpose",
+    "gloss_purpose_desc": "What the energy is spent on — space heating, lighting, ventilation.",
+    "gloss_total_desc": "The node's total consumption. Without a formula: the sum of everything beneath it.",
+    "gloss_unallocated": "Unallocated",
+    "gloss_unallocated_desc": "The remainder — total minus the purposes you declared. Computed automatically."
   }
 }

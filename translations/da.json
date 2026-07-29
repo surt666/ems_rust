@@ -186,7 +186,9 @@
     "no_sensors": "Ingen sensorer fundet",
     "sensors_loading": "Indlæser sensorer…",
     "no_metadata": "Ingen metadata",
-    "metadata": "Metadata"
+    "metadata": "Metadata",
+    "schema": "Hierarki-skema",
+    "schema_title": "Design hierarki-skema"
   },
   "sensor": {
     "actions": "Handlinger",
@@ -198,7 +200,8 @@
       "datatilegnelse": "Gå til datatilegnelse",
       "deactivate": "Deaktivér sensor",
       "delete": "Slet sensor"
-    }
+    },
+    "resample": "Måleinterval"
   },
   "measurements": {
     "title": "Datatilegnelse",
@@ -218,5 +221,20 @@
     "loading": "Henter måledata fra Athena…",
     "loading_more": "Indlæser flere…",
     "use_redshift": "Redshift (VPC)"
+  },
+  "formula": {
+    "edit_title": "Rediger formler",
+    "add_term": "+ Led",
+    "create": "Opret",
+    "delete": "Slet formel — brug standarden",
+    "help_default": "Uden en formel er nodens værdi summen af alt under den. En formel ændrer kun det, den nævner — alt andet tæller stadig med.",
+    "help_terms": "Et led er en måler eller en underliggende node ganget med et tal: 1 tæller den med, 0 udelader den, −1 trækker den fra, 0,28 tager 28 %.",
+    "gloss_energy_type": "Energitype",
+    "gloss_energy_type_desc": "Hvad måleren måler — el, fjernvarme, vand.",
+    "gloss_purpose": "Formål",
+    "gloss_purpose_desc": "Hvad energien bruges til — rumvarme, belysning, ventilation.",
+    "gloss_total_desc": "Nodens samlede forbrug. Uden formel: summen af alt under den.",
+    "gloss_unallocated": "Ikke fordelt",
+    "gloss_unallocated_desc": "Resten — I alt minus de formål du har angivet. Beregnes automatisk."
   }
 }

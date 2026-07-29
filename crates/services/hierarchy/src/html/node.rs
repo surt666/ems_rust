@@ -310,9 +310,19 @@ pub fn render_node(
 
 /// Keeps each card's hidden `terms` field in sync with its rows on submit, and
 /// adds a blank row on demand. Plain JS, same shape as the rest of this file.
+/// Cloning a term row is declarative, so hyperscript owns it.
+static ADD_TERM_HS: &str = "on click get the last .term-row in the closest .formula-form then make a clone of it called row then set the value of the .coef in row to 1 then put row at the end of the .term-rows in the closest .formula-form";
+
+/// The one thing hyperscript cannot express cleanly: collapsing a variable number
+/// of term rows into a single JSON field on submit. Adding a row is declarative
+/// (see `ADD_TERM_HS`); this remains script because dynamic field names
+/// (`terms[0].ref`, `terms[1].ref` …) would have to be renumbered client-side
+/// anyway, trading this for more of the same.
 static FORMULA_JS: &str = r#"
 (function () {
-  function collect(form) {
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (!form || !form.classList.contains('formula-form')) return;
     var terms = [];
     form.querySelectorAll('.term-row').forEach(function (row) {
       var ref = row.querySelector('.ref');
@@ -321,19 +331,7 @@ static FORMULA_JS: &str = r#"
       terms.push({ ref: ref.value, coefficient: parseFloat(coef.value) });
     });
     form.querySelector('input[name="data.terms"]').value = JSON.stringify(terms);
-  }
-  document.addEventListener('submit', function (e) {
-    if (e.target && e.target.classList.contains('formula-form')) collect(e.target);
   }, true);
-  document.addEventListener('click', function (e) {
-    if (!e.target || !e.target.classList.contains('add-term')) return;
-    var rows = e.target.closest('.formula-form').querySelector('.term-rows');
-    var tpl = rows.querySelector('.term-row');
-    if (!tpl) return;
-    var copy = tpl.cloneNode(true);
-    copy.querySelector('.coef').value = '1';
-    rows.appendChild(copy);
-  });
 })();
 "#;
 
@@ -407,16 +405,22 @@ fn formula_card(
                         }
                     }
                 }
-                button type="button" class="btn-secondary add-term" { "+ Term" }
-                button type="submit" class="btn-warning" { "Gem" }
+                div class="formula-actions" {
+                    button type="button" class="btn-secondary add-term"
+                        _=(ADD_TERM_HS)
+                        data-i18n="formula.add_term" { "+ Led" }
+                    button type="submit" class="btn-warning"
+                        data-i18n="common.save" { "Gem" }
+                }
             }
-            form hx-post="/hierarchy/command" hx-swap="none" {
+            form class="formula-delete" hx-post="/hierarchy/command" hx-swap="none" {
                 input type="hidden" name="action" value="delete_node_formula";
                 input type="hidden" name="data.node_id" value=(node_id);
                 input type="hidden" name="data.energy_type" value=(f.energy_type);
                 input type="hidden" name="data.purpose" value=(f.purpose);
-                button type="submit" class="btn-secondary" {
-                    "Slet \u{2014} brug standarden"
+                button type="submit" class="btn-danger"
+                    data-i18n="formula.delete" {
+                    "Slet formel \u{2014} brug standarden"
                 }
             }
         }
@@ -456,8 +460,13 @@ fn new_formula_card(node_id: &str, sensors: &[Sensor], children: &[Node]) -> Mar
                         input type="number" step="any" class="form-input coef" value="1";
                     }
                 }
-                button type="button" class="btn-secondary add-term" { "+ Term" }
-                button type="submit" class="btn-warning" { "Opret" }
+                div class="formula-actions" {
+                    button type="button" class="btn-secondary add-term"
+                        _=(ADD_TERM_HS)
+                        data-i18n="formula.add_term" { "+ Led" }
+                    button type="submit" class="btn-warning"
+                        data-i18n="formula.create" { "Opret" }
+                }
             }
         }
     }
@@ -477,9 +486,34 @@ pub fn render_node_formulas(
     let nid = node.id.to_string();
     html! {
         div class="formulas" {
-            p class="formula-default" {
-                "Uden en formel er en nodes værdi Σ af alt nedenunder. "
-                "En formel angiver kun det der afviger."
+            div class="formula-help" {
+                p data-i18n="formula.help_default" {
+                    "Uden en formel er nodens værdi summen af alt under den. "
+                    "En formel ændrer kun det, den nævner \u{2014} alt andet tæller stadig med."
+                }
+                p data-i18n="formula.help_terms" {
+                    "Et led er en måler eller en underliggende node ganget med et tal: "
+                    "1 tæller den med, 0 udelader den, \u{2212}1 trækker den fra, "
+                    "0,28 tager 28\u{a0}%."
+                }
+                dl class="formula-glossary" {
+                    dt data-i18n="formula.gloss_energy_type" { "Energitype" }
+                    dd data-i18n="formula.gloss_energy_type_desc" {
+                        "Hvad måleren måler \u{2014} el, fjernvarme, vand."
+                    }
+                    dt data-i18n="formula.gloss_purpose" { "Formål" }
+                    dd data-i18n="formula.gloss_purpose_desc" {
+                        "Hvad energien bruges til \u{2014} rumvarme, belysning, ventilation."
+                    }
+                    dt { "I alt" }
+                    dd data-i18n="formula.gloss_total_desc" {
+                        "Nodens samlede forbrug. Uden formel: summen af alt under den."
+                    }
+                    dt data-i18n="formula.gloss_unallocated" { "Ikke fordelt" }
+                    dd data-i18n="formula.gloss_unallocated_desc" {
+                        "Resten \u{2014} I alt minus de formål du har angivet. Beregnes automatisk."
+                    }
+                }
             }
             @for f in formulas {
                 (formula_card(&nid, f, company_sensors, child_nodes))
@@ -587,8 +621,19 @@ fn sensor_dialog(nid_str: &str) -> Markup {
                         input type="text" name="data.unit" class="form-input";
                     }
                     div class="form-row" {
-                        label class="form-label" { "Resample interval (min)" }
-                        input type="number" name="data.resample_minutes" min="1" step="1" class="form-input";
+                        label class="form-label" data-i18n="sensor.resample" {
+                            "Måleinterval"
+                        }
+                        // A fixed set rather than a free number: the pipeline
+                        // resamples onto these buckets, and an arbitrary interval
+                        // (7 min, 13 min) produces bins nothing downstream aligns
+                        // to. 15 is the default the meters are read at.
+                        select name="data.resample_minutes" required class="form-select" {
+                            @for m in [5_u32, 15, 30, 60] {
+                                option value=(m) selected[m == 15] { (m) " min" }
+                            }
+                        }
+                        span class="required" { "*" }
                     }
                 }
             }
@@ -935,6 +980,26 @@ mod tests {
         assert!(
             !html.contains("id=\"formula-list\""),
             "the editor is still embedded in the node page"
+        );
+    }
+
+
+    #[test]
+    fn resample_interval_is_a_fixed_choice_defaulting_to_15() {
+        // A free number field let a sensor be given 7 or 13 minutes, which the
+        // pipeline cannot bucket onto anything downstream aligns to.
+        let node = make_hn2_node();
+        let html = render_node(&node, true, true, Some(CognitoGroup::Admin), &[]).into_string();
+        assert!(
+            !html.contains(r#"type="number" name="data.resample_minutes""#),
+            "still a free number field"
+        );
+        for m in ["5", "15", "30", "60"] {
+            assert!(html.contains(&format!(r#"value="{m}""#)), "missing {m} min option");
+        }
+        assert!(
+            html.contains(r#"<option value="15" selected>"#),
+            "15 min should be preselected: {html}"
         );
     }
 

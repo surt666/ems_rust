@@ -3125,3 +3125,23 @@ dialog::backdrop {
    carries a dataZoom slider (drag-select inside, plus a handle) — the same height
    and interaction it had before the rendering moved server-side. */
 .rc-chart { height: 180px; }
+
+/* ── Formula editor ───────────────────────────────────────────────────────────
+   Grid throughout (project convention: no flex). The action row exists because
+   the buttons previously sat flush against each other. */
+.formula-card { display: grid; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border, #e5e7eb); }
+.formula-head { display: grid; grid-auto-flow: column; justify-content: start; gap: 8px; align-items: baseline; }
+.formula-et, .formula-purpose {
+  font-size: var(--text-xs); padding: 1px 6px; border-radius: 999px;
+  background: var(--surface-2, #f3f4f6); color: var(--text-muted);
+}
+.formula-note { font-size: var(--text-xs); color: var(--text-muted); }
+.formula-actions { display: grid; grid-auto-flow: column; justify-content: start; gap: 10px; margin-top: 4px; }
+.formula-delete { margin-top: 2px; }
+.term-rows { display: grid; gap: 6px; }
+.term-row { display: grid; grid-template-columns: 1fr 7rem; gap: 10px; align-items: center; }
+
+.formula-help { display: grid; gap: 8px; margin-bottom: 14px; color: var(--text-muted); font-size: var(--text-sm); }
+.formula-glossary { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 4px 0 0; }
+.formula-glossary dt { font-weight: 600; color: var(--text-primary, #111827); }
+.formula-glossary dd { margin: 0; }

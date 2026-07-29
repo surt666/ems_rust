@@ -255,11 +255,26 @@ import "../styles/enity-theme.css";
 	setupLogout();
 	applyTranslations();
 
+	// Re-arm hyperscript on new content.
+	//
+	// astro-hyperscript calls _hyperscript.browserInit(), which 0.9.93 removed —
+	// it throws, so nothing re-processes after a view transition and every `_=`
+	// handler in the swapped DOM is inert. That is why the formula dialog would
+	// not close, and why the add-sensor / add-child dialogs and the tree's
+	// selection stopped responding once you had navigated once.
+	//
+	// processNode is the current API and is idempotent: it marks what it wires
+	// with data-hyperscript-powered and skips it next time.
+	const armHyperscript = (root = document.body) => {
+		try { window._hyperscript?.processNode(root); } catch { /* never block a render */ }
+	};
+
 	// astro:page-load fires on the initial load too, so this covers both.
 	document.addEventListener('astro:page-load', () => {
 		setupLogout();
 		applyTranslations();
 		mountDeclaredCharts();
+		armHyperscript();
 	});
 
 	// Re-translate any HTMX-swapped fragment, and mount any chart it brought with
@@ -271,8 +286,12 @@ import "../styles/enity-theme.css";
 	// no chart ever mounted: the fragments arrived but mountDeclaredCharts was
 	// never called, so the dashboard showed its cards with empty canvases.
 	document.addEventListener('htmx:afterSwap', (e) => {
+		const target = e.detail?.target ?? document.body;
 		applyTranslations();
-		mountDeclaredCharts(e.detail?.target ?? document);
+		mountDeclaredCharts(target);
+		// Server-rendered fragments carry `_=` handlers too (sensor rows, formula
+		// cards); without this they arrive inert.
+		armHyperscript(target);
 	});
 
 	// View transitions don't auto-process HTMX: the swapped-in DOM is new nodes

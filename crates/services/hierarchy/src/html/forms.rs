@@ -170,7 +170,10 @@ pub fn render_add_child_form(
                 div class="form-row" {
                     label class="form-label" data-i18n="node.schema" { "Hierarki-skema" }
                     button type="button" class="btn-secondary"
-                        onclick="document.getElementById('schema-designer-dialog').showModal()"
+                        // Opens the designer in SCHEMA mode. The same dialog also
+                        // edits node formulas; going through this entry point keeps
+                        // the two from appearing together.
+                        onclick="window.emsOpenSchemaDesigner && window.emsOpenSchemaDesigner()"
                     {
                         "Design skema" span class="required" { "*" }
                     }
@@ -377,7 +380,10 @@ mod tests {
         );
         let html = markup.into_string();
         assert!(html.contains(r#"name="schema_json""#), "hidden schema_json field missing");
-        assert!(html.contains("schema-designer-dialog"), "designer open hook missing");
+        // Goes through emsOpenSchemaDesigner rather than showModal() directly: the
+        // dialog also edits node formulas, and that entry point is what keeps the
+        // hierarchy editor from appearing alongside them.
+        assert!(html.contains("emsOpenSchemaDesigner"), "designer open hook missing");
         assert!(html.contains("Design skema"), "design-schema button missing");
     }
 }

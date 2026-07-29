@@ -6,11 +6,11 @@
   _="on click if event.target == me then call me.close()">
   <div x-data="schemaDesigner" class="sd-root">
     <div class="dialog-header">
-      <h2>Design hierarchy schema</h2>
+      <h2 id="sd-title">Design hierarki-skema</h2>
       <button type="button" class="btn-close" _="on click call #schema-designer-dialog.close()">&times;</button>
     </div>
 
-    <div class="sd-grid">
+    <div class="sd-grid" id="sd-schema">
       <!-- Types -->
       <div class="sd-pane">
         <h4>Types</h4>
@@ -150,7 +150,11 @@
     const pane = document.getElementById("sd-formulas");
     if (!dialog || !pane) return;
 
-    pane.hidden = false;
+    // Formula mode shows ONLY formulas. The type graph decides what a hierarchy
+    // may look like and belongs to the company; a node's formulas are a different
+    // decision at a different level, and mixing them in one dialog invited editing
+    // the hierarchy while meaning to edit a formula.
+    setMode("formulas");
     document.getElementById("sd-formula-node").textContent = nodeId;
     dialog.showModal();
 
@@ -162,14 +166,32 @@
     });
   }
 
-  window.emsOpenFormulas = openFormulas;
+  /** One dialog, two jobs: "schema" (company type graph) or "formulas" (one node). */
+  function setMode(mode) {
+    const schema = document.getElementById("sd-schema");
+    const formulas = document.getElementById("sd-formulas");
+    const footer = document.querySelector("#schema-designer-dialog .dialog-footer");
+    const title = document.getElementById("sd-title");
+    if (schema) schema.hidden = mode !== "schema";
+    if (formulas) formulas.hidden = mode !== "formulas";
+    // The footer's Done/Clear act on the schema only.
+    if (footer) footer.hidden = mode !== "schema";
+    if (title) {
+      title.textContent = mode === "formulas" ? "Rediger formler" : "Design hierarki-skema";
+      title.setAttribute("data-i18n", mode === "formulas" ? "formula.edit_title" : "node.schema_title");
+    }
+  }
 
-  // Hide the formula pane again when the dialog is used for schema design, so a
-  // stale node's formulas never show under someone else's type graph.
-  document.getElementById("schema-designer-dialog")?.addEventListener("close", () => {
-    const pane = document.getElementById("sd-formulas");
-    if (pane) pane.hidden = true;
-  });
+  window.emsOpenFormulas = openFormulas;
+  // The add-child flow opens the dialog directly for schema design.
+  window.emsOpenSchemaDesigner = () => {
+    setMode("schema");
+    document.getElementById("schema-designer-dialog")?.showModal();
+  };
+
+  // Reset to schema mode on close so a stale node's formulas never appear under
+  // someone else's type graph.
+  document.getElementById("schema-designer-dialog")?.addEventListener("close", () => setMode("schema"));
 </script>
 
 <style>
