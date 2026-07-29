@@ -72,7 +72,22 @@
 </div>
 
 <script>
-	import { signIn } from 'aws-amplify/auth';
+	import { signIn, fetchAuthSession } from 'aws-amplify/auth';
+	import { configureAmplify } from '../lib/amplify-config';
+
+	// LoginLayout configures Amplify too, but these are two separate bundled
+	// modules and nothing orders them — asking for the session first would just
+	// get an empty one. configureAmplify is a no-op the second time.
+	configureAmplify();
+
+	// Landing on the login form while already signed in is the bug; the
+	// UserAlreadyAuthenticatedException signIn throws is only its symptom. Send
+	// an existing session straight on to the app.
+	const goToApp = () => { window.location.href = '/main'; };
+
+	fetchAuthSession()
+		.then((session) => { if (session?.tokens?.idToken) goToApp(); })
+		.catch(() => { /* no session — stay on the form */ });
 
 	// Show/hide the password. Toggles the input type and swaps the icon; the
 	// button stays outside the tab order of the form fields' natural flow only in
@@ -159,13 +174,19 @@
 				localStorage.setItem('loginId', username);
 				hideLoading();
 				window.dispatchEvent(new CustomEvent('user-authenticated'));
-				window.location.href = '/main';
+				goToApp();
 			} else {
 				console.log('Sign in not completed, result:', result);
 				hideLoading();
 				showError('Authentication incomplete');
 			}
 		} catch (error) {
+			// A session that outlived the page: nothing to sign in to, just go.
+			if (error?.name === 'UserAlreadyAuthenticatedException') {
+				localStorage.setItem('loginId', username);
+				goToApp();
+				return;
+			}
 			console.error('Authentication error:', error);
 			hideLoading();
 			showError(error.message || 'Authentication failed');
