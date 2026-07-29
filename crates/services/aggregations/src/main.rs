@@ -656,12 +656,15 @@ fn rows_to_cards(rows: &[Row]) -> String {
 
 /// How to fold rows into series, and how to draw them.
 ///
-/// The series type is per-widget and matches what each one looked like before the
-/// rendering moved server-side: only the consumption trend was ever a line;
-/// cost, emissions and the per-carrier sparklines were columns.
+/// Everything on this dashboard is columns — see
+/// `frontend/docs/ems-recreation/screenshots/live-dashboard-2026-07.png`, the EMS
+/// being recreated. Forbrugsoverblik stacks the carriers; the rest are plain
+/// columns. (The React components this replaced had the consumption trend as a
+/// line, which was itself a drift from the reference.)
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ChartKind {
-    /// One line per energy type — the consumption trend.
+    /// Stacked columns per energy type — Forbrugsoverblik, where the stack height
+    /// is the node's whole consumption and each band a carrier's share.
     PerEnergyType,
     /// One column per energy type — emissions.
     PerEnergyTypeBars,
@@ -676,16 +679,15 @@ enum ChartKind {
 
 impl ChartKind {
     /// ECharts series type.
+    /// Every widget on this dashboard draws columns.
     fn series_type(self) -> &'static str {
-        match self {
-            ChartKind::PerEnergyType => "line",
-            _ => "bar",
-        }
+        "bar"
     }
 
-    /// Stacked series share a bucket's column.
+    /// Stacked series share a bucket's column: the carrier split and the purpose
+    /// split both sum to a meaningful total, so the column height carries meaning.
     fn stacked(self) -> bool {
-        self == ChartKind::PerPurposeStacked
+        matches!(self, ChartKind::PerEnergyType | ChartKind::PerPurposeStacked)
     }
 
 }
@@ -1885,8 +1887,8 @@ mod tests {
         // Colour is the browser's job; the fragment names the carrier instead.
         assert!(html.contains(r#""key":"electricity""#), "carrier key missing: {html}");
         assert!(!html.contains("color"), "colour must not be sent: {html}");
-        // The consumption trend is the only line; everything else is columns.
-        assert!(html.contains(r#""type":"line""#), "consumption should be a line: {html}");
+        assert!(html.contains(r#""type":"bar""#), "Forbrugsoverblik draws columns: {html}");
+        assert!(html.contains(r#""stacked":true"#), "carriers stack into one column: {html}");
     }
 
     #[test]
@@ -1903,12 +1905,19 @@ mod tests {
 
 
     #[test]
-    fn each_widget_keeps_the_series_type_it_had_before_going_server_side() {
-        // Only the consumption trend was ever a line. Rendering everything as a
-        // line silently restyled cost, emissions and the sparklines.
-        assert_eq!(ChartKind::PerEnergyType.series_type(), "line");
-        assert_eq!(ChartKind::PerEnergyTypeBars.series_type(), "bar");
-        assert_eq!(ChartKind::Total.series_type(), "bar");
+    fn every_dashboard_chart_is_columns() {
+        // The EMS being recreated draws columns throughout — see
+        // docs/ems-recreation/screenshots/live-dashboard-2026-07.png. Rendering any
+        // of these as a line is a visual regression, and was one twice.
+        for k in [ChartKind::PerEnergyType, ChartKind::PerEnergyTypeBars,
+                  ChartKind::Total, ChartKind::PerPurposeStacked] {
+            assert_eq!(k.series_type(), "bar");
+        }
+        // Carrier and purpose splits stack; cost and emissions do not.
+        assert!(ChartKind::PerEnergyType.stacked(), "Forbrugsoverblik stacks carriers");
+        assert!(ChartKind::PerPurposeStacked.stacked());
+        assert!(!ChartKind::Total.stacked());
+        assert!(!ChartKind::PerEnergyTypeBars.stacked());
     }
 
     #[test]

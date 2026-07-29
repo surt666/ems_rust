@@ -268,12 +268,18 @@ import "../styles/enity-theme.css";
 		mountDeclaredCharts(e.detail?.target ?? document);
 	});
 
-	// View transitions don't auto-process HTMX. After a transition swaps in the
-	// /node page, (re)process its node panel so hx-trigger="load" fires and the
-	// node detail loads. (after-swap fires on transitions only, not initial load,
-	// where htmx already processes on DOMContentLoaded — so no double fetch.)
+	// View transitions don't auto-process HTMX: the swapped-in DOM is new nodes
+	// htmx has never seen, so hx-trigger="load" never fires on them.
+	//
+	// This used to process only #node-data-panel, which was enough when that was
+	// the sole htmx-driven region. The whole dashboard is htmx now, so clicking a
+	// node in the tree (a soft navigation) left every widget blank while a reload
+	// worked — htmx processes on DOMContentLoaded there. Process the swapped
+	// document instead of one element.
+	//
+	// after-swap fires on transitions only, never on initial load, so this cannot
+	// double-fetch what DOMContentLoaded already started.
 	document.addEventListener('astro:after-swap', () => {
-		const panel = document.getElementById('node-data-panel');
-		if (panel && window.htmx) window.htmx.process(panel);
+		if (window.htmx) window.htmx.process(document.body);
 	});
 </script>
