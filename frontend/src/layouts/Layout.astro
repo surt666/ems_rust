@@ -218,7 +218,10 @@ import "../styles/enity-theme.css";
 	// Self-heal a 401 by refreshing and re-issuing once. This is the only case the
 	// inline script cannot cover: it reads a token that was valid when stored and
 	// has since expired.
-	document.body.addEventListener('htmx:responseError', async (e) => {
+	// Bound to `document`, not `document.body`: an Astro view transition replaces
+	// the body element, taking any listener registered on it with it. htmx events
+	// bubble to document either way.
+	document.addEventListener('htmx:responseError', async (e) => {
 		const d = e.detail;
 		const cfg = d?.requestConfig ?? {};
 		if (d?.xhr?.status !== 401 || !window.__emsIsOwnApi?.(cfg.path ?? '')) return;
@@ -263,7 +266,11 @@ import "../styles/enity-theme.css";
 	// it. Scoped to the swapped subtree: most swaps (every sidebar tree expansion)
 	// contain no chart at all, and rescanning the whole document each time walks
 	// the entire hierarchy tree for nothing.
-	document.body.addEventListener('htmx:afterSwap', (e) => {
+	// Also on `document` — see the note above. Registering this on document.body
+	// meant that after the first soft navigation nothing re-translated and, worse,
+	// no chart ever mounted: the fragments arrived but mountDeclaredCharts was
+	// never called, so the dashboard showed its cards with empty canvases.
+	document.addEventListener('htmx:afterSwap', (e) => {
 		applyTranslations();
 		mountDeclaredCharts(e.detail?.target ?? document);
 	});

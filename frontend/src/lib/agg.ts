@@ -27,15 +27,28 @@ export function resolveLevelId(): string {
   const path = sessionStorage.getItem("selectedNodePath") || "";
   const company = sessionStorage.getItem("selectedCompanyId") || "";
   let level = path ? `${path}#${id}` : id;
-  if (company && level && !level.includes(company)) level = `${company}#${level}`;
+  // Prepend the company ONLY when the level names no company at all. The old test
+  // was `!level.includes(company)`, which fired whenever the level held a
+  // *different* company — so after picking one company in the dropdown, clicking
+  // another in the tree produced "HN2#10001#HN2#10003". The backend takes the
+  // first HN2 segment as the partition, looked SeedCo01 up inside RealEstateCo,
+  // and every widget came back empty.
+  if (company && level && !/(^|[|#])HN2#/.test(level)) level = `${company}#${level}`;
 
-  // Fall back to the URL, as the node page's Data panel already does. The
-  // dashboard read sessionStorage alone, so a deep link or a reload that lost
-  // session state left every widget with an empty level_id — the API answers 200
-  // with no rows and the whole dashboard renders blank, which looks like missing
-  // data rather than a missing selection.
+  // Fall back to the URL, as the node page's Data panel already does — a deep
+  // link, or a soft navigation that reads before the tree's click handler has
+  // written sessionStorage, would otherwise leave every widget with an empty
+  // level_id (200 with no rows: a blank dashboard that looks like missing data).
+  //
+  // The PATH matters as much as the id. The backend locates a node by its HN2
+  // (company) segment, so a bare `?id=HN3#…` or `?id=HN4#…` has no company to
+  // look in and returns nothing — which is why property and building levels came
+  // back empty while the company worked, its own id being the HN2.
   if (!level && typeof location !== "undefined") {
-    level = new URLSearchParams(location.search).get("id") || "";
+    const q = new URLSearchParams(location.search);
+    const urlId = q.get("id") || "";
+    const urlPath = q.get("path") || "";
+    level = urlPath && urlId ? `${urlPath}#${urlId}` : urlId;
   }
   return level;
 }

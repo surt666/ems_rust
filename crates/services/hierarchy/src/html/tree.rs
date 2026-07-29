@@ -121,7 +121,17 @@ pub fn list_item(
         // data-astro-reload) so the sidebar's transition:persist keeps the tree
         // expanded; the Layout reprocesses the node panel on astro:after-swap.
         // sessionStorage is still set as a fallback/highlight.
-        let node_href = format!("/node/?id={}", id_str.replace('#', "%23"));
+        // The path travels in the URL alongside the id. Without it a property or
+        // building link carries no HN2 segment, so anything rebuilding the level
+        // from the URL (a deep link, a reload, or a soft navigation that reads
+        // before the click handler has written sessionStorage) resolves to a node
+        // the backend cannot place in a company partition — and every widget comes
+        // back empty. The company happened to work because its own id IS the HN2.
+        let node_href = format!(
+            "/node/?id={}&path={}",
+            id_str.replace('#', "%23"),
+            parent_path.replace('#', "%23").replace('|', "%7C"),
+        );
         // node_path for <a data-node-path> is parent_path (not current_path).
         // When there is a parent path it's used as-is; for top-level nodes it's "".
         let node_path = parent_path;

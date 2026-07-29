@@ -3098,3 +3098,25 @@ dialog::backdrop {
 .rc-dot--gas { background: #a855f7; }
 .rc-dot--water { background: #1f9e8f; }
 .rc-dot--heat { background: #facc15; }
+
+/* Password field with a show/hide eye. Grid so the button overlays the input's
+   trailing edge without shrinking the field (project convention: no flex). */
+.pw-field { display: grid; }
+.pw-field > .form-input { grid-area: 1 / 1; padding-right: 2.75rem; }
+.pw-toggle {
+  grid-area: 1 / 1;
+  justify-self: end;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin-right: 0.25rem;
+  border: 0;
+  background: none;
+  color: var(--text-muted, #6b7280);
+  cursor: pointer;
+  border-radius: 6px;
+}
+.pw-toggle:hover { color: var(--text-primary, #111827); }
+.pw-toggle:focus-visible { outline: 2px solid var(--brand, #f5841f); outline-offset: 1px; }
