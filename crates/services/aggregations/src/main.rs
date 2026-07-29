@@ -619,7 +619,7 @@ fn rows_to_cards(rows: &[Row]) -> String {
         let unit = rs.iter().find(|r| !r.unit.is_empty()).map_or("", |r| r.unit.as_str());
         let decimals = if total < 100.0 { 2 } else { 0 };
 
-        let spark = chart_block(&serde_json::json!({
+        let chart = chart_block(&serde_json::json!({
             "categories": rs.iter()
                 .map(|r| r.timestamp.get(..10).unwrap_or(&r.timestamp))
                 .collect::<Vec<_>>(),
@@ -630,7 +630,7 @@ fn rows_to_cards(rows: &[Row]) -> String {
                 "data": rs.iter().map(|r| r.value).collect::<Vec<_>>(),
             }],
             "unit": unit,
-            "zoom": false,
+            "zoom": true,
         }));
 
         out.push_str(&format!(
@@ -642,7 +642,7 @@ fn rows_to_cards(rows: &[Row]) -> String {
                  <div><span class=\"muted\">Periode</span><strong class=\"mono\">{total} {unit}</strong></div>\
                  <div><span class=\"muted\">Gnm./dag</span><strong class=\"mono\">{avg} {unit}</strong></div>\
                </div>\
-               <div class=\"rc-spark\">{spark}</div>\
+               <div class=\"rc-chart\">{chart}</div>\
              </div>",
             ty = esc(t),
             label = esc(energy_label(t)),
@@ -792,7 +792,10 @@ fn rows_to_chart(rows: &[Row], kind: ChartKind) -> String {
         "series": series,
         "unit": unit,
         "stacked": kind.stacked(),
-        "zoom": false,
+        // Drag-select / scroll inside plus a slider handle. Every one of these
+        // widgets had it before the rendering moved server-side — it is the reason
+        // the project uses ECharts rather than drawing static SVG.
+        "zoom": true,
     }))
 }
 
@@ -1954,6 +1957,24 @@ mod tests {
         assert_eq!(html.matches(r#""type":"bar""#).count(), 2, "one column series per purpose");
         assert!(html.contains("Belysning") && html.contains("Apparater"), "danish labels: {html}");
         assert!(!html.contains("I alt"), "total must not be a stacked series: {html}");
+    }
+
+
+    #[test]
+    fn charts_keep_the_zoom_that_is_the_point_of_using_echarts() {
+        // Every dashboard chart shipped with dataZoom (drag-select inside plus a
+        // slider). Rendering them server-side dropped it, which is a real loss of
+        // function, not a style detail.
+        let rows = vec![
+            row("electricity", "kWh", 10.0, "2026-07-01T00:00:00Z"),
+            row("electricity", "kWh", 12.0, "2026-07-02T00:00:00Z"),
+        ];
+        for kind in [ChartKind::PerEnergyType, ChartKind::PerEnergyTypeBars,
+                     ChartKind::Total, ChartKind::PerPurposeStacked] {
+            let html = rows_to_chart(&rows, kind);
+            assert!(html.contains(r#""zoom":true"#), "zoom lost for a chart kind: {html}");
+        }
+        assert!(rows_to_cards(&rows).contains(r#""zoom":true"#), "cards lost zoom");
     }
 
     #[test]

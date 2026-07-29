@@ -3120,3 +3120,8 @@ dialog::backdrop {
 }
 .pw-toggle:hover { color: var(--text-primary, #111827); }
 .pw-toggle:focus-visible { outline: 2px solid var(--brand, #f5841f); outline-offset: 1px; }
+
+/* Per-carrier consumption chart on the Forbrugsoverblik cards. 180px because it
+   carries a dataZoom slider (drag-select inside, plus a handle) — the same height
+   and interaction it had before the rendering moved server-side. */
+.rc-chart { height: 180px; }
