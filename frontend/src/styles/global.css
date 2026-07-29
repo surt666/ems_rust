@@ -3068,8 +3068,18 @@ dialog::backdrop {
 .dev-up { color: var(--danger, #dc2626); }
 .dev-down { color: var(--success, #16a34a); }
 
-.rc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
-.rc-card { display: grid; gap: 8px; cursor: pointer; }
+/* One card per row. Side by side they were narrow enough that a month of daily
+   columns became a smudge, and an odd count left a hole in the last row.
+
+   Block, not grid, and this is the exception to the project's grid-only rule: the
+   stack has to be able to split across the dashboard's balanced column break, and
+   a fragmented grid container lays its items out against the pre-break geometry —
+   they spill out of the second column. Blocks fragment correctly. There is no
+   grid to lose here: one column of rows is what block layout already does. */
+.rc-grid { display: block; }
+.rc-grid > .rc-card { margin-bottom: 1rem; }
+/* A card may not be split across the dashboard's column break. */
+.rc-card { display: grid; gap: 8px; cursor: pointer; break-inside: avoid; }
 .rc-card:focus-visible { outline: 2px solid var(--brand, #f5841f); outline-offset: 2px; }
 .rc-card__head { display: grid; grid-auto-flow: column; justify-content: start; align-items: center; gap: 8px; }
 .rc-dot { width: 10px; height: 10px; border-radius: 50%; }

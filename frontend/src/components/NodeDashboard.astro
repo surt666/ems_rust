@@ -1,12 +1,12 @@
 ---
 // Per-hierarchy-node dashboard — mirrors the EMS company/node dashboard:
-// a 2-column layout. LEFT: Bygningsbenchmark (gauges + savings), Call to action,
-// Alarmer, then Klima & økonomi (CO₂e + cost — both consumption × a factor).
-// RIGHT: Forbrugsoverblik (combined chart, one card per energy type, purpose
-// split). The upstream EMS puts every consumption card in the right column, which
-// leaves the left one ending half a screen early; the derived pair moves across to
-// even them out. Static/representative today; data-endpoint carries the future HTMX
-// contract. Becomes the node view's default tab once backend-integrated; will
+// one flow of cards balanced across two columns: the status trio (benchmark, call
+// to action, alarms), then Forbrugsoverblik (combined chart, one card per energy
+// type, purpose split), then Klima & økonomi (CO₂e + cost — both consumption × a
+// factor). The upstream EMS hand-packs two columns and the left one ends half a
+// screen early; letting the browser choose the break point is what evens them.
+//
+// Static/representative today; data-endpoint carries the future HTMX contract. Becomes the node view's default tab once backend-integrated; will
 // eventually vary by hierarchy level via the company schema (see spec
 // 2026-06-24-node-dashboard-schema-driven.md).
 import AggWidget from "./AggWidget.astro";
@@ -58,28 +58,6 @@ const ctaRows = [
     <AggWidget action="get_alarms" days={30} />
   </div>
 
-  <h3 class="section-title">Klima &amp; økonomi</h3>
-
-  <!-- CO₂e card — real, fed by get_emissions (consumption × emission factor). -->
-  <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
-       _="on click call window.emsNavigate('/rimain/?measure=co2e&resolution=monthly')">
-    <div class="section-header">
-      <h2 class="section-title" style="margin-bottom:0">CO₂e</h2>
-      <span class="muted" style="margin-left:auto">faktorbaseret · seneste 30 dage</span>
-    </div>
-    <AggWidget action="get_emissions" view="chart" days={30} height={180} />
-  </div>
-
-  <!-- Combined cost card — real, fed by get_cost (consumption × tariff). -->
-  <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
-       _="on click call window.emsNavigate('/rimain/?measure=cost&resolution=monthly')">
-    <div class="section-header">
-      <h2 class="section-title" style="margin-bottom:0">Samlet omkostning</h2>
-      <span class="muted" style="margin-left:auto">tariffbaseret · seneste 30 dage</span>
-    </div>
-    <AggWidget action="get_cost" view="chart" days={30} height={200} />
-  </div>
-
   <h3 class="section-title">Forbrugsoverblik</h3>
 
   <!-- Live per-resource consumption from the aggregations API (ECharts). The
@@ -101,6 +79,28 @@ const ctaRows = [
   {/* End-use breakdown — the purpose axis, rendered as HTML by the aggregations
       lambda (get_purpose_split). */}
   <PurposeSplit energyType="electricity" days={30} />
+
+  <h3 class="section-title">Klima &amp; økonomi</h3>
+
+  <!-- CO₂e card — real, fed by get_emissions (consumption × emission factor). -->
+  <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
+       _="on click call window.emsNavigate('/rimain/?measure=co2e&resolution=monthly')">
+    <div class="section-header">
+      <h2 class="section-title" style="margin-bottom:0">CO₂e</h2>
+      <span class="muted" style="margin-left:auto">faktorbaseret · seneste 30 dage</span>
+    </div>
+    <AggWidget action="get_emissions" view="chart" days={30} height={180} />
+  </div>
+
+  <!-- Combined cost card — real, fed by get_cost (consumption × tariff). -->
+  <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
+       _="on click call window.emsNavigate('/rimain/?measure=cost&resolution=monthly')">
+    <div class="section-header">
+      <h2 class="section-title" style="margin-bottom:0">Samlet omkostning</h2>
+      <span class="muted" style="margin-left:auto">tariffbaseret · seneste 30 dage</span>
+    </div>
+    <AggWidget action="get_cost" view="chart" days={30} height={200} />
+  </div>
 </div>
 
 <style>
@@ -112,6 +112,10 @@ const ctaRows = [
      same height at any width. */
   .node-dashboard { columns: 2; column-gap: 1rem; }
   .node-dashboard > * { break-inside: avoid; margin-bottom: 1rem; }
+  /* …except the per-carrier stack, which is a list. Keeping it whole would drop
+     three cards' worth of height into one column and undo the balancing; its
+     cards carry their own break-inside: avoid. */
+  .node-dashboard > :global(.rc-grid) { break-inside: auto; }
   /* A heading must never be the last thing in a column, stranded from its cards. */
   .node-dashboard > .section-title { break-after: avoid; }
 
@@ -131,11 +135,11 @@ const ctaRows = [
   .nd-alarmcount__n { font-size: var(--text-2xl); font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 
   .nd-energy__totals {
-  display: grid;
-  grid-auto-flow: column;
-  justify-content: start;
-  gap: 22px;
-  margin: 4px 0 8px;
+    display: grid;
+    grid-auto-flow: column;
+    justify-content: start;
+    gap: 22px;
+    margin: 4px 0 8px;
   }
   .nd-energy__totals > div { display: grid; gap: 2px; }
   .nd-energy__totals span { font-size: var(--text-xs); color: var(--text-muted); }
@@ -145,7 +149,7 @@ const ctaRows = [
   .nd-neg { color: var(--danger); }
 
   @media (max-width: 1100px) {
-  .node-dashboard { grid-template-columns: 1fr; }
-  .nd-gauges { grid-template-columns: 1fr 1fr; }
+    .node-dashboard { columns: 1; }
+    .nd-gauges { grid-template-columns: 1fr 1fr; }
   }
 </style>
