@@ -1,8 +1,11 @@
 ---
 // Per-hierarchy-node dashboard — mirrors the EMS company/node dashboard:
 // a 2-column layout. LEFT: Bygningsbenchmark (gauges + savings), Call to action,
-// Alarmer. RIGHT: Forbrugsoverblik (combined cost card + one card per energy
-// type). Static/representative today; data-endpoint carries the future HTMX
+// Alarmer, then Klima & økonomi (CO₂e + cost — both consumption × a factor).
+// RIGHT: Forbrugsoverblik (combined chart, one card per energy type, purpose
+// split). The upstream EMS puts every consumption card in the right column, which
+// leaves the left one ending half a screen early; the derived pair moves across to
+// even them out. Static/representative today; data-endpoint carries the future HTMX
 // contract. Becomes the node view's default tab once backend-integrated; will
 // eventually vary by hierarchy level via the company schema (see spec
 // 2026-06-24-node-dashboard-schema-driven.md).
@@ -19,99 +22,98 @@ const ctaRows = [
 ];
 ---
 <div class="node-dashboard" data-endpoint="/query/node/dashboard">
-  <!-- LEFT COLUMN -->
-  <div class="nd-col">
-    <!-- Bygningsbenchmark -->
-    <div class="card">
-      <div class="section-header">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>
-        <h2 class="section-title" style="margin-bottom:0">Bygningsbenchmark</h2>
-        <span class="muted" style="margin-left:auto">seneste 30 dage</span>
-      </div>
-      <AggWidget action="get_benchmark" days={30} />
+  <!-- Bygningsbenchmark -->
+  <div class="card">
+    <div class="section-header">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>
+      <h2 class="section-title" style="margin-bottom:0">Bygningsbenchmark</h2>
+      <span class="muted" style="margin-left:auto">seneste 30 dage</span>
     </div>
-
-    <!-- Call to action -->
-    <div class="card">
-      <div class="section-header">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-        <h2 class="section-title" style="margin-bottom:0">Call to action</h2>
-        <span class="muted" style="margin-left:auto">5 største energispild · repræsentativ</span>
-      </div>
-      <table class="data-table">
-        <tbody>
-          {ctaRows.map((r) => (
-            <tr><td>{r[0]}</td><td class="muted">{r[1]}</td><td style="text-align:right" class="nd-neg">{r[2]}/år</td></tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Alarmer -->
-    <div class="card">
-      <div class="section-header">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-        <h2 class="section-title" style="margin-bottom:0">Alarmer</h2>
-        <a href="/alarms" class="btn-secondary" style="margin-left:auto">Gå til alarmoversigt</a>
-      </div>
-      <AggWidget action="get_alarms" days={30} />
-    </div>
+    <AggWidget action="get_benchmark" days={30} />
   </div>
 
-  <!-- RIGHT COLUMN: Forbrugsoverblik -->
-  <div class="nd-col">
-    <h3 class="section-title">Forbrugsoverblik</h3>
-
-    <!-- Live per-resource consumption from the aggregations API (ECharts). The
-         rest of this column is still representative/mock pending the schema-driven
-         dashboard; this card is the real one, fed by the selected node. -->
-    <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
-         _="on click call window.emsNavigate('/rimain/?measure=consumption&resolution=monthly')">
-      <div class="section-header">
-        <h2 class="section-title" style="margin-bottom:0">Forbrug pr. ressource</h2>
-        <span class="muted" style="margin-left:auto">seneste 30 dage</span>
-      </div>
-      <AggWidget action="get_aggregations" view="chart" days={30} height={280} />
+  <!-- Call to action -->
+  <div class="card">
+    <div class="section-header">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      <h2 class="section-title" style="margin-bottom:0">Call to action</h2>
+      <span class="muted" style="margin-left:auto">5 største energispild · repræsentativ</span>
     </div>
-
-    <!-- CO₂e card — real, fed by get_emissions (consumption × emission factor). -->
-    <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
-         _="on click call window.emsNavigate('/rimain/?measure=co2e&resolution=monthly')">
-      <div class="section-header">
-        <h2 class="section-title" style="margin-bottom:0">CO₂e</h2>
-        <span class="muted" style="margin-left:auto">faktorbaseret · seneste 30 dage</span>
-      </div>
-      <AggWidget action="get_emissions" view="chart" days={30} height={180} />
-    </div>
-
-    <!-- Combined cost card — real, fed by get_cost (consumption × tariff). -->
-    <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
-         _="on click call window.emsNavigate('/rimain/?measure=cost&resolution=monthly')">
-      <div class="section-header">
-        <h2 class="section-title" style="margin-bottom:0">Samlet omkostning</h2>
-        <span class="muted" style="margin-left:auto">tariffbaseret · seneste 30 dage</span>
-      </div>
-      <AggWidget action="get_cost" view="chart" days={30} height={200} />
-    </div>
-
-    {/* Live per-resource consumption cards (ECharts), fed by the aggregations API —
-         one card per resource present under the selected node (totals + daily trend). */}
-    <ResourceCards resolution="daily" days={30} />
-
-    {/* End-use breakdown — the purpose axis, rendered as HTML by the aggregations
-        lambda (get_purpose_split). */}
-    <PurposeSplit energyType="electricity" days={30} />
+    <table class="data-table">
+      <tbody>
+        {ctaRows.map((r) => (
+          <tr><td>{r[0]}</td><td class="muted">{r[1]}</td><td style="text-align:right" class="nd-neg">{r[2]}/år</td></tr>
+        ))}
+      </tbody>
+    </table>
   </div>
+
+  <!-- Alarmer -->
+  <div class="card">
+    <div class="section-header">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      <h2 class="section-title" style="margin-bottom:0">Alarmer</h2>
+      <a href="/alarms" class="btn-secondary" style="margin-left:auto">Gå til alarmoversigt</a>
+    </div>
+    <AggWidget action="get_alarms" days={30} />
+  </div>
+
+  <h3 class="section-title">Klima &amp; økonomi</h3>
+
+  <!-- CO₂e card — real, fed by get_emissions (consumption × emission factor). -->
+  <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
+       _="on click call window.emsNavigate('/rimain/?measure=co2e&resolution=monthly')">
+    <div class="section-header">
+      <h2 class="section-title" style="margin-bottom:0">CO₂e</h2>
+      <span class="muted" style="margin-left:auto">faktorbaseret · seneste 30 dage</span>
+    </div>
+    <AggWidget action="get_emissions" view="chart" days={30} height={180} />
+  </div>
+
+  <!-- Combined cost card — real, fed by get_cost (consumption × tariff). -->
+  <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
+       _="on click call window.emsNavigate('/rimain/?measure=cost&resolution=monthly')">
+    <div class="section-header">
+      <h2 class="section-title" style="margin-bottom:0">Samlet omkostning</h2>
+      <span class="muted" style="margin-left:auto">tariffbaseret · seneste 30 dage</span>
+    </div>
+    <AggWidget action="get_cost" view="chart" days={30} height={200} />
+  </div>
+
+  <h3 class="section-title">Forbrugsoverblik</h3>
+
+  <!-- Live per-resource consumption from the aggregations API (ECharts). The
+       rest of this column is still representative/mock pending the schema-driven
+       dashboard; this card is the real one, fed by the selected node. -->
+  <div class="card nd-energy nd-drill" title="Klik for detaljeret analyse"
+       _="on click call window.emsNavigate('/rimain/?measure=consumption&resolution=monthly')">
+    <div class="section-header">
+      <h2 class="section-title" style="margin-bottom:0">Forbrug pr. ressource</h2>
+      <span class="muted" style="margin-left:auto">seneste 30 dage</span>
+    </div>
+    <AggWidget action="get_aggregations" view="chart" days={30} height={280} />
+  </div>
+
+  {/* Live per-resource consumption cards (ECharts), fed by the aggregations API —
+       one card per resource present under the selected node (totals + daily trend). */}
+  <ResourceCards resolution="daily" days={30} />
+
+  {/* End-use breakdown — the purpose axis, rendered as HTML by the aggregations
+      lambda (get_purpose_split). */}
+  <PurposeSplit energyType="electricity" days={30} />
 </div>
 
 <style>
-  .node-dashboard {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-    align-items: start;
-  }
-  .nd-col { display: grid; gap: 1rem; align-content: start; }
+  /* Two balanced columns. This is the one layout job CSS grid cannot do: grid
+     packs a fixed set of cards into each column, so whichever column holds the
+     taller cards ends half a screen below the other — and which one that is
+     changes with the viewport, because the per-carrier grid reflows from one row
+     to two. Multi-column picks the break point itself and keeps both columns the
+     same height at any width. */
+  .node-dashboard { columns: 2; column-gap: 1rem; }
+  .node-dashboard > * { break-inside: avoid; margin-bottom: 1rem; }
+  /* A heading must never be the last thing in a column, stranded from its cards. */
+  .node-dashboard > .section-title { break-after: avoid; }
 
   .nd-gauges { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
   .nd-gauge { display: grid; justify-items: center; gap: 2px; }
@@ -129,11 +131,11 @@ const ctaRows = [
   .nd-alarmcount__n { font-size: var(--text-2xl); font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 
   .nd-energy__totals {
-    display: grid;
-    grid-auto-flow: column;
-    justify-content: start;
-    gap: 22px;
-    margin: 4px 0 8px;
+  display: grid;
+  grid-auto-flow: column;
+  justify-content: start;
+  gap: 22px;
+  margin: 4px 0 8px;
   }
   .nd-energy__totals > div { display: grid; gap: 2px; }
   .nd-energy__totals span { font-size: var(--text-xs); color: var(--text-muted); }
@@ -143,7 +145,7 @@ const ctaRows = [
   .nd-neg { color: var(--danger); }
 
   @media (max-width: 1100px) {
-    .node-dashboard { grid-template-columns: 1fr; }
-    .nd-gauges { grid-template-columns: 1fr 1fr; }
+  .node-dashboard { grid-template-columns: 1fr; }
+  .nd-gauges { grid-template-columns: 1fr 1fr; }
   }
 </style>
