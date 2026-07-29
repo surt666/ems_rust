@@ -28,6 +28,15 @@ export function resolveLevelId(): string {
   const company = sessionStorage.getItem("selectedCompanyId") || "";
   let level = path ? `${path}#${id}` : id;
   if (company && level && !level.includes(company)) level = `${company}#${level}`;
+
+  // Fall back to the URL, as the node page's Data panel already does. The
+  // dashboard read sessionStorage alone, so a deep link or a reload that lost
+  // session state left every widget with an empty level_id — the API answers 200
+  // with no rows and the whole dashboard renders blank, which looks like missing
+  // data rather than a missing selection.
+  if (!level && typeof location !== "undefined") {
+    level = new URLSearchParams(location.search).get("id") || "";
+  }
   return level;
 }
 

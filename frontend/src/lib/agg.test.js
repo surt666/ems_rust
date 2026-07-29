@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bucketKey, rollup, apiResolution, MEASURES } from "./agg.ts";
+import { bucketKey, rollup, apiResolution, MEASURES, resolveLevelId } from "./agg.ts";
 
 test("apiResolution maps hourly to hourly, everything else to daily", () => {
   assert.equal(apiResolution("hourly"), "hourly");
@@ -54,4 +54,19 @@ test("rollup aligns multiple buckets across resources on a shared axis", () => {
   assert.deepEqual(categories, ["2026-01", "2026-02"]);
   assert.deepEqual(byResource.get("electricity"), [2, 4]);
   assert.deepEqual(byResource.get("water"), [0, 7]); // padded on the missing bucket
+});
+
+test("resolveLevelId falls back to the URL when session state is empty", () => {
+  // A deep link or a reload that lost sessionStorage used to yield "", which the
+  // API answers with 200 and zero rows — a blank dashboard that looks like
+  // missing data rather than a missing selection.
+  const store = {};
+  globalThis.sessionStorage = { getItem: (k) => store[k] ?? null };
+  globalThis.location = { search: "?id=HN2%2310003" };
+  assert.equal(resolveLevelId(), "HN2#10003");
+
+  store.selectedNodeId = "HN4#10001";
+  store.selectedNodePath = "HN0#root|HN1#10001|HN2#10003";
+  assert.equal(resolveLevelId(), "HN0#root|HN1#10001|HN2#10003#HN4#10001",
+    "an explicit selection still wins over the URL");
 });
