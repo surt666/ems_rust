@@ -46,8 +46,8 @@ object Extensions:
     val (normalized, factor) = unitFactor(unit)
     (normalized, value * factor)
 
-  /** Look up canonical unit + scaling factor for a raw unit string. Used when the same
-    * factor needs to scale multiple values from one record (e.g., `value` and `resample_value`). */
+  /** Look up canonical unit + scaling factor for a raw unit string. Split from `normalize`
+    * for callers that pick which of a record's values to scale. */
   def unitFactor(unit: String): (String, Double) =
     UnitConversions.getOrElse(unit, (unit, 1.0))
 

@@ -53,8 +53,11 @@ case class IdMappingChange(
   * to avoid Flink Kryo serialization corrupting Scala Option across operator boundaries.
   *
   * `resampleTimestamp` (epoch millis) / `resampleValue` / `resampleMethod` are populated by
-  * ResampleFunction. For meters with `resampleMinutes=null`, all three are null and only the
-  * raw row is emitted. */
+  * ResampleFunction. For meters with `resampleMinutes=null`, all three are null and the raw
+  * reading is what reaches the sink.
+  *
+  * `resampleMethod` is provenance for tests and debugging only — `logical_data` has no such
+  * column (it holds one value per timestamp, however that value was arrived at). */
 case class EnrichedRecord(
   logicalId: Int,
   timestamp: String,
@@ -71,6 +74,7 @@ case class EnrichedRecord(
   hn8: java.lang.Integer,
   hn9: java.lang.Integer,
   energyType: String,
+  readingKind: String,
   resampleTimestamp: java.lang.Long = null,
   resampleValue: java.lang.Double = null,
   resampleMethod: String = null

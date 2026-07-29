@@ -39,7 +39,8 @@ class ResampleHarnessSpec extends AnyFlatSpec with Matchers with BeforeAndAfterE
       hn1 = 1, hn2 = 1,
       hn3 = null, hn4 = null, hn5 = null,
       hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-      energyType = "test"
+      energyType = "test",
+      readingKind = "counter"
     )
 
   private def tsMillis(ts: String): Long = java.time.Instant.parse(ts).toEpochMilli

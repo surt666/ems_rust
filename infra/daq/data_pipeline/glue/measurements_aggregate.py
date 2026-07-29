@@ -111,7 +111,7 @@ def build_rollups(df: DataFrame, matrix: list, run_at_iso: str) -> DataFrame:
     spec 2026-07-28-node-formula-rollup-design.md §8.2.
 
     Input columns: hn2 (int), logical_id (int), energy_type (str), unit (str),
-    resample_value (double), resample_timestamp (ts).
+    value (double), timestamp (ts).
     Output columns: pk ('HN2#<id>'), sk, gsi1pk, gsi1sk, energy_type, purpose, unit,
     sum, count, updated_at, ttl.
 
@@ -127,9 +127,9 @@ def build_rollups(df: DataFrame, matrix: list, run_at_iso: str) -> DataFrame:
         "gb",
         F.explode(F.array(
             F.struct(F.lit("h").alias("gran"),
-                     F.date_format(F.col("resample_timestamp"), "yyyy-MM-dd'T'HH").alias("bucket")),
+                     F.date_format(F.col("timestamp"), "yyyy-MM-dd'T'HH").alias("bucket")),
             F.struct(F.lit("d").alias("gran"),
-                     F.date_format(F.col("resample_timestamp"), "yyyy-MM-dd").alias("bucket")),
+                     F.date_format(F.col("timestamp"), "yyyy-MM-dd").alias("bucket")),
         )),
     ).select("*", F.col("gb.gran").alias("gran"), F.col("gb.bucket").alias("bucket"))
 
@@ -144,7 +144,7 @@ def build_rollups(df: DataFrame, matrix: list, run_at_iso: str) -> DataFrame:
               (with_buckets.logical_id == m_df.m_logical_id)
               & (with_buckets.energy_type == m_df.m_energy_type),
               "inner")
-        .withColumn("contrib", F.col("resample_value") * F.col("coefficient"))
+        .withColumn("contrib", F.col("value") * F.col("coefficient"))
         .groupBy("hn2", "node_path", "m_energy_type", "purpose", "gran", "bucket")
         .agg(F.sum("contrib").alias("sum"),
              F.count("contrib").alias("count"),
@@ -173,39 +173,41 @@ def window_start_iso(now: datetime, lookback_days: int) -> str:
 
 
 def latest_counters(df: DataFrame) -> DataFrame:
-    """logical_data is event-sourced (append-only): for a given
-    (logical_id, resample_timestamp) the newest ingested_time row supersedes older ones. Keep only
-    that newest row per point, then filter to resampled counters that carry a company id.
-    Input must include ingested_time and resample_method (plus the rollup columns)."""
-    newest = Window.partitionBy("logical_id", "resample_timestamp") \
+    """logical_data is event-sourced (append-only): for a given (logical_id, timestamp) the
+    newest ingested_time row supersedes older ones. Keep only that newest row per point, then
+    filter to counter rows that carry a company id.
+
+    Counters are the consumption axis: their `value` is a delta over the point's interval, so
+    summing them is meaningful. A gauge's value is a level (°C, bar) and summing it is not, so
+    gauges are excluded. Input must include ingested_time and reading_kind."""
+    newest = Window.partitionBy("logical_id", "timestamp") \
         .orderBy(F.col("ingested_time").desc())
     return (
         df.withColumn("_rn", F.row_number().over(newest))
         .filter((F.col("_rn") == 1)
-                & (F.col("resample_method") == "time_proportional")
-                & F.col("resample_value").isNotNull()
+                & (F.col("reading_kind") == "counter")
+                & F.col("value").isNotNull()
                 & F.col("hn2").isNotNull())
         .drop("_rn")
     )
 
 
 def read_counters(spark, window_start: str):
-    """Newest-ingested resampled counter rows for buckets at/after window_start.
+    """Newest-ingested counter rows for buckets at/after window_start.
 
-    Windows by resample_timestamp (the bucket axis) so whole hour/day buckets are recomputed from
-    all their points, and dedups to the newest ingested_time per (logical_id, resample_timestamp)
+    Windows by timestamp (the bucket axis) so whole hour/day buckets are recomputed from
+    all their points, and dedups to the newest ingested_time per (logical_id, timestamp)
     — matching how every consumer reads the event-sourced logical_data table. Restatements of
-    points whose resample_timestamp is older than the window are not picked up (documented hook;
+    points whose timestamp is older than the window are not picked up (documented hook;
     widen --lookback_days to recompute them)."""
     raw = spark.sql(f"""
         SELECT hn2, logical_id, energy_type, unit,
-               resample_value, resample_timestamp,
-               resample_method, ingested_time
+               value, timestamp, reading_kind, ingested_time
         FROM all.logical_data
-        WHERE resample_timestamp >= TIMESTAMP '{window_start}'
+        WHERE timestamp >= TIMESTAMP '{window_start}'
     """)
     return latest_counters(raw).select(
-        "hn2", "logical_id", "energy_type", "unit", "resample_value", "resample_timestamp")
+        "hn2", "logical_id", "energy_type", "unit", "value", "timestamp")
 
 
 def bucket_of_sk(sk: str) -> str:

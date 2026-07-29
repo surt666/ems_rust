@@ -56,6 +56,10 @@ func NewS3TablesStack(scope constructs.Construct, id string, props *awscdk.Stack
 				// hn1=partner, hn2=company hard-coded; hn3..hn9 are schema-defined per
 				// company (per ems_ocaml hierarchy model). All ids are ints.
 				"schemaFieldList": []any{
+					// Resampled values only. The measured value/timestamp used to sit
+					// here alongside the resampled pair, but nothing downstream read
+					// them: every consumer wants the value on its bucket, and the
+					// unresampled reading is still in raw_data if it is ever needed.
 					field("logical_id", "int", true),
 					field("timestamp", "timestamptz", true),
 					field("value", "double", true),
@@ -71,9 +75,10 @@ func NewS3TablesStack(scope constructs.Construct, id string, props *awscdk.Stack
 					field("hn8", "int", false),
 					field("hn9", "int", false),
 					field("energy_type", "string", false),
-					field("resample_value", "double", false),
-					field("resample_method", "string", false),
-					field("resample_timestamp", "timestamp", false),
+					// Replaces resample_method. The roll-up needs to know a row is a
+					// counter (so gauges are never summed as consumption); that is a
+					// property of the sensor, not of how it was resampled.
+					field("reading_kind", "string", false),
 				},
 			},
 			"icebergPartitionSpec": map[string]any{

@@ -143,8 +143,10 @@ npx cdk deploy DaqPipelineStack LateRecomputationStack OcamlBridgeWriterRoleStac
 - `LateRecomputationStack` swaps the Glue script (`late-data-recomputation` job).
   `OcamlBridgeWriterRoleStack` (the IAM role the bridge assumes) is normally unchanged.
   `S3TablesStack` owns the Iceberg tables; deploying it with **changed columns replaces the table**
-  (data loss) — that's how `logical_data` (columns `resample_value/resample_method/resample_timestamp`)
-  gets recreated.
+  (data loss) — that's how `logical_data` gets recreated. It holds one value per timestamp
+  (`logical_id, timestamp, value, unit, ingested_time, hn1..hn9, energy_type, reading_kind`):
+  for a sensor with `resample_minutes` the pair is the resampled one, otherwise the reading's
+  own. `raw_data` keeps every untouched reading.
 - `MeasurementsAggregateStack` owns the `measurements_aggregate` DynamoDB table (on-demand, TTL,
   `RETAIN`) + the hourly `measurements-aggregate` Glue job that rolls up `logical_data`
   counter consumption per node/energy_type/purpose/hour|day. `-c LookbackDays=N` sets the

@@ -1,18 +1,18 @@
 Feature: measurements_aggregate rollup view
-  An hourly Glue job rolls up counter consumption from logical_meter_data into a DynamoDB
+  An hourly Glue job rolls up counter consumption from logical_data into a DynamoDB
   "materialized view" pre-aggregated at every hierarchy level from the company (hn2) down to
   the leaf meter, for both hourly and daily buckets. Items are keyed so that a single range
   query returns exactly one node's own series and never its descendants. The job is idempotent:
   re-running a window overwrites the same items and never double-counts.
 
   Background:
-    Given the source rows carry hn2..hn9, logical_id, purpose, unit, value, resample_value, timestamp, resample_timestamp, ingested_time and resample_method
-    And the aggregated quantity is sum(resample_value), counters only (resample_method = "time_proportional")
+    Given the source rows carry hn2..hn9, logical_id, energy_type, unit, value, timestamp, reading_kind and ingested_time
+    And the aggregated quantity is sum(value), counters only (reading_kind = "counter")
     And pk is "HN2#<hn2>" so each company is its own partition
 
   # source: glue/tests/test_helpers.py — hour/day bucket UTC
   Scenario Outline: Buckets are derived in UTC
-    Given a resample_timestamp "<ts>"
+    Given a timestamp "<ts>"
     Then its hour bucket is "<hour>" and its day bucket is "<day>"
 
     Examples:
@@ -50,8 +50,8 @@ Feature: measurements_aggregate rollup view
 
   # source: glue/tests/test_rollups.py — "test_rollup_sums_at_every_level"
   Scenario: A node's sum is the total across all meters beneath it
-    Given two electricity readings on meter 10009 (resample_values 4.0 and 6.0) under HN2#2|HN3#9|HN4#456
-    And one electricity reading on meter 10010 (resample_value 5.0) under HN2#2|HN3#9
+    Given two electricity readings on meter 10009 (values 4.0 and 6.0) under HN2#2|HN3#9|HN4#456
+    And one electricity reading on meter 10010 (value 5.0) under HN2#2|HN3#9
     When the hourly rollup for 2026-06-07T08 is built
     Then the leaf 10009 sums to 10.0 with count 2, last_value 106.0 and unit "kWh"
     And HN2#2|HN3#9|HN4#456 sums to 10.0
@@ -61,11 +61,11 @@ Feature: measurements_aggregate rollup view
 
   # source: glue/tests/test_rollups.py — "test_latest_counters_dedup_and_filters"
   Scenario: The newest ingested_time wins per point, and gauges / null-company rows are excluded
-    Given two restatements of point (10009, rt) with resample_value 4.0 (older) and 9.0 (newer ingested_time)
-    And a gauge row (resample_method "linear_interpolation")
+    Given two restatements of point (10009, rt) with value 4.0 (older) and 9.0 (newer ingested_time)
+    And a gauge row (reading_kind "gauge")
     And a counter row with a null hn2
     When latest_counters runs
-    Then only one row survives for that point, with resample_value 9.0
+    Then only one row survives for that point, with value 9.0
     And the gauge row and the null-hn2 row are dropped
 
   # source: glue/tests/test_rollups.py — "test_rollup_is_idempotent"

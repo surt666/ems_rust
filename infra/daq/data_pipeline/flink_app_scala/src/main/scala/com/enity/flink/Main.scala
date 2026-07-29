@@ -302,9 +302,7 @@ object Main:
         .field("hn8", DataTypes.INT())
         .field("hn9", DataTypes.INT())
         .field("energy_type", DataTypes.STRING())
-        .field("resample_value", DataTypes.DOUBLE())
-        .field("resample_method", DataTypes.STRING())
-        .field("resample_timestamp", DataTypes.TIMESTAMP(6))
+        .field("reading_kind", DataTypes.STRING())
         .build()
 
       val enrichedTableId = TableIdentifier.of(Namespace.of("all"), "logical_data")
@@ -313,20 +311,21 @@ object Main:
       val enrichedRowStream = resampledStream
         .map { (record: EnrichedRecord) =>
           val (normalizedUnit, factor) = Extensions.unitFactor(record.unit)
-          val normalizedValue = record.value * factor
-          val normalizedResampleValue: java.lang.Double =
-            if record.resampleValue == null then null
-            else java.lang.Double.valueOf(record.resampleValue.doubleValue() * factor)
-          val resampleTs: java.time.LocalDateTime =
-            if record.resampleTimestamp == null then null
-            else java.time.LocalDateTime.ofInstant(
-              Instant.ofEpochMilli(record.resampleTimestamp.longValue()),
-              java.time.ZoneOffset.UTC
-            )
+          // logical_data carries the resampled pair only. A sensor with no
+          // resample interval is passed through, so its own reading IS the value
+          // on its own timestamp — the columns mean "the value at this time"
+          // either way, and raw_data still holds every untouched reading.
+          val isResampled = record.resampleValue != null && record.resampleTimestamp != null
+          val outValue =
+            if isResampled then record.resampleValue.doubleValue() * factor
+            else record.value * factor
+          val outTimestamp: Instant =
+            if isResampled then Instant.ofEpochMilli(record.resampleTimestamp.longValue())
+            else Extensions.parseTimestamp(record.timestamp)
           Row.of(
             java.lang.Integer.valueOf(record.logicalId),
-            Extensions.parseTimestamp(record.timestamp),
-            java.lang.Double.valueOf(normalizedValue),
+            outTimestamp,
+            java.lang.Double.valueOf(outValue),
             normalizedUnit,
             Instant.now(),
             java.lang.Integer.valueOf(record.hn1),
@@ -334,9 +333,7 @@ object Main:
             record.hn3, record.hn4, record.hn5,
             record.hn6, record.hn7, record.hn8, record.hn9,
             record.energyType,
-            normalizedResampleValue,
-            record.resampleMethod,
-            resampleTs
+            record.readingKind
           )
         }
         .returns(Types.ROW_NAMED(
@@ -344,7 +341,7 @@ object Main:
           Types.INT, Types.INSTANT, Types.DOUBLE, Types.STRING, Types.INSTANT,
           Types.INT, Types.INT, Types.INT, Types.INT, Types.INT,
           Types.INT, Types.INT, Types.INT, Types.INT,
-          Types.STRING, Types.DOUBLE, Types.STRING, Types.LOCAL_DATE_TIME
+          Types.STRING, Types.STRING
         ))
         .uid("enriched-row-mapper")
 

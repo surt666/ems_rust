@@ -12,8 +12,8 @@ import java.time.Instant
 import scala.jdk.CollectionConverters.*
 
 /** Resamples irregular readings onto a fixed time grid. Keyed by logicalId, holds one-reading
-  * lag per meter and emits one row per grid point when the next reading arrives; the output
-  * columns are `resample_timestamp` / `resample_value` / `resample_method`. See
+  * lag per meter and emits one row per grid point when the next reading arrives; the grid
+  * point and its value become the `timestamp` / `value` written to `logical_data`. See
   * `docs/superpowers/specs/2026-05-01-resampling-rules-design.md`.
   *
   * (Internal algorithm vocabulary still says "bin" for the grid points/windows — e.g.
@@ -201,8 +201,9 @@ class ResampleFunction(bufferRetentionMs: Long = 6 * 3600 * 1000L)
 
 object ResampleFunction:
 
-  /** `resample_method` values written to `logical_data`. Must stay in sync with the
-    * Python equivalents in `glue/late_recomputation.py` — change in lock-step. */
+  /** Which rule produced a grid point. Provenance only — `logical_data` has no such column,
+    * it holds one value per timestamp however that value was arrived at. Kept because it is
+    * the only thing that tells the counter path from the gauge path in a test. */
   object BinMethod:
     val LinearInterpolation = "linear_interpolation"
     val TimeProportional = "time_proportional"

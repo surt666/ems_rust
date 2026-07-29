@@ -1,20 +1,20 @@
 Feature: Flink/Glue output parity
   The streaming path (Flink ResampleFunction) and the batch late-recomputation path
-  (Glue late_recomputation.py) both write logical_meter_data. Because late-arriving rows
+  (Glue late_recomputation.py) both write logical_data. Because late-arriving rows
   reprocessed by Glue replace Flink's earlier writes (newest ingested_time wins per source
   reading + bin), the two paths MUST produce identical output rows for the same input — any
   divergence makes consumers see values oscillate whenever a backfill runs.
 
   Background:
     Given the same (raw reading pair, meter mapping) is processed by both Flink and Glue
-    And logical_meter_data is append-only with restatements distinguished by ingested_time
+    And logical_data is append-only with restatements distinguished by ingested_time
 
   # source: resampling-rules-design spec — "Output parity invariant"
   Scenario: Both paths emit bit-identical rows for the same input
     Given a counter reading pair with a known delta and bin overlap
     When Flink resamples it and Glue resamples it
-    Then they emit the same resample_timestamp, resample_value and resample_method
-    And the same per-bin row layout (timestamp, value=delta, resample_*)
+    Then they emit the same timestamp and value per bin
+    And the same per-bin row layout (logical_id, timestamp, value, energy_type, reading_kind)
 
   # source: resampling-rules-design spec — shared bin enumeration & overlap formula
   Scenario: Both paths share bin enumeration and the overlap formula
@@ -24,18 +24,18 @@ Feature: Flink/Glue output parity
     And both attribute the delta by overlap / (currentTs - prevTs)
 
   # source: resampling-rules-design spec — unit normalization parity
-  Scenario: Both paths apply the same unit normalization to value and resample_value
+  Scenario: Both paths apply the same unit normalization to value
     Given a raw unit such as "Energy (100 Wh)"
     When each path normalizes the unit
-    Then value and resample_value are scaled by the same factor in both paths
+    Then value is scaled by the same factor in both paths
     And the unit column holds the same canonical unit name
 
   # source: resampling-rules-design spec — consumer query / dedup
-  Scenario: Consumers dedup by (logical_id, timestamp, resample_timestamp) then sum
-    Given multiple restatements of the same source reading in logical_meter_data
+  Scenario: Consumers dedup by (logical_id, timestamp) then sum
+    Given multiple restatements of the same source reading in logical_data
     When a consumer reads resampled values
-    Then for each (logical_id, timestamp, resample_timestamp) only the newest ingested_time row is kept
-    And resample_value is summed per (logical_id, resample_timestamp) after that dedup
+    Then for each (logical_id, timestamp) only the newest ingested_time row is kept
+    And value is summed per (logical_id, timestamp) after that dedup
 
   # source: resampling-rules-design spec — single-reading meter behaviour
   Scenario: A meter with only one reading produces no bin rows in either path

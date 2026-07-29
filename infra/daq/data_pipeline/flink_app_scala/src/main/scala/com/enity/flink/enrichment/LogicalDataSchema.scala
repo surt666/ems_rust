@@ -16,7 +16,7 @@ object LogicalDataSchema:
   val columns: Array[String] = Array(
     "logical_id", "timestamp", "value", "unit", "ingested_time",
     "hn1", "hn2", "hn3", "hn4", "hn5", "hn6", "hn7", "hn8", "hn9",
-    "energy_type", "resample_value", "resample_method", "resample_timestamp"
+    "energy_type", "reading_kind"
   )
 
   /** The DynamoDB attribute names the bridge writes into `sensor-identity`.

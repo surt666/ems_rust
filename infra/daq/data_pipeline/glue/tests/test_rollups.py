@@ -12,8 +12,8 @@ def _input(spark):
         T.StructField("logical_id", T.IntegerType()),
         T.StructField("energy_type", T.StringType()),
         T.StructField("unit", T.StringType()),
-        T.StructField("resample_value", T.DoubleType()),
-        T.StructField("resample_timestamp", T.TimestampType()),
+        T.StructField("value", T.DoubleType()),
+        T.StructField("timestamp", T.TimestampType()),
     ])
 
     def ts(h, mi=0):
@@ -155,9 +155,9 @@ def _raw(spark, rows):
         T.StructField("logical_id", T.IntegerType()),
         T.StructField("energy_type", T.StringType()),
         T.StructField("unit", T.StringType()),
-        T.StructField("resample_value", T.DoubleType()),
-        T.StructField("resample_timestamp", T.TimestampType()),
-        T.StructField("resample_method", T.StringType()),
+        T.StructField("value", T.DoubleType()),
+        T.StructField("timestamp", T.TimestampType()),
+        T.StructField("reading_kind", T.StringType()),
         T.StructField("ingested_time", T.TimestampType()),
     ])
     return spark.createDataFrame(rows, schema)
@@ -171,13 +171,13 @@ def test_latest_counters_dedup_and_filters(spark):
 
     rows = [
         # same point (10009, rt): original 4, then a later-ingested restatement 9 -> 9 wins
-        (2, 10009, "electricity", "kWh", 4.0, rt, "time_proportional", ing(9)),
-        (2, 10009, "electricity", "kWh", 9.0, rt, "time_proportional", ing(11)),
-        # a gauge point (linear_interpolation) -> excluded
-        (2, 10010, "district_heating", "kWh", 5.0, rt, "linear_interpolation", ing(9)),
+        (2, 10009, "electricity", "kWh", 4.0, rt, "counter", ing(9)),
+        (2, 10009, "electricity", "kWh", 9.0, rt, "counter", ing(11)),
+        # a gauge reading is a level, not a delta -> excluded
+        (2, 10010, "district_heating", "kWh", 5.0, rt, "gauge", ing(9)),
         # null company id -> excluded
-        (None, 10011, "electricity", "kWh", 3.0, rt, "time_proportional", ing(9)),
+        (None, 10011, "electricity", "kWh", 3.0, rt, "counter", ing(9)),
     ]
     out = m.latest_counters(_raw(spark, rows)).collect()
     assert len(out) == 1
-    assert out[0]["resample_value"] == 9.0
+    assert out[0]["value"] == 9.0

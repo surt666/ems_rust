@@ -5,14 +5,16 @@ Reads raw cumulative values from the raw_data Iceberg table, joins with
 sensor-identity from DynamoDB, computes deltas via LAG() window function,
 and appends corrected records to logical_data.
 
-For meters with `resample_minutes` configured, also computes resample_timestamp / resample_value /
-resample_method per the 2026-05-01 resampling spec:
+For meters with `resample_minutes` configured, the written timestamp/value are the resampled
+ones, per the 2026-05-01 resampling spec:
   - Gauge: linear interpolation between (prev, current) for each bin in (prev_ts, current_ts]
   - Counter: time-proportional split of the delta across overlapping bins
-For meters with `resample_minutes IS NULL`, bin columns are written as NULL (raw shape preserved).
+For meters with `resample_minutes IS NULL` the reading passes through: its own timestamp and
+value (delta, for counters) are written. Either way logical_data holds one value per timestamp;
+raw_data keeps every untouched reading.
 
 Event-sourcing semantics: rows are appended with ingested_time=now(), never merged.
-Consumers query for the newest `ingested_time` per (logical_id, resample_timestamp).
+Consumers query for the newest `ingested_time` per (logical_id, timestamp).
 
 Parameters:
   --daq_ids              Comma-separated DAQ IDs, or "*" for full backfill
@@ -28,69 +30,16 @@ import sys
 import logging
 from datetime import datetime, timezone
 
-import boto3
-from awsglue.context import GlueContext
-from awsglue.job import Job
-from awsglue.utils import getResolvedOptions
-from pyspark.context import SparkContext
 from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
 from pyspark.sql.window import Window
 from pyspark.sql.types import (
     StructType, StructField, StringType, IntegerType, TimestampType, ArrayType, LongType,
+    DoubleType,
 )
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-# ── Spark init ──
-
-sc = SparkContext()
-glueContext = GlueContext(sc)
-spark = glueContext.spark_session
-job = Job(glueContext)
-job.init("late-data-recomputation", {})
-
-# ── Parse args ──
-
-REQUIRED_ARGS = ["JOB_NAME", "region", "sensor_identity_table", "table_bucket_name", "account_id"]
-OPTIONAL_ARGS = {"daq_ids": "*", "time_range_start": "", "time_range_end": ""}
-
-args = getResolvedOptions(sys.argv, REQUIRED_ARGS)
-for key, default in OPTIONAL_ARGS.items():
-    try:
-        resolved = getResolvedOptions(sys.argv, [key])
-        args[key] = resolved[key]
-    except Exception:
-        args[key] = default
-
-region = args["region"]
-table_bucket_name = args["table_bucket_name"]
-account_id = args["account_id"]
-
-raw_daq_ids = args["daq_ids"]
-daq_ids = None if raw_daq_ids == "*" else [d.strip() for d in raw_daq_ids.split(",") if d.strip()]
-time_start = args["time_range_start"]
-time_end = args["time_range_end"]
-
-logger.info(
-    "Starting late recomputation: daq_ids=%s, time_range=[%s, %s]",
-    "ALL" if daq_ids is None else daq_ids, time_start, time_end,
-)
-
-# ── S3 Tables catalog config ──
-
-glue_id = f"{account_id}:s3tablescatalog/{table_bucket_name}"
-warehouse = f"s3://{table_bucket_name}/warehouse/"
-
-spark.conf.set("spark.sql.defaultCatalog", "s3tables")
-spark.conf.set("spark.sql.catalog.s3tables", "org.apache.iceberg.spark.SparkCatalog")
-spark.conf.set(
-    "spark.sql.catalog.s3tables.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog"
-)
-spark.conf.set("spark.sql.catalog.s3tables.glue.id", glue_id)
-spark.conf.set("spark.sql.catalog.s3tables.warehouse", warehouse)
-
 
 # ── Helper functions ──
 
@@ -128,6 +77,8 @@ def parse_ddb_item(item: dict) -> dict:
 
 
 def load_sensor_identity(rgn: str, table_name: str, ids: list[str] | None) -> list[dict]:
+    import boto3  # deferred: only the job talks to AWS, so the transforms stay importable
+
     client = boto3.client("dynamodb", region_name=rgn)
     items = []
     scan_kwargs = {"TableName": table_name}
@@ -150,10 +101,6 @@ def load_sensor_identity(rgn: str, table_name: str, ids: list[str] | None) -> li
 # Mirrors flink_app_scala/.../Extensions.scala UnitConversions and ResampleFunction.BinMethod.
 # Both files implement the same resampling rules and must produce bit-identical output for the
 # same input — change in lock-step.
-
-BIN_METHOD_LINEAR_INTERPOLATION = "linear_interpolation"
-BIN_METHOD_TIME_PROPORTIONAL = "time_proportional"
-BIN_METHOD_NEAREST_NEIGHBOR = "nearest_neighbor"
 
 _UNIT_CONVERSIONS: dict[str, tuple[str, float]] = {
     "Energy (10 Wh)":                   ("Wh", 10.0),
@@ -253,7 +200,7 @@ def normalize_unit(unit: str | None) -> tuple[str, float]:
 
 
 _normalize_unit_name_udf = F.udf(lambda u: normalize_unit(u)[0], StringType())
-_normalize_unit_factor_udf = F.udf(lambda u: float(normalize_unit(u)[1]), "double")
+_normalize_unit_factor_udf = F.udf(lambda u: float(normalize_unit(u)[1]), DoubleType())
 
 
 def enumerate_overlapping_bins(prev_ts_ms: int, current_ts_ms: int, resample_minutes: int) -> list:
@@ -307,6 +254,7 @@ def compute_counter_bins(joined_df: DataFrame) -> DataFrame:
     """For counter readings: compute delta, then for resampled meters fan out time-proportionally
     across overlapping bins in (prev_ts, current_ts]. Unbinned meters get one row per reading
     with delta in `value` and bin_* = NULL."""
+    window = Window.partitionBy("logical_id").orderBy("timestamp")
     counters = joined_df.filter(F.col("reading_kind") == "counter")
     counters = counters.withColumn("prev_ts", F.lag("timestamp").over(window))
     counters = counters.withColumn("prev_value", F.lag("value").over(window))
@@ -318,8 +266,7 @@ def compute_counter_bins(joined_df: DataFrame) -> DataFrame:
     resampled = counters.filter(F.col("resample_minutes").isNotNull())
     unresampled = counters.filter(F.col("resample_minutes").isNull()) \
         .withColumn("resample_timestamp", F.lit(None).cast(TimestampType())) \
-        .withColumn("resample_value", F.lit(None).cast("double")) \
-        .withColumn("resample_method", F.lit(None).cast(StringType()))
+        .withColumn("resample_value", F.lit(None).cast("double"))
 
     resampled = resampled.withColumn(
         "bins",
@@ -345,7 +292,6 @@ def compute_counter_bins(joined_df: DataFrame) -> DataFrame:
         "resample_value",
         F.col("delta") * (overlap_ms.cast("double") / period_ms.cast("double")),
     )
-    resampled = resampled.withColumn("resample_method", F.lit(BIN_METHOD_TIME_PROPORTIONAL))
     resampled = resampled.drop("bins", "resample_timestamp_ms")
 
     return resampled.unionByName(unresampled, allowMissingColumns=True).drop("delta", "prev_ts", "prev_value")
@@ -355,6 +301,7 @@ def compute_gauge_bins(joined_df: DataFrame) -> DataFrame:
     """For gauge readings: for resampled meters, fan out across bins in (prev_ts, current_ts]
     with linear interpolation between (prev, current). Unbinned gauges pass through with
     bin_* = NULL. Single-reading-only meters produce no bin rows (consistent with Flink)."""
+    window = Window.partitionBy("logical_id").orderBy("timestamp")
     gauges = joined_df.filter(F.col("reading_kind") == "gauge")
     gauges = gauges.withColumn("prev_ts", F.lag("timestamp").over(window))
     gauges = gauges.withColumn("prev_value", F.lag("value").over(window))
@@ -362,7 +309,6 @@ def compute_gauge_bins(joined_df: DataFrame) -> DataFrame:
     unresampled = gauges.filter(F.col("resample_minutes").isNull()) \
         .withColumn("resample_timestamp", F.lit(None).cast(TimestampType())) \
         .withColumn("resample_value", F.lit(None).cast("double")) \
-        .withColumn("resample_method", F.lit(None).cast(StringType())) \
         .drop("prev_ts", "prev_value")
 
     resampled = gauges.filter(F.col("resample_minutes").isNotNull() & F.col("prev_ts").isNotNull())
@@ -387,7 +333,6 @@ def compute_gauge_bins(joined_df: DataFrame) -> DataFrame:
         (F.col("resample_timestamp_ms") - prev_ts_ms).cast("double") /
         (cur_ts_ms - prev_ts_ms).cast("double"),
     )
-    resampled = resampled.withColumn("resample_method", F.lit(BIN_METHOD_LINEAR_INTERPOLATION))
     resampled = resampled.drop("bins", "resample_timestamp_ms", "prev_ts", "prev_value")
 
     return resampled.unionByName(unresampled, allowMissingColumns=True)
@@ -397,10 +342,15 @@ def build_output(df: DataFrame) -> DataFrame:
     now = datetime.now(timezone.utc)
     df = df.withColumn("_unit_factor", _normalize_unit_factor_udf(F.col("unit")))
     df = df.withColumn("_unit_norm", _normalize_unit_name_udf(F.col("unit")))
+    # logical_data holds the resampled pair. A reading from a sensor with no resample
+    # interval is its own bin: its timestamp and value (delta, for counters) go through
+    # unchanged. Mirrors the `isResampled` branch in the Flink sink.
+    resampled_ts = F.coalesce(F.col("resample_timestamp"), F.col("timestamp"))
+    resampled_value = F.coalesce(F.col("resample_value"), F.col("value")) * F.col("_unit_factor")
     return df.select(
         F.col("logical_id"),
-        F.col("timestamp"),
-        (F.col("value") * F.col("_unit_factor")).alias("value"),
+        resampled_ts.alias("timestamp"),
+        resampled_value.alias("value"),
         F.col("_unit_norm").alias("unit"),
         F.lit(now).cast(TimestampType()).alias("ingested_time"),
         F.col("hn1").cast(IntegerType()),
@@ -413,20 +363,64 @@ def build_output(df: DataFrame) -> DataFrame:
         F.col("hn8").cast(IntegerType()),
         F.col("hn9").cast(IntegerType()),
         F.col("energy_type"),
-        F.when(F.col("resample_value").isNotNull(), F.col("resample_value") * F.col("_unit_factor"))
-         .otherwise(F.lit(None).cast("double")).alias("resample_value"),
-        F.col("resample_method"),
-        F.col("resample_timestamp"),
+        F.col("reading_kind"),
     )
 
 
-# ── Main logic ──
+# ── Entrypoint ──
 
-# Window used by both gauge and counter resampling paths
-window = Window.partitionBy("logical_id").orderBy("timestamp")
+def main():
+    from awsglue.context import GlueContext
+    from awsglue.job import Job
+    from awsglue.utils import getResolvedOptions
+    from pyspark.context import SparkContext
 
-identity_records = load_sensor_identity(region, args["sensor_identity_table"], daq_ids)
-if identity_records:
+    sc = SparkContext()
+    glue_context = GlueContext(sc)
+    spark = glue_context.spark_session
+    job = Job(glue_context)
+    job.init("late-data-recomputation", {})
+
+    required = ["JOB_NAME", "region", "sensor_identity_table", "table_bucket_name", "account_id"]
+    optional = {"daq_ids": "*", "time_range_start": "", "time_range_end": ""}
+    args = getResolvedOptions(sys.argv, required)
+    for key, default in optional.items():
+        try:
+            args[key] = getResolvedOptions(sys.argv, [key])[key]
+        except Exception:
+            args[key] = default
+
+    region = args["region"]
+    account_id = args["account_id"]
+    table_bucket_name = args["table_bucket_name"]
+    raw_daq_ids = args["daq_ids"]
+    daq_ids = None if raw_daq_ids == "*" else [d.strip() for d in raw_daq_ids.split(",") if d.strip()]
+    time_start = args["time_range_start"]
+    time_end = args["time_range_end"]
+
+    logger.info(
+        "Late recomputation starting: daq_ids=%s, time_range=[%s, %s]",
+        raw_daq_ids, time_start or "-inf", time_end or "+inf",
+    )
+
+    # S3 Tables catalog config
+    spark.conf.set("spark.sql.defaultCatalog", "s3tables")
+    spark.conf.set("spark.sql.catalog.s3tables", "org.apache.iceberg.spark.SparkCatalog")
+    spark.conf.set(
+        "spark.sql.catalog.s3tables.catalog-impl",
+        "org.apache.iceberg.aws.glue.GlueCatalog",
+    )
+    spark.conf.set("spark.sql.catalog.s3tables.glue.id",
+                   f"{account_id}:s3tablescatalog/{table_bucket_name}")
+    spark.conf.set("spark.sql.catalog.s3tables.warehouse",
+                   f"s3://{table_bucket_name}/warehouse/")
+
+    identity_records = load_sensor_identity(region, args["sensor_identity_table"], daq_ids)
+    if not identity_records:
+        logger.info("No meter identity records found, nothing to recompute")
+        job.commit()
+        return
+
     identity_schema = StructType([
         StructField("daq_id", StringType(), False),
         StructField("logical_id", IntegerType(), False),
@@ -458,9 +452,8 @@ if identity_records:
 
     if record_count > 0:
         joined_df = raw_df.join(identity_df, on="daq_id", how="inner")
-        counter_result = compute_counter_bins(joined_df)
-        gauge_result = compute_gauge_bins(joined_df)
-        result_df = counter_result.unionByName(gauge_result, allowMissingColumns=True)
+        result_df = compute_counter_bins(joined_df).unionByName(
+            compute_gauge_bins(joined_df), allowMissingColumns=True)
         output_df = build_output(result_df)
 
         output_count = output_df.count()
@@ -473,12 +466,13 @@ if identity_records:
             # vending issue).
             output_schema = output_df.schema
             output_rows = output_df.collect()
-            write_df = spark.createDataFrame(output_rows, output_schema)
-            write_df.writeTo("all.logical_data").append()
+            spark.createDataFrame(output_rows, output_schema).writeTo("all.logical_data").append()
     else:
         logger.info("No raw records found for the given filters")
-else:
-    logger.info("No meter identity records found, nothing to recompute")
 
-logger.info("Late recomputation complete")
-job.commit()
+    logger.info("Late recomputation complete")
+    job.commit()
+
+
+if __name__ == "__main__":
+    main()

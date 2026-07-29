@@ -87,9 +87,9 @@ object MeterEnrichmentFunction:
       TypeInformation.of(classOf[SensorMapping])
     )
 
-  /** Pure function for testability. Passes through the original timestamp un-floored.
-    * ResampleFunction downstream computes resample_timestamp / resample_value / resample_method from
-    * the raw timestamp + per-meter resampleMinutes config. */
+  /** Pure function for testability. Passes through the original timestamp un-floored;
+    * ResampleFunction downstream puts the reading on the grid implied by the sensor's
+    * resampleMinutes, and the sink writes whichever pair came out. */
   def enrich(record: SensorRecord, m: SensorMapping): EnrichedRecord =
     EnrichedRecord(
       logicalId = m.logicalId,
@@ -106,5 +106,6 @@ object MeterEnrichmentFunction:
       hn7 = m.hn7,
       hn8 = m.hn8,
       hn9 = m.hn9,
-      energyType = m.energyType
+      energyType = m.energyType,
+      readingKind = m.readingKind
     )

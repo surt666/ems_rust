@@ -9,8 +9,8 @@ Feature: Non-destructive deployment guardrails
     And every deploy is gated on "cdk diff" being non-destructive
 
   # source: resampling-rules-design spec — Iceberg schema migration via Athena
-  Scenario: Adding columns to logical_meter_data goes via Athena ALTER, not a CDK table replace
-    Given new columns must be added to logical_meter_data
+  Scenario: Adding columns to logical_data goes via Athena ALTER, not a CDK table replace
+    Given new columns must be added to logical_data
     When the schema change is applied
     Then it is done with "ALTER TABLE ... ADD COLUMNS" in Athena
     And the S3TablesStack is NOT redeployed with changed columns (CfnTable replace = data loss)

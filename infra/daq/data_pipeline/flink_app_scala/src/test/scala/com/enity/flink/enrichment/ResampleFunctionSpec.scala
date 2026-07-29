@@ -31,7 +31,8 @@ class ResampleFunctionSpec extends AnyFlatSpec with Matchers {
       hn1 = 1, hn2 = 2,
       hn3 = null, hn4 = java.lang.Integer.valueOf(8), hn5 = null,
       hn6 = null, hn7 = null, hn8 = null, hn9 = null,
-      energyType = "test"
+      energyType = "test",
+      readingKind = "counter"
     )
 
   private def buffered(value: Double, ts: String, m: SensorMapping): BufferedReadingV2 =
